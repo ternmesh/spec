@@ -91,8 +91,10 @@ is what gives forward secrecy, and only if `S` is deleted too, because
 * A node MUST erase `S` once it has derived `TK_d`, `IV_d` and
   `EK_d(0)` for both directions. `TK_d` and `IV_d` are kept for the
   life of the session; neither yields a message key.
-* When a node computes `EK_d(e+1)` from `EK_d(e)` and no longer needs
-  `EK_d(e)` under the rules below, it MUST erase `EK_d(e)`.
+* `EK_d(e)` is the only way to reach `EK_d(e+1)` once `S` is gone. So
+  before a node erases `EK_d(e)` under the rules below, it MUST derive
+  `EK_d(e+1)` and keep it, unless `e` is the last epoch, `2^27 - 1`
+  (counters `2^32 - 32` to `2^32 - 1`).
 
 ## The frame
 
@@ -139,15 +141,17 @@ To send plaintext `P` as message `n` in direction `d`:
    `hdr || hop || label || dtag_d(n) || CCM(MK_d(n), N_d(n), A, P)`,
    with `label` big-endian.
 5. Once a sender has sent every message it will send in epoch `e`, it
-   MUST erase `EK_d(e)` and every message key derived from it.
+   MUST derive and keep `EK_d(e+1)` (unless `e` is the last epoch), and
+   then MUST erase `EK_d(e)` and every message key derived from it.
 
 ## Receiving
 
 A receiver holds, for each session and for the direction it receives
 in, the highest counter it has accepted, `H` (none to begin with). Its
-**window** is every counter from `H - 31` to `H + 32` (from 0 to 31
-before anything is accepted), leaving out counters it has already
-accepted.
+**window** is every counter from `max(0, H - 31)` to
+`min(H + 32, 2^32 - 1)` (from 0 to 31 before anything is accepted),
+leaving out counters it has already accepted. A window never holds a
+counter outside 0 to `2^32 - 1`, so nothing wraps.
 
 For each counter in its window, the receiver keeps `dtag_d(n)` in a
 table that maps a tag back to its session, direction and counter. The
@@ -170,8 +174,10 @@ To receive a frame:
 5. On accepting message `n`, the receiver removes `n` from its window.
    If `n > H`, it sets `H = n`, adds the counters that have entered the
    window, and drops those that have left it.
-6. A receiver MUST erase `EK_d(e)`, and every message key derived
-   from it, once every counter in epoch `e` has left its window.
+6. Once every counter in epoch `e` has left its window, a receiver
+   MUST derive and keep `EK_d(e+1)` if it does not already hold it
+   (unless `e` is the last epoch), and then MUST erase `EK_d(e)` and
+   every message key derived from it.
 
 `hop` and `label` play no part in the check: a frame is accepted
 whatever they hold.
