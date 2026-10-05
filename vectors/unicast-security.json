@@ -1,5 +1,5 @@
 {
-  "description": "Secured unicast frames, draft 0 (draft/unicast-security.md). For each accepted case, an implementation given session_secret, direction, counter, hop, label and plaintext MUST produce frame, and given session_secret, direction and frame MUST recover counter and plaintext. Each rejected case MUST be rejected by a receiver holding session_secret and expecting counter in direction. Values are hex; label is an integer sent big-endian.",
+  "description": "Secured unicast frames, draft 0 (draft/unicast-security.md). For each accepted case, an implementation given session_secret, direction, counter, hop, label and plaintext MUST produce frame, and given session_secret, direction and frame MUST recover counter and plaintext. Each rejected case MUST be rejected by a receiver holding session_secret and expecting counter in direction. For each sequence, a receiver of a new session given the deliveries in order MUST accept exactly those marked accept, with that counter and plaintext. Values are hex; label is an integer sent big-endian.",
   "generator": "vectors/tools/unicast.py",
   "accepted": [
     {
@@ -223,6 +223,184 @@
       "direction": 1,
       "counter": 0,
       "frame": "480000009bdbbb754d37fe96e8bc8c25cafcb7f789"
+    }
+  ],
+  "sequences": [
+    {
+      "name": "replay",
+      "note": "the same frame twice: the second is a replay",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "deliveries": [
+        {
+          "frame": "4800000065000b485ba6dc77b3e1eb60329b13cec66147ea1c",
+          "accept": true,
+          "counter": 0,
+          "plaintext": "6d6573736167652030"
+        },
+        {
+          "frame": "4800000065000b485ba6dc77b3e1eb60329b13cec66147ea1c",
+          "accept": false,
+          "counter": null,
+          "plaintext": null
+        }
+      ]
+    },
+    {
+      "name": "replay-later",
+      "note": "a frame replayed after later ones",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "deliveries": [
+        {
+          "frame": "4800000065000b485ba6dc77b3e1eb60329b13cec66147ea1c",
+          "accept": true,
+          "counter": 0,
+          "plaintext": "6d6573736167652030"
+        },
+        {
+          "frame": "48000000e02952d9f38b31f4da406923ffb66ae64eade3cef7",
+          "accept": true,
+          "counter": 1,
+          "plaintext": "6d6573736167652031"
+        },
+        {
+          "frame": "48000000c3a724469be05541388153afa1f1fa8d67b1554e01",
+          "accept": true,
+          "counter": 2,
+          "plaintext": "6d6573736167652032"
+        },
+        {
+          "frame": "48000000e02952d9f38b31f4da406923ffb66ae64eade3cef7",
+          "accept": false,
+          "counter": null,
+          "plaintext": null
+        }
+      ]
+    },
+    {
+      "name": "reordered",
+      "note": "arriving out of order, all within the window",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "deliveries": [
+        {
+          "frame": "48000000c3a724469be05541388153afa1f1fa8d67b1554e01",
+          "accept": true,
+          "counter": 2,
+          "plaintext": "6d6573736167652032"
+        },
+        {
+          "frame": "4800000065000b485ba6dc77b3e1eb60329b13cec66147ea1c",
+          "accept": true,
+          "counter": 0,
+          "plaintext": "6d6573736167652030"
+        },
+        {
+          "frame": "48000000e02952d9f38b31f4da406923ffb66ae64eade3cef7",
+          "accept": true,
+          "counter": 1,
+          "plaintext": "6d6573736167652031"
+        }
+      ]
+    },
+    {
+      "name": "first-window",
+      "note": "before anything is accepted the window is 0 to 31",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "deliveries": [
+        {
+          "frame": "480000006a8ae005c0614fd1ee13d58be1b9c8a3fe2ee53a6077",
+          "accept": false,
+          "counter": null,
+          "plaintext": null
+        },
+        {
+          "frame": "480000009a1546bd9e8e40daa53d8638af4a89d7d63462bfa2f5",
+          "accept": true,
+          "counter": 31,
+          "plaintext": "6d657373616765203331"
+        }
+      ]
+    },
+    {
+      "name": "ahead-edge",
+      "note": "H + 32 is the last counter ahead in the window",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "deliveries": [
+        {
+          "frame": "4800000065000b485ba6dc77b3e1eb60329b13cec66147ea1c",
+          "accept": true,
+          "counter": 0,
+          "plaintext": "6d6573736167652030"
+        },
+        {
+          "frame": "480000006a8ae005c0614fd1ee13d58be1b9c8a3fe2ee53a6077",
+          "accept": true,
+          "counter": 32,
+          "plaintext": "6d657373616765203332"
+        }
+      ]
+    },
+    {
+      "name": "ahead-beyond",
+      "note": "H + 33 is outside it: 32 lost in a row",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "deliveries": [
+        {
+          "frame": "4800000065000b485ba6dc77b3e1eb60329b13cec66147ea1c",
+          "accept": true,
+          "counter": 0,
+          "plaintext": "6d6573736167652030"
+        },
+        {
+          "frame": "48000000193001964379625561717860b41ea4943f08b84e85eb",
+          "accept": false,
+          "counter": null,
+          "plaintext": null
+        }
+      ]
+    },
+    {
+      "name": "behind",
+      "note": "after H = 60, counter 28 has left the window and 29 has not",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "deliveries": [
+        {
+          "frame": "4800000065000b485ba6dc77b3e1eb60329b13cec66147ea1c",
+          "accept": true,
+          "counter": 0,
+          "plaintext": "6d6573736167652030"
+        },
+        {
+          "frame": "48000000dbe0e7178261575afcb2931008cb39eb8abe53933eec",
+          "accept": true,
+          "counter": 30,
+          "plaintext": "6d657373616765203330"
+        },
+        {
+          "frame": "48000000ec80cca9a0d912cef0ba85a12df2bd25f712644afbaf",
+          "accept": true,
+          "counter": 60,
+          "plaintext": "6d657373616765203630"
+        },
+        {
+          "frame": "48000000b59bee9366db18c5c52d433f8af40309cf8049d09ad5",
+          "accept": false,
+          "counter": null,
+          "plaintext": null
+        },
+        {
+          "frame": "48000000211801ec9f8b390c2e45da63406e9aafeb9a9afac80b",
+          "accept": true,
+          "counter": 29,
+          "plaintext": "6d657373616765203239"
+        }
+      ]
     }
   ]
 }

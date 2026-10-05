@@ -90,6 +90,33 @@ def open_frame(s: bytes, d: int, n: int, frame: bytes):
         return None
 
 
+class Receiver:
+    """The receiving procedure for one direction of one session: the window and replay rules."""
+
+    def __init__(self, s: bytes, d: int):
+        self.s, self.d = s, d
+        self.high = None  # H: the highest counter accepted, none to begin with
+        self.accepted = set()
+
+    def window(self):
+        lo, hi = (0, 31) if self.high is None else (max(0, self.high - 31), self.high + 32)
+        return [n for n in range(lo, min(hi, 2**32 - 1) + 1) if n not in self.accepted]
+
+    def receive(self, frame: bytes):
+        """(counter, plaintext) if the frame is accepted, else None."""
+        if len(frame) < OVERHEAD or frame[0] != HDR:
+            return None
+        for n in self.window():
+            if frame[4:8] == dtag(self.s, self.d, n):
+                p = open_frame(self.s, self.d, n, frame)
+                if p is not None:
+                    self.accepted.add(n)
+                    if self.high is None or n > self.high:
+                        self.high = n
+                    return n, p
+        return None
+
+
 def self_test() -> None:
     # RFC 5869, test case 1: PRK and OKM.
     prk = bytes.fromhex("077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5")
@@ -179,16 +206,61 @@ def build() -> dict:
     wrong_dir = bytes.fromhex(accepted[1]["frame"])
     reject("wrong-direction", "the responder's counter-0 frame, checked as the initiator's", wrong_dir)
 
+    def sequence(name, note, counters):
+        rx = Receiver(s1, 1)
+        deliveries = []
+        for n in counters:
+            p = f"message {n}".encode()
+            f = seal(s1, 1, n, 0, 0, p)
+            got = rx.receive(f)
+            deliveries.append({
+                "frame": f.hex(),
+                "accept": got is not None,
+                "counter": n if got else None,
+                "plaintext": p.hex() if got else None,
+            })
+        return {
+            "name": name,
+            "note": note,
+            "session_secret": s1.hex(),
+            "direction": 1,
+            "deliveries": deliveries,
+        }
+
+    sequences = [
+        sequence("replay", "the same frame twice: the second is a replay", [0, 0]),
+        sequence("replay-later", "a frame replayed after later ones", [0, 1, 2, 1]),
+        sequence("reordered", "arriving out of order, all within the window", [2, 0, 1]),
+        sequence("first-window", "before anything is accepted the window is 0 to 31", [32, 31]),
+        sequence("ahead-edge", "H + 32 is the last counter ahead in the window", [0, 32]),
+        sequence("ahead-beyond", "H + 33 is outside it: 32 lost in a row", [0, 33]),
+        sequence("behind", "after H = 60, counter 28 has left the window and 29 has not",
+                 [0, 30, 60, 28, 29]),
+    ]
+    expected = {
+        "replay": [True, False],
+        "replay-later": [True, True, True, False],
+        "reordered": [True, True, True],
+        "first-window": [False, True],
+        "ahead-edge": [True, True],
+        "ahead-beyond": [True, False],
+        "behind": [True, True, True, False, True],
+    }
+    for seq in sequences:
+        assert [x["accept"] for x in seq["deliveries"]] == expected[seq["name"]], seq["name"]
+
     return {
         "description": "Secured unicast frames, draft 0 (draft/unicast-security.md). For each "
         "accepted case, an implementation given session_secret, direction, counter, hop, label "
         "and plaintext MUST produce frame, and given session_secret, direction and frame MUST "
         "recover counter and plaintext. Each rejected case MUST be rejected by a receiver holding "
-        "session_secret and expecting counter in direction. Values are hex; label is an integer "
-        "sent big-endian.",
+        "session_secret and expecting counter in direction. For each sequence, a receiver of a new "
+        "session given the deliveries in order MUST accept exactly those marked accept, with "
+        "that counter and plaintext. Values are hex; label is an integer sent big-endian.",
         "generator": "vectors/tools/unicast.py",
         "accepted": accepted,
         "rejected": rejected,
+        "sequences": sequences,
     }
 
 

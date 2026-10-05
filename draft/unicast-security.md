@@ -25,8 +25,9 @@ produced by [`vectors/tools/unicast.py`](../vectors/tools/unicast.py).
    random and change with every message.
 3. **No time sync needed.** A node can receive a unicast message without
    knowing the time.
-4. **Forward secrecy, in steps.** A node that is captured later does not
-   give up messages from more than one epoch (32 messages) in the past.
+4. **Forward secrecy, in steps.** A node that is captured later gives
+   up at most the last 64 messages in each direction, provided it has
+   erased keys as this section requires.
 5. **Standard primitives only.** HKDF-SHA-256 and AES-128, in modes
    with published test vectors, so any implementation can be checked
    against more than this document.
@@ -84,7 +85,14 @@ N_d(n)     = IV_d XOR (0^9 || u32be(n))                       nonce
 
 The epoch keys form a one-way chain: from `EK_d(e)` anyone can compute
 every later epoch key, but not an earlier one. Deleting old epoch keys
-is what gives forward secrecy.
+is what gives forward secrecy, and only if `S` is deleted too, because
+`S` regenerates the whole chain:
+
+* A node MUST erase `S` once it has derived `TK_d`, `IV_d` and
+  `EK_d(0)` for both directions. `TK_d` and `IV_d` are kept for the
+  life of the session; neither yields a message key.
+* When a node computes `EK_d(e+1)` from `EK_d(e)` and no longer needs
+  `EK_d(e)` under the rules below, it MUST erase `EK_d(e)`.
 
 ## The frame
 
@@ -129,7 +137,7 @@ To send plaintext `P` as message `n` in direction `d`:
    `hdr || hop || label || dtag_d(n) || CCM(MK_d(n), N_d(n), A, P)`,
    with `label` big-endian.
 5. Once a sender has sent every message it will send in epoch `e`, it
-   SHOULD delete `EK_d(e)` and every message key derived from it.
+   MUST erase `EK_d(e)` and every message key derived from it.
 
 ## Receiving
 
@@ -160,8 +168,8 @@ To receive a frame:
 5. On accepting message `n`, the receiver removes `n` from its window.
    If `n > H`, it sets `H = n`, adds the counters that have entered the
    window, and drops those that have left it.
-6. A receiver SHOULD delete `EK_d(e)` once every counter in epoch `e`
-   has left its window.
+6. A receiver MUST erase `EK_d(e)`, and every message key derived
+   from it, once every counter in epoch `e` has left its window.
 
 `hop` and `label` play no part in the check: a frame is accepted
 whatever they hold.
@@ -176,7 +184,19 @@ An implementation conforms to this section if, for every case in
   receiver holding `session_secret` and expecting `counter`, it accepts
   `frame` and recovers `plaintext`;
 * **rejected:** as a receiver holding `session_secret` and expecting
-  `counter` in `direction`, it rejects `frame`.
+  `counter` in `direction`, it rejects `frame`;
+* **sequences:** as a receiver of a new session holding
+  `session_secret`, receiving in `direction`, given each frame of
+  `deliveries` in order, it accepts exactly those whose `accept` is
+  true, with that `counter` and `plaintext`, and rejects the rest.
+  These check the window and that a replay is rejected, which a single
+  frame cannot.
+
+The erasure requirements (in [Keys](#keys), step 5 of Sending and step
+6 of Receiving) cannot be checked from outside a node, by vectors or
+otherwise. They are requirements nonetheless, because without them the
+forward secrecy this section claims does not exist; they are checked by
+reviewing an implementation, not by the suite.
 
 Each case also gives the intermediate values (epoch key, message key,
 tag key, nonce base, nonce and tag) to help find where an implementation
@@ -225,8 +245,9 @@ keys per session: the window spans 64 counters, so it touches at most
 three epochs.
 
 **Window of 64.** Thirty-one behind tolerates reordering and loss on a
-multi-hop path; thirty-two ahead tolerates that many lost messages in a
-row before a session needs resynchronising.
+multi-hop path. Thirty-two ahead means that after the last accepted
+message, up to 31 can be lost in a row: if 32 are, the next to arrive is
+`H + 33`, outside the window, and the session needs resynchronising.
 
 ## Not yet specified
 
@@ -241,7 +262,7 @@ deliberately left out of this draft:
   current epoch key is stolen loses every later message in that
   direction. A periodic DH step (MSH-36) would fix that, at the cost of
   public keys on the air.
-* **Resynchronising** a session after more than 32 lost messages in a
+* **Resynchronising** a session after 32 or more lost messages in a
   row.
 * **Length.** The ciphertext is as long as the plaintext, so an
   observer learns the message's length. Padding costs airtime, and the
