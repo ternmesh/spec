@@ -1,5 +1,5 @@
 {
-  "description": "Secured unicast frames, draft 0 (draft/unicast-security.md). For each accepted case, an implementation given session_secret, direction, counter, hop, label and plaintext MUST produce frame, and given session_secret, direction and frame MUST recover counter and plaintext. Each rejected case MUST be rejected by a receiver holding session_secret and expecting counter in direction. For each sequence, a receiver of a new session given the deliveries in order MUST accept exactly those marked accept, with that counter and plaintext. Values are hex; label is an integer sent big-endian.",
+  "description": "Secured unicast frames, draft 0 (draft/unicast-security.md). For each accepted case, an implementation given session_secret, direction, counter, hop, label and plaintext MUST produce frame, and given session_secret, direction and frame MUST recover counter and plaintext. Each rejected case MUST be rejected by a receiver holding session_secret and expecting counter in direction. For each sequence, a receiver of a new session given the deliveries in order MUST accept exactly those marked accept, with that counter and plaintext. For each collision case, a receiver holding every listed session, all new, given the deliveries in order MUST accept each, attributed to that session (an index into sessions) and counter, with that plaintext. Values are hex; label is an integer sent big-endian.",
   "generator": "vectors/tools/unicast.py",
   "accepted": [
     {
@@ -399,6 +399,56 @@
           "accept": true,
           "counter": 29,
           "plaintext": "6d657373616765203239"
+        }
+      ]
+    }
+  ],
+  "collisions": [
+    {
+      "name": "tag-collision-0",
+      "note": "two sessions whose tags collide; the frame is session 0's",
+      "sessions": [
+        {
+          "session_secret": "1f31c8d6fddc18e57117f91e5f1fb032f8ea58ec44bb3a0033b7c8f5f4df6252",
+          "direction": 1
+        },
+        {
+          "session_secret": "3252283451789fbf81c4490cfb30bcc447fc020ab21cde347421f27451ad0ee5",
+          "direction": 1
+        }
+      ],
+      "dtag": "785569e6",
+      "deliveries": [
+        {
+          "frame": "48000000785569e6f98552973434d951b243371a5497d7abda7148",
+          "accept": true,
+          "session": 0,
+          "counter": 0,
+          "plaintext": "636f6c6c6973696f6e2030"
+        }
+      ]
+    },
+    {
+      "name": "tag-collision-1",
+      "note": "two sessions whose tags collide; the frame is session 1's",
+      "sessions": [
+        {
+          "session_secret": "1f31c8d6fddc18e57117f91e5f1fb032f8ea58ec44bb3a0033b7c8f5f4df6252",
+          "direction": 1
+        },
+        {
+          "session_secret": "3252283451789fbf81c4490cfb30bcc447fc020ab21cde347421f27451ad0ee5",
+          "direction": 1
+        }
+      ],
+      "dtag": "785569e6",
+      "deliveries": [
+        {
+          "frame": "48000000785569e6aac3848a81b66ef4a2d3647faff76c29113e20",
+          "accept": true,
+          "session": 1,
+          "counter": 29,
+          "plaintext": "636f6c6c6973696f6e2031"
         }
       ]
     }

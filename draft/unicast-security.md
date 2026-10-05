@@ -126,9 +126,11 @@ not authenticated end to end. This section only fixes where they are.
 
 To send plaintext `P` as message `n` in direction `d`:
 
-1. A sender MUST NOT send two frames with the same `S`, `d` and `n`.
-   It SHOULD use `n` = 0 for the first message and add one for each
-   message after.
+1. A sender MUST use `n` = 0 for its first message in a direction, and
+   MUST add exactly one for each message after. Skipping a counter
+   would take the receiver's window past it (see
+   [Receiving](#receiving)), and resynchronising is not yet specified.
+   So a sender never sends two frames with the same `S`, `d` and `n`.
 2. A sender MUST NOT send with `n` above `2^32 - 1`. A sender that has
    used every counter needs a new session.
 3. The sender computes `dtag_d(n)`, and sets
@@ -190,7 +192,12 @@ An implementation conforms to this section if, for every case in
   `deliveries` in order, it accepts exactly those whose `accept` is
   true, with that `counter` and `plaintext`, and rejects the rest.
   These check the window and that a replay is rejected, which a single
-  frame cannot.
+  frame cannot;
+* **collisions:** as a receiver holding every session in `sessions`,
+  all new, with their tags in one table, given each frame of
+  `deliveries` in order, it accepts every one, attributed to the
+  session and counter given. The two sessions' tags collide, so this
+  checks that every matching entry is tried.
 
 The erasure requirements (in [Keys](#keys), step 5 of Sending and step
 6 of Receiving) cannot be checked from outside a node, by vectors or

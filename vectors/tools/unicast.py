@@ -11,6 +11,7 @@ RFC 3610, which uses exactly the parameters Tern does.
 Like everything under vectors/, this file is dedicated to the public domain (CC0-1.0).
 """
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -102,19 +103,42 @@ class Receiver:
         lo, hi = (0, 31) if self.high is None else (max(0, self.high - 31), self.high + 32)
         return [n for n in range(lo, min(hi, 2**32 - 1) + 1) if n not in self.accepted]
 
+    def matches(self, frame: bytes):
+        return [n for n in self.window() if frame[4:8] == dtag(self.s, self.d, n)]
+
+    def accept(self, n: int) -> None:
+        self.accepted.add(n)
+        if self.high is None or n > self.high:
+            self.high = n
+
     def receive(self, frame: bytes):
         """(counter, plaintext) if the frame is accepted, else None."""
-        if len(frame) < OVERHEAD or frame[0] != HDR:
-            return None
-        for n in self.window():
-            if frame[4:8] == dtag(self.s, self.d, n):
-                p = open_frame(self.s, self.d, n, frame)
-                if p is not None:
-                    self.accepted.add(n)
-                    if self.high is None or n > self.high:
-                        self.high = n
-                    return n, p
+        got = receive_any([self], frame)
+        return got and got[1:]
+
+
+def receive_any(receivers, frame: bytes):
+    """One table over several sessions: try every entry whose tag matches, in table order.
+    (index of the receiver, counter, plaintext) if the frame is accepted, else None."""
+    if len(frame) < OVERHEAD or frame[0] != HDR:
         return None
+    for i, rx in enumerate(receivers):
+        for n in rx.matches(frame):
+            p = open_frame(rx.s, rx.d, n, frame)
+            if p is not None:
+                rx.accept(n)
+                return i, n, p
+    return None
+
+
+# Two sessions whose destination tags collide: session COLLIDE[0] at counter 0 and session
+# COLLIDE[1] at counter 29 in direction 1 have the same four bytes. Found by searching the
+# secrets SHA-256("tern collision" || u32be(i)) for i from 0, all counters 0 to 31.
+COLLIDE = ((1959, 0), (2019, 29))
+
+
+def collision_secret(i: int) -> bytes:
+    return hashlib.sha256(b"tern collision" + u32be(i)).digest()
 
 
 def self_test() -> None:
@@ -249,6 +273,33 @@ def build() -> dict:
     for seq in sequences:
         assert [x["accept"] for x in seq["deliveries"]] == expected[seq["name"]], seq["name"]
 
+    # Both sessions are held by one receiver, so their tags share one table, and the frame matches
+    # both entries; only one passes the AEAD check. There is one case for each session's frame,
+    # each with a new receiver, so a receiver that keeps one entry per tag, or stops at the first
+    # failed check, rejects one of the two cases whichever order it tries the entries in.
+    (ia, na), (ib, nb) = COLLIDE
+    sa, sb = collision_secret(ia), collision_secret(ib)
+    assert dtag(sa, 1, na) == dtag(sb, 1, nb)
+    sessions = [{"session_secret": sa.hex(), "direction": 1},
+                {"session_secret": sb.hex(), "direction": 1}]
+    collisions = []
+    for which, (sec, n) in enumerate([(sa, na), (sb, nb)]):
+        rxs = [Receiver(sa, 1), Receiver(sb, 1)]
+        p = f"collision {which}".encode()
+        f = seal(sec, 1, n, 0, 0, p)
+        assert sum(len(rx.matches(f)) for rx in rxs) == 2
+        assert receive_any(rxs, f) == (which, n, p)
+        # Tried the other way round, the wrong session's entry comes first and must fail.
+        assert receive_any([Receiver(sb, 1), Receiver(sa, 1)], f) == (1 - which, n, p)
+        collisions.append({
+            "name": f"tag-collision-{which}",
+            "note": f"two sessions whose tags collide; the frame is session {which}'s",
+            "sessions": sessions,
+            "dtag": dtag(sa, 1, na).hex(),
+            "deliveries": [{"frame": f.hex(), "accept": True, "session": which, "counter": n,
+                            "plaintext": p.hex()}],
+        })
+
     return {
         "description": "Secured unicast frames, draft 0 (draft/unicast-security.md). For each "
         "accepted case, an implementation given session_secret, direction, counter, hop, label "
@@ -256,11 +307,15 @@ def build() -> dict:
         "recover counter and plaintext. Each rejected case MUST be rejected by a receiver holding "
         "session_secret and expecting counter in direction. For each sequence, a receiver of a new "
         "session given the deliveries in order MUST accept exactly those marked accept, with "
-        "that counter and plaintext. Values are hex; label is an integer sent big-endian.",
+        "that counter and plaintext. For each collision case, a receiver holding every listed "
+        "session, all new, given the deliveries in order MUST accept each, attributed to that "
+        "session (an index into sessions) and counter, with that plaintext. Values are hex; "
+        "label is an integer sent big-endian.",
         "generator": "vectors/tools/unicast.py",
         "accepted": accepted,
         "rejected": rejected,
         "sequences": sequences,
+        "collisions": collisions,
     }
 
 
