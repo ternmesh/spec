@@ -300,6 +300,26 @@ def build() -> dict:
                             "plaintext": p.hex()}],
         })
 
+    # Both frames to one receiver, in turn. Accepting the first removes only its own entry, so
+    # the other session's entry under the same tag must still be there for the second frame. A
+    # receiver that drops the whole tag bucket on a match rejects the second frame.
+    rxs = [Receiver(sa, 1), Receiver(sb, 1)]
+    deliveries = []
+    for which, (sec, n) in enumerate([(sa, na), (sb, nb)]):
+        p = f"collision {which}".encode()
+        f = seal(sec, 1, n, 0, 0, p)
+        assert receive_any(rxs, f) == (which, n, p)
+        deliveries.append({"frame": f.hex(), "accept": True, "session": which, "counter": n,
+                           "plaintext": p.hex()})
+    collisions.append({
+        "name": "tag-collision-both",
+        "note": "both colliding frames to one receiver: the second session's entry must survive "
+        "the first acceptance",
+        "sessions": sessions,
+        "dtag": dtag(sa, 1, na).hex(),
+        "deliveries": deliveries,
+    })
+
     # The sender owns its counter: both ends of one session, each counting from 0 in its own
     # direction. 34 sends from the initiator cross into epoch 1 (counter 32 and 33); the
     # responder's two replies are interleaved and must use counters 0 and 1.

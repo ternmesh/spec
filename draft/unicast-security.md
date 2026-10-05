@@ -27,7 +27,10 @@ produced by [`vectors/tools/unicast.py`](../vectors/tools/unicast.py).
    knowing the time.
 4. **Forward secrecy, in steps.** A node that is captured later gives
    up at most the last 64 messages in each direction, provided it has
-   erased keys as this section requires.
+   erased keys as this section requires and its receive window is still
+   advancing. A session whose receiver has stalled (see
+   [Not yet specified](#not-yet-specified)) does not have this
+   property.
 5. **Standard primitives only.** HKDF-SHA-256 and AES-128, in modes
    with published test vectors, so any implementation can be checked
    against more than this document.
@@ -205,7 +208,8 @@ An implementation conforms to this section if, for every case in
   all new, with their tags in one table, given each frame of
   `deliveries` in order, it accepts every one, attributed to the
   session and counter given. The two sessions' tags collide, so this
-  checks that every matching entry is tried;
+  checks that every matching entry is tried, and, where both frames go
+  to one receiver, that accepting one removes only its own entry;
 * **senders:** as both ends of a new session holding `session_secret`,
   given each send of `sends` in order (`direction` and `plaintext`, with
   `hop` and `label` 0), choosing every counter itself, it produces
@@ -285,7 +289,12 @@ deliberately left out of this draft:
   direction. A periodic DH step (MSH-36) would fix that, at the cost of
   public keys on the air.
 * **Resynchronising** a session after 32 or more lost messages in a
-  row.
+  row. Until then, a receiver that has lost that many has stalled: no
+  later frame is in its window, so it never advances, and it keeps an
+  epoch key from which every later epoch key can be derived. Capturing
+  it exposes every message its peer sends afterwards, not only the last
+  64. The fix belongs with resynchronisation: an expiry that erases a
+  stalled chain, or a way to move the window forward safely.
 * **Length.** The ciphertext is as long as the plaintext, so an
   observer learns the message's length. Padding costs airtime, and the
   trade-off is undecided.

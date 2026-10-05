@@ -451,6 +451,37 @@
           "plaintext": "636f6c6c6973696f6e2031"
         }
       ]
+    },
+    {
+      "name": "tag-collision-both",
+      "note": "both colliding frames to one receiver: the second session's entry must survive the first acceptance",
+      "sessions": [
+        {
+          "session_secret": "1f31c8d6fddc18e57117f91e5f1fb032f8ea58ec44bb3a0033b7c8f5f4df6252",
+          "direction": 1
+        },
+        {
+          "session_secret": "3252283451789fbf81c4490cfb30bcc447fc020ab21cde347421f27451ad0ee5",
+          "direction": 1
+        }
+      ],
+      "dtag": "785569e6",
+      "deliveries": [
+        {
+          "frame": "48000000785569e6f98552973434d951b243371a5497d7abda7148",
+          "accept": true,
+          "session": 0,
+          "counter": 0,
+          "plaintext": "636f6c6c6973696f6e2030"
+        },
+        {
+          "frame": "48000000785569e6aac3848a81b66ef4a2d3647faff76c29113e20",
+          "accept": true,
+          "session": 1,
+          "counter": 29,
+          "plaintext": "636f6c6c6973696f6e2031"
+        }
+      ]
     }
   ],
   "senders": [
