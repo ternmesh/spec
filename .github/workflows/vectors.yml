@@ -1,0 +1,23 @@
+name: Vectors
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  # Each vector file is the output of its generator. This fails if a file was edited by hand, or
+  # if a generator changed without its file being regenerated. The generators also check their
+  # primitives against published RFC vectors before computing anything.
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "cryptography>=42"
+      - run: python3 vectors/tools/unicast.py check

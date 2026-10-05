@@ -14,6 +14,7 @@ specified.
 
 * [GOVERNANCE.md](GOVERNANCE.md) — who decides, what is promised, and when the project moves
 * [CONTRIBUTING.md](CONTRIBUTING.md) — DCO sign-off and how to write spec text
+* [draft/](draft/README.md) — sections written ahead of v0 because they do not depend on routing, starting with [secured unicast frames](draft/unicast-security.md)
 * `vectors/` — conformance test vectors
 
 ## Licence

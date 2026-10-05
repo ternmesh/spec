@@ -7,5 +7,12 @@ produce from them. **Passing these is what "Tern-compatible" means** — see
 Everything in this directory is dedicated to the public domain under
 [CC0-1.0](LICENSE), so any implementation under any licence can carry it.
 
-Empty for now: the first vectors arrive with the frame and crypto
-strawman.
+| File | Section | Generator |
+|---|---|---|
+| `unicast-security.json` | [Secured unicast frames](../draft/unicast-security.md) | `tools/unicast.py` |
+
+Each file is the output of its generator, and CI fails if the two
+disagree. To change a vector, change the generator and run it with
+`generate`; `check` confirms the file matches. The generators need the
+Python `cryptography` package, and check it against published RFC
+vectors before computing anything.

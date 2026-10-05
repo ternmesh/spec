@@ -1,0 +1,228 @@
+{
+  "description": "Secured unicast frames, draft 0 (draft/unicast-security.md). For each accepted case, an implementation given session_secret, direction, counter, hop, label and plaintext MUST produce frame, and given session_secret, direction and frame MUST recover counter and plaintext. Each rejected case MUST be rejected by a receiver holding session_secret and expecting counter in direction. Values are hex; label is an integer sent big-endian.",
+  "generator": "vectors/tools/unicast.py",
+  "accepted": [
+    {
+      "name": "first",
+      "note": "counter 0, initiator to responder",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "counter": 0,
+      "hop": 0,
+      "label": 0,
+      "plaintext": "68656c6c6f",
+      "intermediate": {
+        "epoch": 0,
+        "epoch_key": "69e66434f9549f37bbed9008549211ec54869dc4c22172dac6b87388440e0434",
+        "message_key": "bab944a475109660ef17c71c8378f1f7",
+        "tag_key": "ddeb265222561c8c0a622cb8852f161d",
+        "iv": "5a456f34a4fc63183b4a0bf34a",
+        "nonce": "5a456f34a4fc63183b4a0bf34a",
+        "dtag": "65000b48"
+      },
+      "frame": "4800000065000b485ea6c368bdcc3ddb99ccfc176d"
+    },
+    {
+      "name": "reply",
+      "note": "same session, the other direction",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 2,
+      "counter": 0,
+      "hop": 0,
+      "label": 0,
+      "plaintext": "68656c6c6f",
+      "intermediate": {
+        "epoch": 0,
+        "epoch_key": "b38420633060edce9ce7f0395a67622239a303a274c19826ca2e875e55af1d91",
+        "message_key": "a86c20fc470bc941e69ce14f60fa13c3",
+        "tag_key": "0a30712ad3adfcfbdfe86d9d64e02316",
+        "iv": "16f1151cba29bee234525758a1",
+        "nonce": "16f1151cba29bee234525758a1",
+        "dtag": "9bdbbb75"
+      },
+      "frame": "480000009bdbbb754d37fe96e8bc8c25cafcb7f789"
+    },
+    {
+      "name": "last-of-epoch-0",
+      "note": "counter 31: still epoch 0",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "counter": 31,
+      "hop": 0,
+      "label": 0,
+      "plaintext": "68656c6c6f",
+      "intermediate": {
+        "epoch": 0,
+        "epoch_key": "69e66434f9549f37bbed9008549211ec54869dc4c22172dac6b87388440e0434",
+        "message_key": "14a1c68f25fdd030a1d05cb54f9db070",
+        "tag_key": "ddeb265222561c8c0a622cb8852f161d",
+        "iv": "5a456f34a4fc63183b4a0bf34a",
+        "nonce": "5a456f34a4fc63183b4a0bf355",
+        "dtag": "9a1546bd"
+      },
+      "frame": "480000009a1546bd9b8e5fc5ab8ef1307ad9d3288a"
+    },
+    {
+      "name": "first-of-epoch-1",
+      "note": "counter 32: epoch 1, one step of the epoch chain",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "counter": 32,
+      "hop": 0,
+      "label": 0,
+      "plaintext": "68656c6c6f",
+      "intermediate": {
+        "epoch": 1,
+        "epoch_key": "bf6676af36def76cc899b20ee39ee942f263522613d359bcdffc772bbb1eb8f4",
+        "message_key": "9994f509d54176e405657eb2af5e136c",
+        "tag_key": "ddeb265222561c8c0a622cb8852f161d",
+        "iv": "5a456f34a4fc63183b4a0bf34a",
+        "nonce": "5a456f34a4fc63183b4a0bf36a",
+        "dtag": "6a8ae005"
+      },
+      "frame": "480000006a8ae005c56150cee0b0b4ef6d4d20e69e"
+    },
+    {
+      "name": "far",
+      "note": "counter 1000: epoch 31",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "counter": 1000,
+      "hop": 0,
+      "label": 0,
+      "plaintext": "68656c6c6f",
+      "intermediate": {
+        "epoch": 31,
+        "epoch_key": "8421d82ac066079fc72aa621f80b09978bc4bda5397589864189826ca71b2031",
+        "message_key": "c2e7c581fb99fe8fa4b52731c1d577a9",
+        "tag_key": "ddeb265222561c8c0a622cb8852f161d",
+        "iv": "5a456f34a4fc63183b4a0bf34a",
+        "nonce": "5a456f34a4fc63183b4a0bf0a2",
+        "dtag": "7db2f03e"
+      },
+      "frame": "480000007db2f03edda058b0cd9afb080b66137786"
+    },
+    {
+      "name": "relayed",
+      "note": "hop and label set by relays; not authenticated",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "counter": 0,
+      "hop": 3,
+      "label": 48879,
+      "plaintext": "68656c6c6f",
+      "intermediate": {
+        "epoch": 0,
+        "epoch_key": "69e66434f9549f37bbed9008549211ec54869dc4c22172dac6b87388440e0434",
+        "message_key": "bab944a475109660ef17c71c8378f1f7",
+        "tag_key": "ddeb265222561c8c0a622cb8852f161d",
+        "iv": "5a456f34a4fc63183b4a0bf34a",
+        "nonce": "5a456f34a4fc63183b4a0bf34a",
+        "dtag": "65000b48"
+      },
+      "frame": "4803beef65000b485ea6c368bdcc3ddb99ccfc176d"
+    },
+    {
+      "name": "empty",
+      "note": "no plaintext: the 16-byte minimum frame",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "counter": 7,
+      "hop": 0,
+      "label": 0,
+      "plaintext": "",
+      "intermediate": {
+        "epoch": 0,
+        "epoch_key": "69e66434f9549f37bbed9008549211ec54869dc4c22172dac6b87388440e0434",
+        "message_key": "7a9eb1e0b69fb477362c811a77d9c00a",
+        "tag_key": "ddeb265222561c8c0a622cb8852f161d",
+        "iv": "5a456f34a4fc63183b4a0bf34a",
+        "nonce": "5a456f34a4fc63183b4a0bf34d",
+        "dtag": "186955b3"
+      },
+      "frame": "48000000186955b34f611dfa41ab8738"
+    },
+    {
+      "name": "non-latin",
+      "note": "UTF-8 text outside Latin script",
+      "session_secret": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+      "direction": 1,
+      "counter": 5,
+      "hop": 0,
+      "label": 0,
+      "plaintext": "ce9aceb1cebbceb7cebcceadcf81ceb1",
+      "intermediate": {
+        "epoch": 0,
+        "epoch_key": "62cc08b9c3ef4f79c2e5ac0ad2323eea40352caadf1fbea548910a4630fc6cda",
+        "message_key": "35e4dd2befc1d9b1301b43ef04087d73",
+        "tag_key": "b68f2d45a709e71680e45bc15057e1ac",
+        "iv": "67c3db50fd2636de5432f72b13",
+        "nonce": "67c3db50fd2636de5432f72b16",
+        "dtag": "deaf64ab"
+      },
+      "frame": "48000000deaf64ab465e3274bb1b7e9682883756d2046e38f3f59cba7b02fe65"
+    },
+    {
+      "name": "largest",
+      "note": "239 bytes of plaintext: a 255-byte frame",
+      "session_secret": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+      "direction": 2,
+      "counter": 2,
+      "hop": 0,
+      "label": 0,
+      "plaintext": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedee",
+      "intermediate": {
+        "epoch": 0,
+        "epoch_key": "a07b2698cccd83abb97173e441b3071454af62d8279b7aa70414937099f2d32e",
+        "message_key": "9af209fd279007a8aa211aafba025223",
+        "tag_key": "cda69726f4338adb07fe1f7e49dcb6a6",
+        "iv": "3a0e42b4b53e963add66e32ad7",
+        "nonce": "3a0e42b4b53e963add66e32ad5",
+        "dtag": "31d53f18"
+      },
+      "frame": "4800000031d53f1810216d2fab91343b51ca651715176f3ced35303148ea904987c2b6c98c32e3aa2b59f736d57db778b8a948ac22061063d404954ec50df358c3cb07112508bb80c27f59307b4450a0a7259ada5fbdc04a7c708386c6fddf2c9d367b2ce6c1b2600d765a3332f95dab1500e6b77f5e1eb6d4027898f9a07a74b14e378bd904de6abf0b0e90dc775a146b39a5109c09d59ffb9e0eeacbd7ca99ab9ac990101b5a88df9220503d72429e9cc284d86c969d3cf2bc710a2d4cedd6fe14bc4a1cd5557f254f2a621141fe42bb2510b0c170cfc5e77fd8c6710f99f8323e8301005ef2f2b334f54c4df9a1814c71f387294323e057a2d555fd8e5b"
+    }
+  ],
+  "rejected": [
+    {
+      "name": "tag-flipped",
+      "note": "last bit of the AEAD tag changed",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "counter": 0,
+      "frame": "4800000065000b485ea6c368bdcc3ddb99ccfc176c"
+    },
+    {
+      "name": "ciphertext-flipped",
+      "note": "first ciphertext bit changed",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "counter": 0,
+      "frame": "4800000065000b48dea6c368bdcc3ddb99ccfc176d"
+    },
+    {
+      "name": "header-changed",
+      "note": "a reserved flag set: the header is authenticated",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "counter": 0,
+      "frame": "4900000065000b485ea6c368bdcc3ddb99ccfc176d"
+    },
+    {
+      "name": "truncated",
+      "note": "15 bytes: shorter than any frame",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "counter": 0,
+      "frame": "4800000065000b485ea6c368bdcc3d"
+    },
+    {
+      "name": "wrong-direction",
+      "note": "the responder's counter-0 frame, checked as the initiator's",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "direction": 1,
+      "counter": 0,
+      "frame": "480000009bdbbb754d37fe96e8bc8c25cafcb7f789"
+    }
+  ]
+}
