@@ -300,6 +300,35 @@ def build() -> dict:
                             "plaintext": p.hex()}],
         })
 
+    # The sender owns its counter: both ends of one session, each counting from 0 in its own
+    # direction. 34 sends from the initiator cross into epoch 1 (counter 32 and 33); the
+    # responder's two replies are interleaved and must use counters 0 and 1.
+    class Sender:
+        def __init__(self, sec):
+            self.s, self.next = sec, {INITIATOR_TO_RESPONDER: 0, RESPONDER_TO_INITIATOR: 0}
+
+        def send(self, d, p):
+            n = self.next[d]
+            self.next[d] = n + 1
+            return n, seal(self.s, d, n, 0, 0, p)
+
+    senders = []
+    for name, note, sec, plan in [
+        ("both-directions", "the two directions count separately from 0", s1,
+         [1, 1, 2, 1, 2]),
+        ("into-epoch-1", "34 messages from the initiator: counters 0 to 33, across an epoch",
+         s2, [1] * 34),
+    ]:
+        tx, rx = Sender(sec), {1: Receiver(sec, 1), 2: Receiver(sec, 2)}
+        sends, used = [], set()
+        for k, d in enumerate(plan):
+            p = f"send {k}".encode()
+            n, f = tx.send(d, p)
+            assert (d, n) not in used and rx[d].receive(f) == (n, p)
+            used.add((d, n))
+            sends.append({"direction": d, "plaintext": p.hex(), "counter": n, "frame": f.hex()})
+        senders.append({"name": name, "note": note, "session_secret": sec.hex(), "sends": sends})
+
     return {
         "description": "Secured unicast frames, draft 0 (draft/unicast-security.md). For each "
         "accepted case, an implementation given session_secret, direction, counter, hop, label "
@@ -310,12 +339,16 @@ def build() -> dict:
         "that counter and plaintext. For each collision case, a receiver holding every listed "
         "session, all new, given the deliveries in order MUST accept each, attributed to that "
         "session (an index into sessions) and counter, with that plaintext. Values are hex; "
-        "label is an integer sent big-endian.",
+        "label is an integer sent big-endian. For each senders case, an implementation acting as "
+        "both ends of a new session, given each send's direction and plaintext in order (hop "
+        "and label 0) and choosing the counter itself, MUST produce that send's frame; counter "
+        "is given only to help debugging.",
         "generator": "vectors/tools/unicast.py",
         "accepted": accepted,
         "rejected": rejected,
         "sequences": sequences,
         "collisions": collisions,
+        "senders": senders,
     }
 
 

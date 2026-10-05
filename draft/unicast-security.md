@@ -182,7 +182,9 @@ An implementation conforms to this section if, for every case in
 [`vectors/unicast-security.json`](../vectors/unicast-security.json):
 
 * **accepted:** given `session_secret`, `direction`, `counter`, `hop`,
-  `label` and `plaintext`, it produces exactly `frame`, and, as a
+  `label` and `plaintext` (setting the counter is a test hook; in use, a
+  sender chooses it, as `senders` checks), it produces exactly `frame`,
+  and, as a
   receiver holding `session_secret` and expecting `counter`, it accepts
   `frame` and recovers `plaintext`;
 * **rejected:** as a receiver holding `session_secret` and expecting
@@ -197,7 +199,14 @@ An implementation conforms to this section if, for every case in
   all new, with their tags in one table, given each frame of
   `deliveries` in order, it accepts every one, attributed to the
   session and counter given. The two sessions' tags collide, so this
-  checks that every matching entry is tried.
+  checks that every matching entry is tried;
+* **senders:** as both ends of a new session holding `session_secret`,
+  given each send of `sends` in order (`direction` and `plaintext`, with
+  `hop` and `label` 0), choosing every counter itself, it produces
+  exactly that send's `frame`. These check that a sender starts at 0,
+  adds one each time and never repeats a counter, and that the two
+  directions count separately, which a case that is handed its counter
+  cannot.
 
 The erasure requirements (in [Keys](#keys), step 5 of Sending and step
 6 of Receiving) cannot be checked from outside a node, by vectors or

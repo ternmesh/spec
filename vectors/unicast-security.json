@@ -1,5 +1,5 @@
 {
-  "description": "Secured unicast frames, draft 0 (draft/unicast-security.md). For each accepted case, an implementation given session_secret, direction, counter, hop, label and plaintext MUST produce frame, and given session_secret, direction and frame MUST recover counter and plaintext. Each rejected case MUST be rejected by a receiver holding session_secret and expecting counter in direction. For each sequence, a receiver of a new session given the deliveries in order MUST accept exactly those marked accept, with that counter and plaintext. For each collision case, a receiver holding every listed session, all new, given the deliveries in order MUST accept each, attributed to that session (an index into sessions) and counter, with that plaintext. Values are hex; label is an integer sent big-endian.",
+  "description": "Secured unicast frames, draft 0 (draft/unicast-security.md). For each accepted case, an implementation given session_secret, direction, counter, hop, label and plaintext MUST produce frame, and given session_secret, direction and frame MUST recover counter and plaintext. Each rejected case MUST be rejected by a receiver holding session_secret and expecting counter in direction. For each sequence, a receiver of a new session given the deliveries in order MUST accept exactly those marked accept, with that counter and plaintext. For each collision case, a receiver holding every listed session, all new, given the deliveries in order MUST accept each, attributed to that session (an index into sessions) and counter, with that plaintext. Values are hex; label is an integer sent big-endian. For each senders case, an implementation acting as both ends of a new session, given each send's direction and plaintext in order (hop and label 0) and choosing the counter itself, MUST produce that send's frame; counter is given only to help debugging.",
   "generator": "vectors/tools/unicast.py",
   "accepted": [
     {
@@ -449,6 +449,256 @@
           "session": 1,
           "counter": 29,
           "plaintext": "636f6c6c6973696f6e2031"
+        }
+      ]
+    }
+  ],
+  "senders": [
+    {
+      "name": "both-directions",
+      "note": "the two directions count separately from 0",
+      "session_secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "sends": [
+        {
+          "direction": 1,
+          "plaintext": "73656e642030",
+          "counter": 0,
+          "frame": "4800000065000b4845a6c160f2b607f8531840127a02"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e642031",
+          "counter": 1,
+          "frame": "48000000e02952d9ed8b2ce39b16096e0156f8de4ed3"
+        },
+        {
+          "direction": 2,
+          "plaintext": "73656e642032",
+          "counter": 0,
+          "frame": "480000009bdbbb755637fc9ea7d3e9d649a3922e68bf"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e642033",
+          "counter": 2,
+          "frame": "48000000c3a7244685e0485679d53a29b9ff1a3e709b"
+        },
+        {
+          "direction": 2,
+          "plaintext": "73656e642034",
+          "counter": 1,
+          "frame": "480000004405a31905fd4decc91dd2fa512045b41863"
+        }
+      ]
+    },
+    {
+      "name": "into-epoch-1",
+      "note": "34 messages from the initiator: counters 0 to 33, across an epoch",
+      "session_secret": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
+      "sends": [
+        {
+          "direction": 1,
+          "plaintext": "73656e642030",
+          "counter": 0,
+          "frame": "48000000e321660e5d8e113cfbd03f6b73d0f6722889"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e642031",
+          "counter": 1,
+          "frame": "480000007b6393bdf3f2f4868ccf1e7bd6970e5657a0"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e642032",
+          "counter": 2,
+          "frame": "4800000058f95f0941e8e496d76da9047b8048c4fa1c"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e642033",
+          "counter": 3,
+          "frame": "480000007dc4d1c61dc6cdd5e13f86620cf2f6f1f93e"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e642034",
+          "counter": 4,
+          "frame": "48000000bcda31b358de1e73af3d22952ff8c4821e30"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e642035",
+          "counter": 5,
+          "frame": "48000000deaf64abfba192a15595bc7b5d7169019ac7"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e642036",
+          "counter": 6,
+          "frame": "48000000574dfbf8881ea9baafb6bfb850d3aadd52e9"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e642037",
+          "counter": 7,
+          "frame": "4800000017b746d571d56af10f91a6c78eaffe233724"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e642038",
+          "counter": 8,
+          "frame": "480000007b04a4910b813c70e80f874ff305cda304b1"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e642039",
+          "counter": 9,
+          "frame": "48000000457eec8e8ec0575dd75687edf048bf91ac62"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203130",
+          "counter": 10,
+          "frame": "480000002ab0f3e7f2520a007f0db3ee37cbb4cf0de98c"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203131",
+          "counter": 11,
+          "frame": "48000000e42ce64c31ea64815b983e9e74ab088a2a8765"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203132",
+          "counter": 12,
+          "frame": "48000000477782acb1f0a41ceb957fdcefc808054b5f05"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203133",
+          "counter": 13,
+          "frame": "48000000f2c5dcb9885949f1df65c6159bbcc8e5fe9101"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203134",
+          "counter": 14,
+          "frame": "4800000043d93af11272038f0dcfd31eb4354a4a485a8e"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203135",
+          "counter": 15,
+          "frame": "480000002fb62a769f97c126c92dcd917e7a87ae5deea8"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203136",
+          "counter": 16,
+          "frame": "48000000d803f3dddb4ad12c87a5d6a491a5cbf7529cbe"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203137",
+          "counter": 17,
+          "frame": "480000002e2c22ed95655c8bb002f9c36ef4310789b162"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203138",
+          "counter": 18,
+          "frame": "480000006b8df34d13fe3c2c4dbdcb9cb226b6ee545da2"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203139",
+          "counter": 19,
+          "frame": "4800000013b586dd5f6406c854241ae0ebd1f1045b9fb3"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203230",
+          "counter": 20,
+          "frame": "48000000b2d67d979b349af05a53bad18cca07ee418abc"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203231",
+          "counter": 21,
+          "frame": "48000000fbcfe2003b54f0304688f7c4f783bda6d59b43"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203232",
+          "counter": 22,
+          "frame": "480000004ea5e482b97b258eae360d99d234f9dbf7fdd9"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203233",
+          "counter": 23,
+          "frame": "48000000ad12d40da2e864a75171d00f3bf6ce954b9cdf"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203234",
+          "counter": 24,
+          "frame": "48000000605e3c0d6aab10dddc5f6ab4ee76b2a539b6f8"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203235",
+          "counter": 25,
+          "frame": "4800000086f3f047d89412d64f0fd8a3f3ad0fd7d53962"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203236",
+          "counter": 26,
+          "frame": "480000004866c6a6d07e9beffe1492728b1746db66ecde"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203237",
+          "counter": 27,
+          "frame": "48000000c672c88a45b25c51ee14328d01694694ce7b36"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203238",
+          "counter": 28,
+          "frame": "48000000d1553daf51ce342292773361677e386134170c"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203239",
+          "counter": 29,
+          "frame": "480000006f648ad740c5a86dffe0bebb4357167a9a5c92"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203330",
+          "counter": 30,
+          "frame": "48000000446af1565f5be9242ace203e3db18945749368"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203331",
+          "counter": 31,
+          "frame": "48000000f2e956e63ad3e2363144ff88e60106f056e21c"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203332",
+          "counter": 32,
+          "frame": "48000000fd49d529837aae1fb15d8a392bc7a15b67d3ee"
+        },
+        {
+          "direction": 1,
+          "plaintext": "73656e64203333",
+          "counter": 33,
+          "frame": "4800000008559222692ee096fc3c398244b9546b533683"
         }
       ]
     }
