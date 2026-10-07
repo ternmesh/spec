@@ -338,8 +338,9 @@ try, and two different messages are never taken for one.
 
 ### Going quiet
 
-A client sends a request at least every `IDLE` seconds, `PING` if it
-has nothing else to ask, whether or not news is arriving. If one is
+A client sends a request no later than `IDLE` seconds after the answer
+to its last, `PING` if it has nothing else to ask, whether or not news
+is arriving. If one is
 unanswered after `ANSWER_WAIT`, the node has gone, and the client
 SHOULD close the connection and open it again.
 
@@ -347,8 +348,8 @@ A node learns that a Bluetooth or TCP client has gone when the
 connection closes. Over USB serial it cannot: the port stays open on
 the node's side whatever the computer does, and the next program to
 open it may be a terminal. So a node on a serial port that has
-received no request for `LAPSE` seconds MUST treat the connection as
-ended: it stops sending news, and answers any request but `HELLO` with
+received no request for `LAPSE` seconds since it answered the last one
+MUST treat the connection as ended: it stops sending news, and answers any request but `HELLO` with
 `ERROR` 6, as before the first `HELLO`. A client that receives
 `ERROR` 6 after its `HELLO` was answered has been taken for gone, and
 starts again with `HELLO` and a [sync](#syncing).
@@ -577,7 +578,9 @@ would cut off a client that was only listening, and that client would
 see nothing wrong: no news looks like nothing happening. A ping every
 `IDLE` seconds costs eight bytes, and `ERROR` 6, which a client already
 handles, tells one that was cut off to start again. `LAPSE` is three
-pings, so one lost to a busy port does not end a connection.
+pings, so one lost to a busy port does not end a connection. Both are
+counted from an answer, not a request: a client may not ask again
+while a request is unanswered, and a long sync is one request.
 
 **Why the passkey, and not "just works" pairing.** A node may relay
 for its neighbours on a hill, and anyone who can drive it can read its
