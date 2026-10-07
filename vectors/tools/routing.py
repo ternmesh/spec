@@ -25,6 +25,7 @@ EVERYONE = 0xFFFFFFFF
 INF = 0xFFFF
 HDR_ANNOUNCE, HDR_REQUEST = 0x59, 0x5A
 FLAG_RELAY = 0x01
+FLAG_STARTING = 0x02
 REF_LEN = 32
 NAMED_ROUNDS = 8
 LINK_MARGIN, LINK_BAND = 0, 3 * 16  # sixteenths of a dB
@@ -64,7 +65,7 @@ def announce(a):
         a["sender"],
         a["number"],
         a["seq"],
-        FLAG_RELAY if a["relay"] else 0,
+        (FLAG_RELAY if a["relay"] else 0) | (FLAG_STARTING if a["starting"] else 0),
         a["promise"],
         a["round"],
         a["power"],
@@ -114,14 +115,14 @@ def withdrawn(named, number, round_):
     return (number - named) % 65536 >= allowed
 
 
-def numbering(last, number, promise_passed, names_none, had_margin):
+def numbering(last, number, promise_passed, starting, was_starting):
     """What a node does with an announce from a neighbour it knows."""
+    if starting:
+        return "take" if was_starting else "again"
     gap = (number - last) % 65536
-    late = gap >= 0x8000
-    again = names_none and (late or had_margin)
-    if gap == 0 or (late and not again and not promise_passed):
-        return "discard"
-    return "again" if late or again else "take"
+    if gap == 0 or gap >= 0x8000:
+        return "again" if promise_passed else "discard"
+    return "take"
 
 
 def link_cost(sf, bw):
@@ -192,12 +193,11 @@ def self_check():
     assert f == -22 * 16 and margin_byte(22, f) == 128 + 44
     # Heard exactly at the floor, the sample is the power: (3 * -15 + 0) / 4 = -11.25, down to -12.
     assert floor_next(-15, 0, -50, 9) == -12
-    assert numbering(5, 6, False, False, True) == "take"
-    assert numbering(5, 5, True, True, True) == "discard"
-    assert numbering(5, 4, False, False, True) == "discard"
-    assert numbering(5, 4, True, False, True) == "again"
-    assert numbering(5, 6, False, True, True) == "again"
-    assert numbering(5, 6, False, True, False) == "take"
+    assert numbering(5, 6, False, False, False) == "take"
+    assert numbering(5, 4, False, False, False) == "discard"
+    assert numbering(5, 4, True, False, False) == "again"
+    assert numbering(5, 4, False, True, False) == "again"
+    assert numbering(5, 4, False, True, True) == "take"
     assert not withdrawn(10, 18, 1) and withdrawn(10, 19, 1) and withdrawn(0xFFFF, 8, 0)
 
 
@@ -208,11 +208,11 @@ def build():
 
     announces = [
         {
-            "sender": a, "number": 0xFFFF, "seq": 0, "relay": False, "promise": 600,
+            "sender": a, "number": 0xFFFF, "seq": 0, "relay": False, "starting": True, "promise": 600,
             "round": 0, "power": 22, "neighbours": [], "routes": [],
         },
         {
-            "sender": b, "number": 0x0102, "seq": 0x8001, "relay": True,
+            "sender": b, "number": 0x0102, "seq": 0x8001, "relay": True, "starting": False,
             "promise": promise_code(40000), "round": 2, "power": -9,
             "neighbours": [{"id": a, "margin": 128}, {"id": c, "margin": 255}],
             "routes": [
@@ -221,7 +221,8 @@ def build():
             ],
         },
         {
-            "sender": c, "number": 5, "seq": 9, "relay": True, "promise": 0xFFFF, "round": 1,
+            "sender": c, "number": 5, "seq": 9, "relay": True, "starting": False, "promise": 0xFFFF,
+            "round": 1,
             "power": 2, "neighbours": [],
             "routes": [{"destination": 0x10000 + i, "seq": i, "metric": 54 * i} for i in range(1, 30)],
         },
@@ -249,7 +250,7 @@ def build():
         {"why": "an announce a byte short", "frame": good[:-1].hex()},
         {"why": "an announce a byte long", "frame": (good + b"\x00").hex()},
         {"why": "an announce shorter than its head", "frame": good[:16].hex()},
-        {"why": "an announce with an unknown flag", "frame": (good[:9] + b"\x03" + good[10:]).hex()},
+        {"why": "an announce with an unknown flag", "frame": (good[:9] + b"\x05" + good[10:]).hex()},
         {"why": "an announce from routing id 0", "frame": (good[:1] + bytes(4) + good[5:]).hex()},
         {
             "why": "an announce from routing id ffffffff",
@@ -299,15 +300,18 @@ def build():
 
     numbered = [
         {
-            "last": last, "number": number, "promise_passed": passed, "names_none": none,
-            "had_margin": had, "does": numbering(last, number, passed, none, had),
+            "last": last, "number": number, "promise_passed": passed, "starting": starting,
+            "was_starting": was, "does": numbering(last, number, passed, starting, was),
         }
-        for last, number, passed, none, had in [
-            (10, 11, False, False, True), (10, 10, False, False, True), (10, 10, True, True, True),
-            (10, 9, False, False, True), (10, 9, True, False, True), (10, 9, False, True, False),
-            (10, 11, False, True, True), (10, 11, False, True, False), (10, 11, True, False, False),
-            (0xFFFF, 0, False, False, False), (0, 0x7FFF, False, False, True),
-            (0, 0x8000, False, False, True), (0, 0x8000, True, False, True),
+        for last, number, passed, starting, was in [
+            (10, 11, False, False, False), (10, 10, False, False, False),
+            (10, 10, True, False, False), (10, 9, False, False, False),
+            (10, 9, True, False, False), (10, 11, False, True, False),
+            (10, 9, False, True, False), (10, 10, False, True, False),
+            (10, 11, False, True, True), (10, 9, False, True, True),
+            (10, 11, False, False, True), (0xFFFF, 0, False, False, False),
+            (0, 0x7FFF, False, False, False), (0, 0x8000, False, False, False),
+            (0, 0x8000, True, False, False),
         ]
     ]
 

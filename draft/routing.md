@@ -24,9 +24,9 @@ produced by [`vectors/tools/routing.py`](../vectors/tools/routing.py).
    53% at best for the flooding designs it compared.
 2. **Never a loop.** Routes change while frames are in flight. No
    change, however it is delayed or lost, may send a frame round in a
-   circle. This draft keeps that between nodes that keep their state,
-   and not yet across a restart (see
-   [Not yet specified](#not-yet-specified)).
+   circle. Between nodes that keep their state this is exact. A node
+   that restarts has lost it, and what stands in for it is a wait (see
+   [Starting](#starting)).
 3. **A bounded share of the channel.** What a node spends on routing is
    capped, whatever happens around it.
 4. **Quiet when nothing changes.** A network at rest announces rarely;
@@ -84,7 +84,7 @@ A node's one periodic frame:
 | 1 | 4 | `sender` | the sender's routing id |
 | 5 | 2 | `number` | counts the sender's announces |
 | 7 | 2 | `seq` | the sequence number of the sender's route to itself |
-| 9 | 1 | `flags` | bit 0: the sender is a relay. The rest are 0 |
+| 9 | 1 | `flags` | bit 0: the sender is a relay. Bit 1: it is [starting](#starting). The rest are 0 |
 | 10 | 2 | `promise` | the longest the sender may go before its next |
 | 12 | 2 | `round` | announces it takes the sender to name every neighbour |
 | 14 | 1 | `power` | what this frame was sent at, `i8` dBm, rounded up |
@@ -161,21 +161,17 @@ and stays up until it falls more than `LINK_BAND` below that, or the
 neighbour's margin is withdrawn.
 
 A node MUST forget a neighbour, and every route through it, once it has
-heard nothing from it for `SILENT_MAX` and for two of its promises.
+heard nothing from it for `SILENT_MAX` and for two of its promises. A
+neighbour whose last announce made no promise is not forgotten for its
+silence, however long: it said it could not tell how long it would be.
 
-**A neighbour that has started again** has lost what it announced, and
-numbers its announces from somewhere else. A node takes a neighbour to
-have started again when an announce from it:
-
-* has a `number` that is not newer than its last, and nothing has been
-  heard from it for one of its promises; or
-* names no neighbours, with a `round` of 0, and either its `number` is
-  not newer than its last or it has given this node a margin before.
-
-The node then forgets the neighbour, and every route through it, and
-takes the frame as from a neighbour it has just found. Any other
-announce whose `number` is not newer than the sender's last is a copy
-or is late, and is discarded whole.
+**Numbers out of order.** An announce whose `number` is not newer than
+the last from the same sender is a copy or is late, and is discarded
+whole, unless it says its sender is [starting](#starting), or nothing
+has been heard from that sender for one of its promises. In that last
+case the sender started again unheard: the node forgets it, and every
+route through it, and takes the frame as from a neighbour it has just
+found.
 
 ### Power for every neighbour
 
@@ -252,6 +248,22 @@ A node that loses its selected route to a destination it has announced
 retracts it. A retraction lost on the air would leave a neighbour with
 the route for good, so it goes in `RETRACTS` announces: once as a
 change, then in turn with the routes, never twice in one frame.
+
+### Starting
+
+A node that starts has lost its feasibility distances, which are what
+keep it from selecting a route that leads back through itself: its
+neighbours may hold routes it announced before, and no longer knows of.
+So for its first `START_ANNOUNCES` announces a node is **starting**:
+
+* it sets the starting flag in its announces, and lists no routes;
+* it selects no route but one whose neighbour is the destination;
+* its announces are not suppressed, and its interval does not double.
+
+A node that hears a neighbour say it is starting, when that neighbour's
+last announce did not, forgets the neighbour and every route through
+it, and takes the frame as from a neighbour it has just found. It MUST
+ignore routes listed in an announce that says its sender is starting.
 
 ### Starving, and asking
 
@@ -375,6 +387,7 @@ starved node asks again anyway.
 | `HYSTERESIS` | 1/10 | |
 | `CHANGE` | 1/4 | |
 | `RETRACTS` | 3 | |
+| `START_ANNOUNCES` | 4 | announces a node is starting for |
 | `REQUEST_INTERVAL` | 10 s | |
 | `REQUEST_TRIES` | 5 | |
 | `HOP_MAX` | 32 | |
@@ -402,11 +415,10 @@ An implementation conforms to this section if, for
   now sent `number`, with `round`;
 * **numbering:** hearing an announce numbered `number` from a
   neighbour whose last was `last`, it does as `does` says: `take` it,
-  `discard` it, or take the neighbour to have started `again`.
+  `discard` it, or forget the neighbour and take it as found `again`.
   `promise_passed` says whether nothing was heard from the neighbour
-  for one of its promises, `names_none` whether the announce names no
-  neighbours with a `round` of 0, and `had_margin` whether the
-  neighbour had given this node a margin;
+  for one of its promises, `starting` whether the announce says so, and
+  `was_starting` whether the neighbour's last did;
 * **costs:** for each profile, a link costs `link_cost`;
 * **feasible:** with the feasibility distance given (`null` for none),
   it finds each route feasible or not;
@@ -486,11 +498,19 @@ nodes in four billion pairs share one; see below.
 **Big-endian**, as the rest of the specification is. The simulator's
 frames are little-endian.
 
-**A restarted neighbour.** The simulator's nodes never lose their
-state. A real one does, and its announces then carry numbers its
-neighbours take for old. A node that has just started hears no one, and
-says so in its first announce, which is how its neighbours usually
-learn; the promise bounds how long it takes them otherwise.
+**Starting.** The simulator's nodes never lose their state. A real one
+does, and Babel's condition rests on a node remembering what it has
+announced. The exact cure is to remember across a restart, which means
+writing to flash each time a feasibility distance changes; the one here
+is AODV's (RFC 3561, section 6.13): say so, and wait. A neighbour that
+hears any one of the starting announces drops what it held through the
+node, and the node selects nothing through a neighbour until it has
+sent them all. A neighbour that hears none of the four still holds its
+old routes, and a loop through it is possible until it hears a fifth.
+In the reference implementation's tests, with a third of announces lost
+and a node in twelve restarting every hundred seconds, three runs of
+five had no loop at all, and the longest loop in the others lasted 82
+seconds; without the wait, loops lasted about three minutes.
 
 ## Not yet measured
 
@@ -511,15 +531,13 @@ learn; the promise bounds how long it takes them otherwise.
   for the next hop sending it, retries twice, and then tries another
   route) is the next draft. It decides how much of who is talking to
   whom an observer can see.
-* **Restarts.** A node that restarts has lost its feasibility
-  distances, which are what keep it from selecting a route that leads
-  back through itself. Until each neighbour has heard that it started
-  again, and dropped the routes it had through it, such a route can be
-  selected and a frame can loop. In the reference implementation's
-  tests, with a third of announces lost and a node in twelve restarting
-  every hundred seconds, the longest loop lasted about three minutes.
-  Closing it needs the restarted node to know which neighbours have
-  heard: an echo of some kind, or a wait.
+* **A dead neighbour.** Silence is not a signal here: announces are
+  lost too often for it to be one, and a neighbour that made no promise
+  is never forgotten for it. What tells is frames sent to a neighbour
+  and lost, which waits for the frames that follow routes.
+* **Closing the wait.** A starting node that knew which neighbours had
+  heard it could select through those at once, and would never select
+  through one that had not.
 * **Authentication.** Nothing here is signed. A node can announce a
   route it does not have, claim another's routing id, or raise
   another's sequence number. A signature is 64 bytes, a quarter of a
