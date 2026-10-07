@@ -6,9 +6,8 @@ reviewed by a cryptographer, and it must be before it is frozen.
 
 This section defines how one node sends a private message to another
 once the two already share a session: the bytes on the air, the keys,
-and what the receiver does. How two nodes come to share a session
-(first contact) is not part of this section; see
-[Not yet specified](#not-yet-specified).
+and what the receiver does. How two nodes come to share a session is
+[first contact](first-contact.md).
 
 Test vectors: [`vectors/unicast-security.json`](../vectors/unicast-security.json),
 produced by [`vectors/tools/unicast.py`](../vectors/tools/unicast.py).
@@ -231,7 +230,7 @@ goes wrong.
 ## Rationale
 
 **AES-128-CCM with an 8-byte tag.** It is the AEAD of EDHOC cipher
-suite 0, which first contact is expected to use (see below), so a node
+suite 0, which [first contact](first-contact.md) uses, so a node
 needs one cipher, not two. It is also what IEEE 802.15.4 and Bluetooth
 LE use, so many radio microcontrollers have it in hardware; the
 nRF52840 does. ChaCha20-Poly1305 was considered: it is faster in
@@ -280,14 +279,6 @@ message, up to 31 can be lost in a row: if 32 are, the next to arrive is
 Each of these is needed before the specification is frozen, and is
 deliberately left out of this draft:
 
-* **First contact.** The handshake that produces `S`. The intent is
-  EDHOC (RFC 9528) with cipher suite 0, with `S` taken from its
-  exporter. Each EDHOC message fits one frame, but where a region
-  limits each transmission's time, not always at its slowest legal
-  setting: first contact needs SF8 or faster at 125 kHz under 400 ms
-  (US915, and AS923 and AU915 where dwell applies), and SF10 or faster
-  under CN470's 1 s
-  ([analysis/first-contact-fit.md](../analysis/first-contact-fit.md)).
 * **A Diffie-Hellman step.** The epoch chain heals nothing: a node whose
   current epoch key is stolen loses every later message in that
   direction. A periodic DH step (MSH-36) would fix that, at the cost of

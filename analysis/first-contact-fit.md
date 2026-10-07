@@ -1,7 +1,8 @@
 # Does first contact fit one frame?
 
-**Status:** analysis, not specification. It informs the first-contact section, which is not yet
-drafted; nothing here is normative.
+**Status:** analysis, not specification; nothing here is normative. It informed
+[first contact](../draft/first-contact.md), which chose the `dh-first` case below: static DH
+(method 3), the responder named by `kid` and the initiator sending its address.
 
 The intent for first contact is EDHOC (RFC 9528) with cipher suite 0, with the session secret `S`
 taken from its exporter ([unicast-security.md](../draft/unicast-security.md#not-yet-specified)).

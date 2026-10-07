@@ -10,6 +10,7 @@ Everything in this directory is dedicated to the public domain under
 | File | Section | Generator |
 |---|---|---|
 | `unicast-security.json` | [Secured unicast frames](../draft/unicast-security.md) | `tools/unicast.py` |
+| `first-contact.json` | [First contact](../draft/first-contact.md) | `tools/first_contact.py` |
 
 Each file is the output of its generator, and CI fails if the two
 disagree. To change a vector, change the generator and run it with
