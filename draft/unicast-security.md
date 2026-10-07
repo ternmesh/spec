@@ -283,8 +283,10 @@ deliberately left out of this draft:
 * **First contact.** The handshake that produces `S`. The intent is
   EDHOC (RFC 9528) with cipher suite 0, with `S` taken from its
   exporter. Each EDHOC message fits one frame, but where a region
-  limits dwell time to 400 ms, not at its slowest legal setting:
-  first contact needs SF8 or faster at 125 kHz there
+  limits each transmission's time, not always at its slowest legal
+  setting: first contact needs SF8 or faster at 125 kHz under 400 ms
+  (US915, and AS923 and AU915 where dwell applies), and SF10 or faster
+  under CN470's 1 s
   ([analysis/first-contact-fit.md](../analysis/first-contact-fit.md)).
 * **A Diffie-Hellman step.** The epoch chain heals nothing: a node whose
   current epoch key is stolen loses every later message in that

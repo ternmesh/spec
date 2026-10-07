@@ -126,15 +126,18 @@ def check_rfc9529():
         len(message_4()),
     )
     assert got == (37, 116, 90, 9), f"RFC 9529 trace 1: {got}"
-    # Trace 2 (RFC 9529, section 3): method 3, suite 2, CCSs by 'kid', ID_CRED_R = {4: h'32'},
-    # ID_CRED_I = {4: h'2b'}, C_I = -24 (h'37'), C_R = -8 (h'27').
+    # Trace 2 (RFC 9529, section 3): method 3, CCSs by 'kid', ID_CRED_R = {4: h'32'},
+    # ID_CRED_I = {4: h'2b'}, C_R = -8 (h'27'). Its first message_1 offers suite 6 alone, with
+    # C_I = h'0e', and is refused; the second offers [6, 2], with C_I = -24 (h'37'), and suite 2
+    # goes on.
     got = (
-        len(message_1(3, 2, b"\x37")),
+        len(message_1(3, 6, b"\x0e")),
+        len(message_1(3, [6, 2], b"\x37")),
         len(message_2(3, b"\x27", {4: b"\x32"})),
         len(message_3(3, {4: b"\x2b"})),
         len(message_4()),
     )
-    assert got == (37, 45, 19, 9), f"RFC 9529 trace 2: {got}"
+    assert got == (37, 39, 45, 19, 9), f"RFC 9529 trace 2: {got}"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -293,7 +296,19 @@ REGIONS = [
     ),
     ("kr920", "KR920", 125000, 12, 4000 * MS, None, "RP002 2.11.6: under 4 s per frame, with LBT"),
     ("in865", "IN865", 125000, 12, None, None, "RP002 2.12: no dwell or duty cycle limit"),
+    ("ru864", "RU864", 125000, 12, None, 0.01, "RP002 2.13: under 1% on its default channels, no dwell limit"),
+    ("eu433", "EU433", 125000, 12, None, 0.10, "RP002 2.7: under 10%, no dwell limit"),
+    (
+        "cn470",
+        "CN470",
+        125000,
+        12,
+        1000 * MS,
+        None,
+        "RP002 2.9.2: a transmission may not exceed one second, so at SF12 (DR0) LoRaWAN carries nothing",
+    ),
 ]
+# CN779 is left out: RP002 2.6 deprecates it, and no new devices may be installed.
 
 PREAMBLES = (16, 8)  # the draft's example uses 16; the firmware's default is 8
 
@@ -309,7 +324,7 @@ def slowest_fitting(bw, sf_max, dwell, frame, preamble):
 
 
 def max_frame(bw, sf, dwell, preamble):
-    """The longest frame that fits at this SF under the dwell limit."""
+    """The longest frame that fits at this SF under the dwell limit, or -1 if none does."""
     n = MAX_FRAME
     while n >= 0 and dwell is not None and airtime(sf, bw, n, preamble=preamble) > dwell:
         n -= 1
@@ -355,7 +370,9 @@ def report() -> str:
     for key, name, bw, sf_max, dwell, duty, src in REGIONS:
         if dwell is None:
             continue
-        longest = " / ".join(f"{max_frame(bw, sf_max, dwell, p)} B" for p in PREAMBLES)
+        longest = " / ".join(f"{max_frame(bw, sf_max, dwell, p)} B" for p in PREAMBLES).replace(
+            "-1 B", "none"
+        )
         row = f"| {name} | SF{sf_max}/{bw // 1000} | {longest} |"
         for ckey, *_ in CASES:
             fr = sized[ckey]
@@ -405,9 +422,19 @@ def splice(doc: str, body: str) -> str:
     return before + BEGIN + "\n\n" + body + "\n" + END + after
 
 
+def check_lorawan():
+    """The longest frames under a dwell limit match the PHY payloads RP002 allows: its MACPayload
+    limit M plus LoRaWAN's 5 bytes of framing, at LoRaWAN's 8-symbol preamble."""
+    us_dr0 = max_frame(125000, 10, 400 * MS, 8)
+    assert us_dr0 == 19 + 5, f"US915 DR0: {us_dr0}"  # RP002 2.5.6
+    cn470 = [max_frame(125000, sf, 1000 * MS, 8) for sf in (11, 10, 9)]
+    assert cn470 == [31 + 5, 94 + 5, 192 + 5], f"CN470 DR1-3: {cn470}"  # RP002 2.9.6, Table 45
+
+
 def main(argv):
     check_rfc9529()
     check_airtime()
+    check_lorawan()
     cmd = argv[1] if len(argv) > 1 else "report"
     body = report()
     if cmd == "report":

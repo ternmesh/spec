@@ -14,18 +14,19 @@ The numbers come from [`first_contact_fit.py`](first_contact_fit.py), which CI r
 each message to RFC 9528's structure byte for byte. Before anything else it checks that the
 messages it builds for RFC 9529's two example traces have the lengths RFC 9529 publishes, and that
 its time on air matches the reference table the simulator and the firmware test against, to the
-nanosecond. As a further check, its longest frame at SF10/125 kHz under a 400 ms dwell limit with
-an 8-symbol preamble is 24 bytes, which is the PHY payload LoRaWAN allows at US915 DR0.
+nanosecond. As a further check against an independent source, the longest frames it finds under a
+dwell limit, with LoRaWAN's 8-symbol preamble, are exactly the PHY payloads RP002 allows: 24 bytes
+at US915 DR0 (400 ms), and 36, 99 and 197 bytes at CN470 DR1 to DR3 (1 s).
 
 ## Findings
 
 1. **Every message fits one LoRa frame**, in every case below. The largest is 155 bytes, against
    255. EDHOC needs no fragmentation in Tern.
-2. **Where there is no dwell limit, every message fits at the slowest setting** (EU868, IN865, and
-   the US on 500 kHz channels). There the cost is airtime, not fit. In the EU's 1% sub-band at
-   SF12, one handshake takes 12 to 21% of each side's hourly allowance. That is affordable once,
-   but it is a reason to run first contact faster than SF12, or in the 10% band, where it costs
-   1 to 2%.
+2. **Where there is no dwell limit, every message fits at the slowest setting** (EU868, EU433,
+   RU864, IN865, and the US on 500 kHz channels). There the cost is airtime, not fit. In the EU's 1% sub-band at
+   SF12, one handshake takes 12 to 21% of each side's hourly allowance, and the same in RU864.
+   That is affordable once, but it is a reason to run first contact faster than SF12, or in a 10%
+   band (EU868 at 869.4-869.65 MHz, or EU433), where it costs 1 to 2%.
 3. **Under a 400 ms dwell limit, nothing fits at the slowest legal setting.** That setting is
    SF10/125 kHz (US915 hopping channels, and AS923 and AU915 where dwell applies), and it carries
    a frame of at most 19 bytes with a 16-symbol preamble, or 24 with 8. Even `message_1`, 45
@@ -48,6 +49,11 @@ an 8-symbol preamble is 24 bytes, which is the PHY payload LoRaWAN allows at US9
    review.
 6. **KR920 allows up to 4 s per frame.** First contact with static DH (`dh-kid` and `dh-first`)
    fits at SF12. `dh-value` and the signature cases need SF11, with a 16-symbol preamble.
+7. **CN470 allows up to 1 s per frame**, too little for anything at SF12 (RP002 calls that rate
+   N/A). First contact with static DH (`dh-kid` and `dh-first`) fits at SF10; `dh-value` and
+   the signature cases need SF9.
+
+CN779 is left out: RP002 deprecates it, and no new devices may be installed there.
 
 ## Assumptions
 
@@ -110,6 +116,7 @@ The longest frame each region's slowest setting can carry, and the slowest sprea
 | US915, 125 kHz, hopping | SF10/125 | 19 B / 24 B | SF9 / SF9 | SF8 / SF8 | SF8 / SF8 | SF8 / SF8 | SF7 / SF7 |
 | AS923 and AU915, where dwell applies | SF10/125 | 19 B / 24 B | SF9 / SF9 | SF8 / SF8 | SF8 / SF8 | SF8 / SF8 | SF7 / SF7 |
 | KR920 | SF12/125 | 90 B / 100 B | SF12 / SF12 | SF12 / SF12 | SF11 / SF12 | SF11 / SF11 | SF11 / SF11 |
+| CN470 | SF12/125 | 0 B / 10 B | SF10 / SF10 | SF10 / SF10 | SF9 / SF10 | SF9 / SF9 | SF9 / SF9 |
 
 ### Regions without one
 
@@ -137,6 +144,16 @@ Every frame fits at the slowest setting, so what matters is time on air: millise
 | IN865 | SF12/125 | `dh-value` | 5,784 | 4,202 (+1,581) | - |
 | IN865 | SF12/125 | `sig-first` | 7,586 | 4,530 (+1,581) | - |
 | IN865 | SF12/125 | `sig-value` | 7,586 | 6,005 (+1,581) | - |
+| RU864 | SF12/125 | `dh-kid` | 4,309 | 2,728 (+1,581) | 12.0% / 12.0% |
+| RU864 | SF12/125 | `dh-first` | 5,784 | 2,728 (+1,581) | 16.1% / 12.0% |
+| RU864 | SF12/125 | `dh-value` | 5,784 | 4,202 (+1,581) | 16.1% / 16.1% |
+| RU864 | SF12/125 | `sig-first` | 7,586 | 4,530 (+1,581) | 21.1% / 17.0% |
+| RU864 | SF12/125 | `sig-value` | 7,586 | 6,005 (+1,581) | 21.1% / 21.1% |
+| EU433 | SF12/125 | `dh-kid` | 4,309 | 2,728 (+1,581) | 1.2% / 1.2% |
+| EU433 | SF12/125 | `dh-first` | 5,784 | 2,728 (+1,581) | 1.6% / 1.2% |
+| EU433 | SF12/125 | `dh-value` | 5,784 | 4,202 (+1,581) | 1.6% / 1.6% |
+| EU433 | SF12/125 | `sig-first` | 7,586 | 4,530 (+1,581) | 2.1% / 1.7% |
+| EU433 | SF12/125 | `sig-value` | 7,586 | 6,005 (+1,581) | 2.1% / 2.1% |
 
 ### Sources for each region
 
@@ -147,6 +164,9 @@ Every frame fits at the slowest setting, so what matters is time on air: millise
 * **AS923 and AU915, where dwell applies:** RP002 2.8, 2.10: where UplinkDwellTime is 1 (400 ms), which is country by country, DR2, SF10, is the slowest.
 * **KR920:** RP002 2.11.6: under 4 s per frame, with LBT.
 * **IN865:** RP002 2.12: no dwell or duty cycle limit.
+* **RU864:** RP002 2.13: under 1% on its default channels, no dwell limit.
+* **EU433:** RP002 2.7: under 10%, no dwell limit.
+* **CN470:** RP002 2.9.2: a transmission may not exceed one second, so at SF12 (DR0) LoRaWAN carries nothing.
 
 <!-- generated by first_contact_fit.py: end -->
 
