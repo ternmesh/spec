@@ -114,6 +114,16 @@ def withdrawn(named, number, round_):
     return (number - named) % 65536 >= allowed
 
 
+def numbering(last, number, promise_passed, names_none, had_margin):
+    """What a node does with an announce from a neighbour it knows."""
+    gap = (number - last) % 65536
+    late = gap >= 0x8000
+    again = names_none and (late or had_margin)
+    if gap == 0 or (late and not again and not promise_passed):
+        return "discard"
+    return "again" if late or again else "take"
+
+
 def link_cost(sf, bw):
     return max(1, -(-phy.airtime_ns(sf, bw, REF_LEN) // 1_000_000))
 
@@ -182,6 +192,12 @@ def self_check():
     assert f == -22 * 16 and margin_byte(22, f) == 128 + 44
     # Heard exactly at the floor, the sample is the power: (3 * -15 + 0) / 4 = -11.25, down to -12.
     assert floor_next(-15, 0, -50, 9) == -12
+    assert numbering(5, 6, False, False, True) == "take"
+    assert numbering(5, 5, True, True, True) == "discard"
+    assert numbering(5, 4, False, False, True) == "discard"
+    assert numbering(5, 4, True, False, True) == "again"
+    assert numbering(5, 6, False, True, True) == "again"
+    assert numbering(5, 6, False, True, False) == "take"
     assert not withdrawn(10, 18, 1) and withdrawn(10, 19, 1) and withdrawn(0xFFFF, 8, 0)
 
 
@@ -278,6 +294,20 @@ def build():
             (10, 10, 1), (10, 18, 1), (10, 19, 1), (10, 18, 0), (10, 19, 0), (0xFFFC, 4, 1),
             (0xFFFC, 5, 1), (100, 124, 3), (100, 125, 3), (0, 0x7FFE, 0x7FFF),
             (0, 0x7FFF, 0x7FFF), (0, 0x8000, 0x7FFF),
+        ]
+    ]
+
+    numbered = [
+        {
+            "last": last, "number": number, "promise_passed": passed, "names_none": none,
+            "had_margin": had, "does": numbering(last, number, passed, none, had),
+        }
+        for last, number, passed, none, had in [
+            (10, 11, False, False, True), (10, 10, False, False, True), (10, 10, True, True, True),
+            (10, 9, False, False, True), (10, 9, True, False, True), (10, 9, False, True, False),
+            (10, 11, False, True, True), (10, 11, False, True, False), (10, 11, True, False, False),
+            (0xFFFF, 0, False, False, False), (0, 0x7FFF, False, False, True),
+            (0, 0x8000, False, False, True), (0, 0x8000, True, False, True),
         ]
     ]
 
@@ -381,6 +411,7 @@ def build():
         "floors": floors,
         "links": links,
         "named": named,
+        "numbering": numbered,
         "costs": costs,
         "feasible": feas,
         "selection": selection,

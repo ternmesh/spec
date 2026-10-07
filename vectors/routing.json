@@ -626,6 +626,112 @@
       "withdrawn": true
     }
   ],
+  "numbering": [
+    {
+      "last": 10,
+      "number": 11,
+      "promise_passed": false,
+      "names_none": false,
+      "had_margin": true,
+      "does": "take"
+    },
+    {
+      "last": 10,
+      "number": 10,
+      "promise_passed": false,
+      "names_none": false,
+      "had_margin": true,
+      "does": "discard"
+    },
+    {
+      "last": 10,
+      "number": 10,
+      "promise_passed": true,
+      "names_none": true,
+      "had_margin": true,
+      "does": "discard"
+    },
+    {
+      "last": 10,
+      "number": 9,
+      "promise_passed": false,
+      "names_none": false,
+      "had_margin": true,
+      "does": "discard"
+    },
+    {
+      "last": 10,
+      "number": 9,
+      "promise_passed": true,
+      "names_none": false,
+      "had_margin": true,
+      "does": "again"
+    },
+    {
+      "last": 10,
+      "number": 9,
+      "promise_passed": false,
+      "names_none": true,
+      "had_margin": false,
+      "does": "again"
+    },
+    {
+      "last": 10,
+      "number": 11,
+      "promise_passed": false,
+      "names_none": true,
+      "had_margin": true,
+      "does": "again"
+    },
+    {
+      "last": 10,
+      "number": 11,
+      "promise_passed": false,
+      "names_none": true,
+      "had_margin": false,
+      "does": "take"
+    },
+    {
+      "last": 10,
+      "number": 11,
+      "promise_passed": true,
+      "names_none": false,
+      "had_margin": false,
+      "does": "take"
+    },
+    {
+      "last": 65535,
+      "number": 0,
+      "promise_passed": false,
+      "names_none": false,
+      "had_margin": false,
+      "does": "take"
+    },
+    {
+      "last": 0,
+      "number": 32767,
+      "promise_passed": false,
+      "names_none": false,
+      "had_margin": true,
+      "does": "take"
+    },
+    {
+      "last": 0,
+      "number": 32768,
+      "promise_passed": false,
+      "names_none": false,
+      "had_margin": true,
+      "does": "discard"
+    },
+    {
+      "last": 0,
+      "number": 32768,
+      "promise_passed": true,
+      "names_none": false,
+      "had_margin": true,
+      "does": "again"
+    }
+  ],
   "costs": [
     {
       "profile": "US915",

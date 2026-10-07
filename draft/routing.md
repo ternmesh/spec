@@ -24,7 +24,9 @@ produced by [`vectors/tools/routing.py`](../vectors/tools/routing.py).
    53% at best for the flooding designs it compared.
 2. **Never a loop.** Routes change while frames are in flight. No
    change, however it is delayed or lost, may send a frame round in a
-   circle.
+   circle. This draft keeps that between nodes that keep their state,
+   and not yet across a restart (see
+   [Not yet specified](#not-yet-specified)).
 3. **A bounded share of the channel.** What a node spends on routing is
    capped, whatever happens around it.
 4. **Quiet when nothing changes.** A network at rest announces rarely;
@@ -161,11 +163,19 @@ neighbour's margin is withdrawn.
 A node MUST forget a neighbour, and every route through it, once it has
 heard nothing from it for `SILENT_MAX` and for two of its promises.
 
-**Numbers out of order.** An announce whose `number` is not newer than
-the last from the same sender is a copy or is late, and is discarded
-whole, unless nothing has been heard from that sender for one of its
-promises. Then the sender has restarted: the node forgets it, and takes
-the frame as from a neighbour it has just found.
+**A neighbour that has started again** has lost what it announced, and
+numbers its announces from somewhere else. A node takes a neighbour to
+have started again when an announce from it:
+
+* has a `number` that is not newer than its last, and nothing has been
+  heard from it for one of its promises; or
+* names no neighbours, with a `round` of 0, and either its `number` is
+  not newer than its last or it has given this node a margin before.
+
+The node then forgets the neighbour, and every route through it, and
+takes the frame as from a neighbour it has just found. Any other
+announce whose `number` is not newer than the sender's last is a copy
+or is late, and is discarded whole.
 
 ### Power for every neighbour
 
@@ -174,6 +184,9 @@ as the nearest few need. With the floors of at least `POWER_K`
 neighbours known, a node sends such frames at the `POWER_K`-th lowest
 of them plus `POWER_MARGIN`, rounded up to a whole dBm and kept between
 its lowest power and its full power. With fewer, at full power.
+
+A frame for one neighbour, as a request can be, goes at that
+neighbour's floor plus `POWER_MARGIN`, rounded and kept likewise.
 
 ## Routes
 
@@ -302,9 +315,9 @@ Announces are timed by Trickle (RFC 6206). A node's interval starts at
 node picks a random time in its second half, and announces then unless
 it has heard `REDUNDANCY` or more **consistent** announces since the
 interval began. An announce heard is consistent unless it changes
-something this node announces: a route gained, lost, moved to another
-neighbour or [changed](#what-a-node-announces), or a neighbour found,
-forgotten, or its link going up or down.
+something this node announces: a route gained, lost or
+[changed](#what-a-node-announces), or a neighbour found, forgotten,
+changing its role, or its link going up or down.
 
 Anything that does is an **inconsistency**: if the interval is longer
 than `I_MIN`, a new interval of `I_MIN` begins at once. To **announce
@@ -387,6 +400,13 @@ An implementation conforms to this section if, for
 * **named:** it takes a margin as withdrawn, or not, as `withdrawn`
   says, when the neighbour last named it in announce `named` and has
   now sent `number`, with `round`;
+* **numbering:** hearing an announce numbered `number` from a
+  neighbour whose last was `last`, it does as `does` says: `take` it,
+  `discard` it, or take the neighbour to have started `again`.
+  `promise_passed` says whether nothing was heard from the neighbour
+  for one of its promises, `names_none` whether the announce names no
+  neighbours with a `round` of 0, and `had_margin` whether the
+  neighbour had given this node a margin;
 * **costs:** for each profile, a link costs `link_cost`;
 * **feasible:** with the feasibility distance given (`null` for none),
   it finds each route feasible or not;
@@ -468,7 +488,9 @@ frames are little-endian.
 
 **A restarted neighbour.** The simulator's nodes never lose their
 state. A real one does, and its announces then carry numbers its
-neighbours take for old. The promise bounds how long that lasts.
+neighbours take for old. A node that has just started hears no one, and
+says so in its first announce, which is how its neighbours usually
+learn; the promise bounds how long it takes them otherwise.
 
 ## Not yet measured
 
@@ -489,6 +511,15 @@ neighbours take for old. The promise bounds how long that lasts.
   for the next hop sending it, retries twice, and then tries another
   route) is the next draft. It decides how much of who is talking to
   whom an observer can see.
+* **Restarts.** A node that restarts has lost its feasibility
+  distances, which are what keep it from selecting a route that leads
+  back through itself. Until each neighbour has heard that it started
+  again, and dropped the routes it had through it, such a route can be
+  selected and a frame can loop. In the reference implementation's
+  tests, with a third of announces lost and a node in twelve restarting
+  every hundred seconds, the longest loop lasted about three minutes.
+  Closing it needs the restarted node to know which neighbours have
+  heard: an echo of some kind, or a wait.
 * **Authentication.** Nothing here is signed. A node can announce a
   route it does not have, claim another's routing id, or raise
   another's sequence number. A signature is 64 bytes, a quarter of a
