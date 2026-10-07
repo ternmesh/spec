@@ -30,6 +30,7 @@ REF_LEN = 32
 NAMED_ROUNDS = 8
 LINK_MARGIN, LINK_BAND = 0, 3 * 16  # sixteenths of a dB
 ROUTES_KEPT = 4
+REPLACE_BAND = 6 * 16
 
 
 def rid(address):
@@ -181,6 +182,16 @@ def replaces(fd, cost, routes, selected, offered):
     return worst[0] if below(worst[1], rank(fd, cost, offered)) else None
 
 
+def place(neighbours, floor):
+    """Which neighbour of a full table a node heard with `floor` takes the place of, or None."""
+    down = [(n["floor_sixteenths"], i) for i, n in enumerate(neighbours) if not n["up"]]
+    if not down:
+        return None
+    worst, at = max(down)
+    assert [f for f, _ in down].count(worst) == 1, "the vectors leave no tie to break"
+    return at if floor + REPLACE_BAND <= worst else None
+
+
 def self_check():
     assert newer(1, 0) and newer(0, 0xFFFF) and not newer(0, 0) and not newer(0, 1)
     assert newer(0x7FFF, 0) and not newer(0x8000, 0)
@@ -199,6 +210,8 @@ def self_check():
     assert numbering(5, 4, False, True, False) == "again"
     assert numbering(5, 4, False, True, True) == "take"
     assert not withdrawn(10, 18, 1) and withdrawn(10, 19, 1) and withdrawn(0xFFFF, 8, 0)
+    two = [{"floor_sixteenths": 0, "up": False}, {"floor_sixteenths": 160, "up": True}]
+    assert place(two, -96) == 0 and place(two, -95) is None
 
 
 def build():
@@ -386,6 +399,27 @@ def build():
             }
         )
 
+    def table(*pairs):
+        return [{"floor_sixteenths": f, "up": u} for f, u in pairs]
+
+    down = table((-320, False), (-80, False), (-200, False), (-400, False))
+    mixed = table((-320, True), (-80, True), (-200, False), (-400, False))
+    places = [
+        {"neighbours": t, "floor_sixteenths": f, "replaces": place(t, f)}
+        for t, f in [
+            (down, -176),  # 6 dB nearer than the furthest
+            (down, -175),  # a sixteenth short of it
+            (down, -600),
+            (down, 0),
+            (mixed, -296),  # 6 dB nearer than the furthest whose link is not up
+            (mixed, -295),
+            (mixed, -176),  # nearer than a link that is up, which stays
+            (table((-320, True), (-80, True), (-200, True), (-400, True)), -2000),
+            (table((100, False)), 4),
+            (table((100, False)), 5),
+        ]
+    ]
+
     return {
         "description": "Routing, draft 0 (draft/routing.md). Routing ids, sequence numbers, "
         "promise codes and metrics are numbers; addresses and frames are hex. In floors, powers "
@@ -393,7 +427,10 @@ def build():
         "SX126x reports it, and floor_sixteenths is the floor in sixteenths of a dBm. In links, "
         "own_margin_sixteenths is the node's full power less its floor for the neighbour, in "
         "sixteenths of a decibel, and their_margin is the margin byte the neighbour gave; either "
-        "is null when it is missing, and the steps follow one another. In selection and kept, "
+        "is null when it is missing, and the steps follow one another. In places, neighbours is a "
+        "full table, each with the node's floor for it and whether its link is up, "
+        "floor_sixteenths is the floor an announce from a node not in it gives, and replaces is "
+        "an index into neighbours. In selection and kept, "
         "each route's metric is the one its neighbour announced, every link costs link_cost, and "
         "selected, selects and replaces are indexes into routes.",
         "generator": "vectors/tools/routing.py",
@@ -415,6 +452,7 @@ def build():
         "floors": floors,
         "links": links,
         "named": named,
+        "places": places,
         "numbering": numbered,
         "costs": costs,
         "feasible": feas,
