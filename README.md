@@ -14,7 +14,7 @@ specified.
 
 * [GOVERNANCE.md](GOVERNANCE.md) — who decides, what is promised, and when the project moves
 * [CONTRIBUTING.md](CONTRIBUTING.md) — DCO sign-off and how to write spec text
-* [draft/](draft/README.md) — sections written ahead of v0 because they do not depend on routing, starting with [secured unicast frames](draft/unicast-security.md) and [first contact](draft/first-contact.md)
+* [draft/](draft/README.md) — sections written ahead of v0 because they do not depend on routing, starting with [secured unicast frames](draft/unicast-security.md), [first contact](draft/first-contact.md) and provisional [radio settings](draft/phy.md)
 * `vectors/` — conformance test vectors
 * [analysis/](analysis/) — questions the specification needs answered, worked from public sources, starting with [whether first contact fits one frame](analysis/first-contact-fit.md)
 
