@@ -180,8 +180,9 @@ node it does not keep, with no room left, a node looks at the
 neighbours whose links are not up. If the floor the announce gives is
 `REPLACE_BAND` or more below the highest floor among them, the node
 MUST forget that neighbour, and every route through it, and keep the
-sender in its place. Otherwise it MUST take nothing from the announce.
-A node MUST NOT replace a neighbour whose link is up.
+sender in its place; of two with that floor, either. Otherwise it MUST
+take nothing from the announce. A node MUST NOT replace a neighbour
+whose link is up.
 
 ### Power for every neighbour
 
@@ -424,6 +425,9 @@ An implementation conforms to this section if, for
 * **named:** it takes a margin as withdrawn, or not, as `withdrawn`
   says, when the neighbour last named it in announce `named` and has
   now sent `number`, with `round`;
+* **places:** with the full table of `neighbours` given, hearing an
+  announce that gives `floor_sixteenths` from a node not among them, it
+  replaces `replaces` (`null` for none);
 * **numbering:** hearing an announce numbered `number` from a
   neighbour whose last was `last`, it does as `does` says: `take` it,
   `discard` it, or forget the neighbour and take it as found `again`.
