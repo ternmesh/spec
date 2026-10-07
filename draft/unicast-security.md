@@ -122,9 +122,15 @@ The frame is `16 + p` bytes. A LoRa frame carries at most 255 bytes, so
 
 So `hdr` is `0x48`. Other formats, types and flags are reserved.
 
-`hop` and `label` belong to the routing layer, which has not been
-chosen yet (MSH-27). Relays may change them on every hop, so they are
-not authenticated end to end. This section only fixes where they are.
+`hop` and `label` belong to the routing layer. Relays may change them
+on every hop, so they are not authenticated end to end.
+
+**To be changed.** The routing layer is now drafted, and needs more
+than these three bytes: [Frames that follow routes](forwarding.md#the-head)
+puts ten bytes where `hop` and `label` are, which moves the destination
+tag to offset 11 and makes the overhead 23 bytes. Nothing else here
+changes. This section and its vectors still give the layout above, and
+are to be brought into line.
 
 ## Sending
 

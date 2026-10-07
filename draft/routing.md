@@ -10,8 +10,8 @@ radios (see [Not yet measured](#not-yet-measured)).
 This section defines how a node learns which neighbour to hand a frame
 to for each node it can reach: the frames nodes announce themselves and
 their routes with, how a node judges its links, and how it chooses,
-keeps and repairs routes. It does not yet define the frames that
-*follow* those routes; see [Not yet specified](#not-yet-specified).
+keeps and repairs routes. The frames that *follow* those routes are
+[their own section](forwarding.md).
 
 Test vectors: [`vectors/routing.json`](../vectors/routing.json),
 produced by [`vectors/tools/routing.py`](../vectors/tools/routing.py).
@@ -164,6 +164,9 @@ A node MUST forget a neighbour, and every route through it, once it has
 heard nothing from it for `SILENT_MAX` and for two of its promises. A
 neighbour whose last announce made no promise is not forgotten for its
 silence, however long: it said it could not tell how long it would be.
+Silence is otherwise no signal here, announces being lost too often for
+it to be one. What tells of a neighbour that has gone is
+[frames sent to it and lost](forwarding.md#hops).
 
 **Numbers out of order.** An announce whose `number` is not newer than
 the last from the same sender is a copy or is late, and is discarded
@@ -193,7 +196,9 @@ of them plus `POWER_MARGIN`, rounded up to a whole dBm and kept between
 its lowest power and its full power. With fewer, at full power.
 
 A frame for one neighbour, as a request can be, goes at that
-neighbour's floor plus `POWER_MARGIN`, rounded and kept likewise.
+neighbour's floor plus `POWER_MARGIN`, rounded and kept likewise, and
+louder by the neighbour's boost, which
+[frames sent to it and lost](forwarding.md#hops) raise.
 
 ## Routes
 
@@ -558,18 +563,6 @@ taking no account of role: 23% and 84% at SF7 with 32 places, against
 
 ## Not yet specified
 
-* **The frames that follow routes.** A relay must learn where a frame
-  is going, and the [secured unicast frame](unicast-security.md) says
-  only what its two ends can read. What a data frame carries for
-  relays — the destination's routing id and the next hop's, or a label
-  — and how a hop learns that its frame went on (the simulator listens
-  for the next hop sending it, retries twice, and then tries another
-  route) is the next draft. It decides how much of who is talking to
-  whom an observer can see.
-* **A dead neighbour.** Silence is not a signal here: announces are
-  lost too often for it to be one, and a neighbour that made no promise
-  is never forgotten for it. What tells is frames sent to a neighbour
-  and lost, which waits for the frames that follow routes.
 * **Closing the wait.** A starting node that knew which neighbours had
   heard it could select through those at once, and would never select
   through one that had not.
