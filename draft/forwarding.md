@@ -66,9 +66,16 @@ Two types are defined:
 
 A message is at least 23 bytes: the head, the tag and the 8-byte check
 of an empty message. An acknowledgement is exactly 19 bytes. A receiver
-MUST discard a frame shorter than 15 bytes, an acknowledgement of any
+MUST discard a message shorter than 23 bytes, an acknowledgement of any
 other length, and a frame whose `next` or `destination` is a reserved
 id.
+
+**The same frame.** Four bytes of tag do not tell every message from
+every other: two in the air at once share one now and then. So two
+frames are **the same frame** only if they are of one length and every
+byte from `destination` on is equal, which for a message takes in its
+ciphertext and check. `tag` is only where an acknowledgement is matched
+to its message, since an acknowledgement carries nothing else of it.
 
 In the [secured unicast frame](unicast-security.md) as first drafted,
 `hop` and `label` held three bytes for this layer. Bytes 1 to 10 here
@@ -110,9 +117,9 @@ A node that receives a frame first checks whether it
 3. A message whose `destination` is the node's id is for it.
 4. Anything else is to be passed on. A leaf MUST NOT pass a frame on.
    A relay MUST NOT pass on a frame whose `hops` is 0 or 1. A relay
-   that already holds the frame — same `hdr`, `destination` and `tag` —
-   and has not finished with it MUST ignore the copy: the node before
-   will hear it pass the first on. Otherwise the relay sends it as
+   that already holds [the same frame](#the-head) and has not finished
+   with it MUST ignore the copy: the node before will hear it pass the
+   first on. Otherwise the relay sends it as
    [above](#sending), with `hops` one less.
 
 A relay with no route for a frame drops it, and
@@ -126,9 +133,14 @@ there is none is dropped.
 A node that has sent a frame to a neighbour **listens**. The hop has
 succeeded when the node receives:
 
-* the same frame — same `hdr`, `destination` and `tag` — with `hops`
-  one less than it sent; or
+* [the same frame](#the-head), with `hops` one less than it sent; or
 * for a message, any acknowledgement with the message's `tag`.
+
+An acknowledgement for another message with the same tag ends the hop
+too, wrongly, once in 2^32 for each pair of messages a node hears at
+once. The message is then not sent again from that node, and its source
+sends it again as for any other loss: the source is not deceived,
+[checking `proof`](#messages) against its own message.
 
 It listens for `HOP_WAIT` plus twice the frame's airtime, from when the
 frame went on the air. Without either, it sends the frame again, up to
@@ -235,9 +247,8 @@ An implementation conforms to this section if, for
 * **heads:** it builds `frame` from the fields given, and reads the
   fields from `frame`;
 * **rejected:** it discards each `frame`;
-* **hops:** having sent a frame with the `sent` fields, it finds that
-  receiving one with the `heard` fields ends the hop, or not, as `ends`
-  says;
+* **hops:** having sent the frame `sent`, it finds that receiving the
+  frame `heard` ends the hop, or not, as `ends` says;
 * **backs:** having received a frame sent at `power` and heard at
   `snr_quarter_db`, at `spreading_factor`, with `lowest` and `full` its
   own lowest and full power, it finds that its answer must go at

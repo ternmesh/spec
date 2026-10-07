@@ -23,6 +23,8 @@ HDR_MESSAGE, HDR_ACK = 0x48, 0x50
 RESERVED = (0, 0xFFFFFFFF)
 HEAD, TAG = 11, 4
 ACK_LEN = HEAD + TAG + 4
+MESSAGE_MIN = HEAD + TAG + 8
+AT_DEST = 7
 HOP_MAX = 32
 POWER_MARGIN = 10
 STEP = 3
@@ -34,24 +36,23 @@ def head(h):
 
 def accepted(frame):
     """Whether a receiver takes a frame at all."""
-    if len(frame) < HEAD + TAG or len(frame) > 255 or frame[0] not in (HDR_MESSAGE, HDR_ACK):
+    if len(frame) > 255 or not frame or frame[0] not in (HDR_MESSAGE, HDR_ACK):
         return False
     if frame[0] == HDR_ACK and len(frame) != ACK_LEN:
+        return False
+    if frame[0] == HDR_MESSAGE and len(frame) < MESSAGE_MIN:
         return False
     _, _, _, nxt, dst = struct.unpack(">BBbII", frame[:HEAD])
     return nxt not in RESERVED and dst not in RESERVED
 
 
 def ends(sent, heard):
-    """Whether hearing one frame ends the hop of another this node sent."""
-    passed = (
-        heard["hdr"] == sent["hdr"]
-        and heard["destination"] == sent["destination"]
-        and heard["tag"] == sent["tag"]
-        and heard["hops"] + 1 == sent["hops"]
-    )
+    """Whether hearing one frame ends the hop of another this node sent: both whole frames."""
+    passed = sent[AT_DEST:] == heard[AT_DEST:] and sent[0] == heard[0] and heard[1] + 1 == sent[1]
     answered = (
-        sent["hdr"] == HDR_MESSAGE and heard["hdr"] == HDR_ACK and heard["tag"] == sent["tag"]
+        sent[0] == HDR_MESSAGE
+        and heard[0] == HDR_ACK
+        and heard[HEAD : HEAD + TAG] == sent[HEAD : HEAD + TAG]
     )
     return passed or answered
 
@@ -99,6 +100,8 @@ def build():
     rejected = []
     for why, frame in [
         ("shorter than a head and a tag", head(good) + bytes(3)),
+        ("a message with a tag and no check", head(good) + bytes(4)),
+        ("a message a byte short of its check", head(good) + bytes(11)),
         ("not a frame of this section's", head({**good, "hdr": 0x59}) + bytes(12)),
         ("an acknowledgement too long", head({**good, "hdr": 0x50}) + bytes(9)),
         ("an acknowledgement too short", head({**good, "hdr": 0x50}) + bytes(7)),
@@ -110,23 +113,33 @@ def build():
         assert not accepted(frame)
         rejected.append({"why": why, "frame": frame.hex()})
 
-    sent = {"hdr": 0x48, "hops": 20, "destination": 9, "tag": "30313233"}
-    ack = {"hdr": 0x50, "hops": 20, "destination": 9, "tag": "30313233"}
+    tag, other = bytes.fromhex("30313233"), bytes.fromhex("40414243")
+    body = tag + bytes(range(0x60, 0x6D))  # the tag, five bytes of message and the check
+
+    def message(hops, destination=9, rest=body, nxt=7, pw=14):
+        return head({"hdr": 0x48, "hops": hops, "power": pw, "next": nxt, "destination": destination}) + rest
+
+    def ack(hops, destination=77, t=tag, nxt=7):
+        return head({"hdr": 0x50, "hops": hops, "power": 3, "next": nxt, "destination": destination}) + t + bytes(4)
+
     hops = []
-    for s, h in [
-        (sent, {**sent, "hops": 19}),  # passed on
-        (sent, {**sent, "hops": 20}),  # another copy of what it sent
-        (sent, {**sent, "hops": 18}),  # passed on twice: not by its neighbour
-        (sent, {**sent, "hops": 19, "tag": "30313234"}),
-        (sent, {**sent, "hops": 19, "destination": 10}),
-        (sent, {"hdr": 0x50, "hops": 32, "destination": 77, "tag": "30313233"}),  # acknowledged
-        (sent, {"hdr": 0x50, "hops": 5, "destination": 77, "tag": "30313233"}),
-        (sent, {"hdr": 0x50, "hops": 32, "destination": 77, "tag": "40414243"}),
-        (ack, {**ack, "hops": 19}),
-        (ack, {"hdr": 0x48, "hops": 19, "destination": 9, "tag": "30313233"}),
-        ({**sent, "hops": 0}, {**sent, "hops": 255}),  # hops do not wrap
+    for why, s, h in [
+        ("passed on", message(20), message(19, nxt=8, pw=-2)),
+        ("another copy of what it sent", message(20), message(20)),
+        ("passed on twice: not by its neighbour", message(20), message(18)),
+        ("another tag", message(20), message(19, rest=other + body[4:])),
+        ("the same tag and another message", message(20), message(19, rest=tag + bytes(13))),
+        ("the same tag and a longer message", message(20), message(19, rest=body + b"\x00")),
+        ("for another node", message(20), message(19, destination=10)),
+        ("acknowledged", message(20), ack(32)),
+        ("acknowledged, heard further off", message(20), ack(5)),
+        ("another message acknowledged", message(20), ack(32, t=other)),
+        ("an acknowledgement passed on", ack(20, destination=9), ack(19, destination=9, nxt=8)),
+        ("an acknowledgement is not ended by a message", ack(20, destination=9), message(19)),
+        ("hops do not wrap", message(0), message(255)),
     ]:
-        hops.append({"sent": s, "heard": h, "ends": ends(s, h)})
+        assert accepted(s) and accepted(h)
+        hops.append({"why": why, "sent": s.hex(), "heard": h.hex(), "ends": ends(s, h)})
 
     backs = [
         {
@@ -150,8 +163,8 @@ def build():
 
     return {
         "description": "Frames that follow routes, draft 0 (draft/forwarding.md). Routing ids "
-        "are numbers; frames and tags are hex. In hops, sent is what the node sent and heard "
-        "what it then received. In backs, power is what a frame was sent at in dBm and "
+        "are numbers; frames and tags are hex. In hops, sent is the frame the node sent and "
+        "heard the one it then received. In backs, power is what a frame was sent at in dBm and "
         "snr_quarter_db what it was heard at, and needs is what an answer must go at for its "
         "sender to hear it, between the node's lowest and full power. In powers, neighbour is "
         "what Routes gives for the neighbour, its boost included, back is what the node the "
