@@ -86,7 +86,8 @@ antenna, to 30 dBm.
 **Transmitting.** Where a profile limits it, the time on air of all a
 node's transmissions that begin in any period of the length given MUST
 NOT exceed that share of the period. A node that would exceed it by
-sending a frame MUST NOT send the frame until it would not. This is the
+sending a frame MUST NOT send the frame until it would not. A period
+includes the instant it starts at and not the instant it ends at. This is the
 regulator's limit, the same for every node. The airtime budget, which
 divides the channel between nodes, is a separate and smaller allowance,
 and is not specified yet.
@@ -97,13 +98,20 @@ An implementation conforms to this section if, for
 [`vectors/phy.json`](../vectors/phy.json):
 
 * it uses `sync_word`, as `sync_word_sx126x` on a radio of that family,
-  with `preamble_symbols` and coding rate 4/`coding_rate_denominator`;
+  with `preamble_symbols`, coding rate 4/`coding_rate_denominator`, a
+  header that is explicit or not as `explicit_header` says, a CRC or
+  not as `crc` says, and IQ inverted or not as `iq_inverted` says;
 * for each profile it implements, it uses `frequency_hz`, `bandwidth_hz`
-  and `spreading_factor`;
+  and `spreading_factor`, with low data rate optimisation on or off as
+  `low_data_rate_optimisation` says;
 * for each profile and each `length`, it computes the time on air `ns`;
 * given the times at which it is asked to send frames, it sends none
   that would take its time on air past `duty_cycle_ppm` millionths of
-  any `duty_window_s` seconds.
+  any `duty_window_s` seconds: for each case in a profile's `duty`,
+  having sent the frames in `sent`, it does not send the frame asked
+  for at `at_ns` if `must_refuse` is true. Where it is false the limit
+  does not forbid the frame; a node may still hold it back, since
+  nothing here obliges it to send.
 
 That two radios set this way hear each other, and that radios of other
 networks do not hear them, cannot be checked by vectors. It is checked

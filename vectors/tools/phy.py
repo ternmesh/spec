@@ -39,14 +39,80 @@ def sync_word_sx126x(byte):
 
 def airtime_ns(sf, bw_hz, length, preamble=PREAMBLE, cr=CODING_RATE):
     """Time on air of an explicit-header frame with a CRC, to the nearest nanosecond."""
-    ldro = (1 << sf) * 1000 >= bw_hz * 16  # a symbol of 16 ms or longer
+    ldro_on = ldro(sf, bw_hz)
     bits = 8 * length - 4 * sf + 28 + 16
-    per_block = 4 * (sf - (2 if ldro else 0))
+    per_block = 4 * (sf - (2 if ldro_on else 0))
     blocks = -(-bits // per_block) if bits > 0 else 0
     symbols = 8 + blocks * (cr + 4)
     quarters = 4 * preamble + 17 + 4 * symbols  # the preamble is 4.25 symbols longer than set
     num, den = quarters * (1 << sf) * 1_000_000_000, 4 * bw_hz
     return (num + den // 2) // den
+
+
+def ldro(sf, bw_hz):
+    """Low data rate optimisation: on when a symbol lasts 16 ms or longer."""
+    return (1 << sf) * 1000 >= bw_hz * 16
+
+
+def must_refuse(sent, at_ns, air_ns, ppm, window_s):
+    """Whether sending a frame of air_ns at at_ns would take some period of the window's length
+    past the limit, given the (time, time on air) of what was sent before. Frames count by when
+    they begin, and a period is closed where it starts and open where it ends."""
+    window = window_s * 1_000_000_000
+    limit = window // 1_000_000 * ppm
+    frames = sent + [(at_ns, air_ns)]
+    # Every period that matters begins with a frame.
+    return any(
+        sum(a for t, a in frames if start <= t < start + window) > limit
+        for start, _ in frames
+        if start <= at_ns < start + window
+    )
+
+
+def duty_cases(sf, bw, ppm, window_s):
+    """Histories of frames sent, and a frame asked for after each: one the limit forbids, or one
+    it does not. A node may hold a frame back longer than the limit needs, so only must_refuse
+    true binds it."""
+    s, air = 1_000_000_000, airtime_ns(sf, bw, 255)
+    window = window_s * s
+    most = (window // 1_000_000 * ppm) // air  # frames of 255 bytes the limit allows
+    cases = []
+
+    def case(why, runs, at):
+        sent = [(first + i * s, air) for first, count in runs for i in range(count)]
+        cases.append(
+            {
+                "why": why,
+                "sent": [
+                    {"first_at_ns": first, "count": count, "every_ns": s, "length": 255}
+                    for first, count in runs
+                ],
+                "at_ns": at,
+                "length": 255,
+                "must_refuse": must_refuse(sent, at, air, ppm, window_s),
+            }
+        )
+
+    half = most // 2
+    case("nothing sent", [], 0)
+    case("one frame short of the limit", [(0, most - 1)], most * s)
+    case("at the limit", [(0, most)], most * s)
+    case("at the limit, the first frame a nanosecond short of leaving the window", [(0, most)],
+         window - 1)
+    case("at the limit, as the first frame leaves the window", [(0, most)], window)
+    # A node that counts by the clock's hours would start afresh at the hour.
+    case("the limit used just before the hour, asked just after it", [(window - most * s, most)],
+         window + s)
+    case("the same, as the first of them leaves the window", [(window - most * s, most)],
+         2 * window - most * s)
+    # Half used at the end of one hour and half at the start of the next: each clock hour is
+    # under the limit, and the hour across them is at it.
+    case("the limit used across the hour", [(window - half * s, half), (window, most - half)],
+         window + most * s)
+    case("long silence after the limit", [(0, most)], 5 * window)
+    assert [c["must_refuse"] for c in cases] == [
+        False, False, True, True, False, True, False, True, False]
+    return cases
 
 
 def self_check():
@@ -77,9 +143,11 @@ def build():
                 "max_eirp_dbm": eirp,
                 "duty_cycle_ppm": ppm,
                 "duty_window_s": window,
+                "low_data_rate_optimisation": ldro(sf, bw),
                 "airtime_ns": [
                     {"length": n, "ns": airtime_ns(sf, bw, n)} for n in LENGTHS
                 ],
+                "duty": duty_cases(sf, bw, ppm, window) if ppm < 1_000_000 else [],
             }
         )
     return {
@@ -89,12 +157,19 @@ def build():
         "For each profile it MUST use frequency_hz, bandwidth_hz and spreading_factor, and MUST "
         "compute, for a frame of each length, the time on air ns, in nanoseconds. It MUST NOT "
         "transmit for more than duty_cycle_ppm millionths of any duty_window_s seconds; "
-        "1000000 means the profile sets no limit. sync_word and sync_word_sx126x are hex.",
+        "1000000 means the profile sets no limit. sync_word and sync_word_sx126x are hex. Each "
+        "case in duty gives frames already sent, as runs of count frames of length bytes, the "
+        "first beginning at first_at_ns and each every_ns after the one before, and a frame "
+        "asked for at at_ns: where must_refuse is true the node MUST NOT send it then; "
+        "where it is false the limit does not forbid it, and a node may still hold it back.",
         "generator": "vectors/tools/phy.py",
         "sync_word": f"{SYNC_WORD:02x}",
         "sync_word_sx126x": f"{sync_word_sx126x(SYNC_WORD):04x}",
         "preamble_symbols": PREAMBLE,
         "coding_rate_denominator": CODING_RATE + 4,
+        "explicit_header": True,
+        "crc": True,
+        "iq_inverted": False,
         "profiles": profiles,
     }
 
