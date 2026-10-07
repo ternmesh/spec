@@ -178,8 +178,8 @@ user's, for the user: it is kept on the node and given to clients, and
 a node MUST NOT send it on the air.
 
 **Messages** (`MESSAGE`). Each has an `id`, given by the node: it is
-unique on the node and greater than every `id` before it, so a client
-can ask for those after one it holds. `contact` is the address the
+at least 1, unique on the node and greater than every `id` before it,
+so a client can ask for those after one it holds. `contact` is the address the
 message went to or came from, whether or not it is a saved contact.
 `time` is when it was written or received, by the node's clock. `flags`
 bit 0 is set once a received message has been [read](#reading); the
@@ -301,10 +301,17 @@ one `AIRTIME` and one `POWER`. Then it answers `SYNCED`. News that a
 change prompts while it syncs is sent as at any other time, among the
 rest.
 
+For contacts and neighbours, a sync is the whole list: a client that
+receives `SYNCED` MUST forget every contact and neighbour it holds that
+the sync did not send, as if it had received its `_GONE`. Messages are
+not: a sync sends only those after `after`, and a client keeps the
+rest.
+
 A client that holds messages already gives the greatest `id` it holds
-as `after`. One that has [missed news](#news) gives the least `id` of
-any message it holds that is still waiting or sent, since those are
-the ones whose state may have changed unseen.
+as `after`. One that has [missed news](#news) gives one less than the
+least `id` of any message it holds that is still waiting or sent,
+since those are the ones whose state may have changed unseen. `after`
+of 0 asks for every message.
 
 A node keeps only so many messages, and MAY forget the oldest without
 news. A client that wants them keeps its own copy.
@@ -320,11 +327,14 @@ it.
 
 A request given up on may have been acted on. Every request but `SEND`
 can be sent again without harm. `SEND` carries `ref`, the client's own
-number for the message. A node that receives a `SEND` whose `ref`
-and `to` are those of one of the last `REFS` messages it accepted MUST
-NOT send another message, and answers `QUEUED` with the `id` it gave
-the first. So a client that sends again with the same `ref` sends one
-message, whatever became of the first try.
+number for the message, which it SHOULD choose at random for each new
+message: several clients may drive one node, and a client may restart,
+so a counter would repeat another's. A node that receives a `SEND`
+whose `ref`, `to` and `text` are all those of one of the last `REFS`
+messages it accepted MUST NOT send another message, and answers
+`QUEUED` with the `id` it gave the first. So a client that sends again
+with the same `ref` sends one message, whatever became of the first
+try, and two different messages are never taken for one.
 
 ### Going quiet
 
@@ -545,7 +555,9 @@ the air.
 **Why `ref`.** A `SEND` whose answer was lost is the one request that
 cannot simply be sent again: the user would see a message twice. With
 `ref`, sending again is safe, and a client never has to ask whether
-the first try arrived.
+the first try arrived. The text is part of the match so that two
+clients whose `ref`s happen to agree cannot lose a message: at worst,
+the same words to the same node at once go as one.
 
 **Why the passkey, and not "just works" pairing.** A node may relay
 for its neighbours on a hill, and anyone who can drive it can read its
