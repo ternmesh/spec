@@ -332,9 +332,11 @@ def mul(k: int, pt):
 
 
 def valid_address(a: bytes) -> bool:
-    """It decodes, and it is not of small order: [8]A is not the neutral element."""
+    """It decodes to a point of the prime-order subgroup other than the neutral element. A point
+    with a small-order component T added would pass a check for small order alone, and X25519,
+    whose scalars are multiples of 8, cannot tell A + T from A."""
     pt = decode(a)
-    return pt is not None and mul(8, pt) != NEUTRAL
+    return pt is not None and pt != NEUTRAL and mul(L, pt) == NEUTRAL
 
 
 def x25519_public(a: bytes) -> bytes:
@@ -459,8 +461,9 @@ def initiator_receive_2(st, f, c_i):
     return frame(3, st["ctag"][3], m3)
 
 
-def responder_receive_3(st, f):
-    """(message_4, the initiator's address, S), or None if f fails."""
+def responder_receive_3(st, f, check_address=True):
+    """(message_4, the initiator's address, S), or None if f fails. check_address=False is only
+    for showing that a rejected vector would otherwise be accepted."""
     if len(f) != PREFIX + 65 or f[0] != hdr(3) or f[4:8] != st["ctag"][3]:
         return None
     m3 = f[PREFIX:]
@@ -472,7 +475,7 @@ def responder_receive_3(st, f):
     if pt_3 is None or len(pt_3) != 55 or pt_3[:14] != b"\xa1\x0e" + CRED_PREFIX or pt_3[46:47] != b"\x48":
         return None
     a_i = pt_3[14:46]
-    if not valid_address(a_i):
+    if check_address and not valid_address(a_i):
         return None
     g_iy = X25519.dh(st["y"], x25519_public(a_i))
     if g_iy is None:
@@ -594,6 +597,11 @@ def build() -> dict:
         assert not valid_address(a)
         order = next(k for k in (1, 2, 4, 8) if mul(k, pt) == NEUTRAL)
         rejected_addresses.append({"address": a.hex(), "reason": f"a point of order {order}"})
+    mixed = encode(add(decode(address(seeds[0])), small_order_points()[-1]))
+    assert decode(mixed) is not None and mul(8, decode(mixed)) != NEUTRAL and not valid_address(mixed)
+    rejected_addresses.append(
+        {"address": mixed.hex(), "reason": "the first address plus a point of order 8: not of prime order"}
+    )
     non_canonical = (P + 1).to_bytes(32, "little")  # y = p + 1, which is 1 reduced: not canonical
     assert decode(non_canonical) is None
     rejected_addresses.append({"address": non_canonical.hex(), "reason": "y is not reduced modulo p"})
@@ -678,6 +686,17 @@ def build() -> dict:
     pt_3 = id_cred_i(bad) + cbor(bytes(MAC_LEN))
     f3_bad = frame(3, st_r["ctag"][3], cbor(seal(k_3, iv_3, st_r["th_3"], pt_3)))
     reject("message_3-address", "message_3 that decrypts, naming a small-order address", 3, f3_bad, as_responder_3)
+
+    # The initiator's own key, claiming its address plus a point of order 8. X25519 gives the same
+    # G_IY for both, so the MAC is right: only the address check refuses it.
+    g_iy = X25519.dh(det("y 0"), x25519_public(address(i_seed)))
+    prk_4e3m = extract(kdf(st_r["prk_3e2m"], 5, st_r["th_3"], HASH_LEN), g_iy)
+    mac_3 = kdf(prk_4e3m, 6, id_cred_i(mixed) + cbor(st_r["th_3"]) + cred(mixed), MAC_LEN)
+    pt_3 = id_cred_i(mixed) + cbor(mac_3)
+    f3_mixed = frame(3, st_r["ctag"][3], cbor(seal(k_3, iv_3, st_r["th_3"], pt_3)))
+    assert responder_receive_3(r_state(), f3_mixed, check_address=False) is not None
+    reject("message_3-mixed-order", "message_3 from the initiator's own key, claiming its address plus a "
+           "point of order 8: the MAC verifies, and only the address check refuses it", 3, f3_mixed, as_responder_3)
 
     return {
         "description": (

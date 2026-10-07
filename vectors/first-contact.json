@@ -56,6 +56,10 @@
       "reason": "a point of order 8"
     },
     {
+      "address": "4a70cc431e247b7246b0be201f7fa5e2845452533b635f7bda3936871056d7cb",
+      "reason": "the first address plus a point of order 8: not of prime order"
+    },
+    {
       "address": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
       "reason": "y is not reduced modulo p"
     },
@@ -232,6 +236,13 @@
       "handshake": "first",
       "message": 3,
       "frame": "53000000c846abec583f48d0290cde97914882e0dcc14fbe4b2fda34f3511111e56682e6be213dee45688dfed6d46cf686b7ce02cf647da9b699bf44525e8ee25b8a505b0d5306bfad"
+    },
+    {
+      "name": "message_3-mixed-order",
+      "note": "message_3 from the initiator's own key, claiming its address plus a point of order 8: the MAC verifies, and only the address check refuses it",
+      "handshake": "first",
+      "message": 3,
+      "frame": "53000000c846abec583f48d0290cde97914882e0dcc14fbec6487c07d038b22c19ea37b0ac4eff03eb1c8c57c18eff4b124905f24d9ea998b69259c80cf07b0d2a088625fe0878a077"
     }
   ]
 }

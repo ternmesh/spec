@@ -54,9 +54,11 @@ from a 32-byte seed `sk`. Its public key `A`, 32 bytes, is the node's
 **address**.
 
 An address is **valid** if it decodes to a point as RFC 8032, section
-5.1.3 requires, and that point is not of small order, that is, `[8]A` is
-not the neutral element. A node MUST NOT start a handshake with an
-invalid address, and MUST reject a `message_3` that names one.
+5.1.3 requires, that point is not the neutral element, and `[L]A` is
+the neutral element, where `L` is the order of the base point,
+`2^252 + 27742317777372353535851937790883648493`. That is, `A` is in the
+prime-order subgroup. A node MUST NOT start a handshake with an invalid
+address, and MUST reject a `message_3` that names one.
 
 From its identity key, each node has an **X25519 key**:
 
@@ -242,6 +244,15 @@ for both purposes. The conversion is the one libsodium provides
 is not a standard construction, and is the main thing a cryptographer
 needs to review. The alternative is two keys per node, and an address
 that names both.
+
+**Addresses in the prime-order subgroup.** X25519 multiplies by a
+multiple of 8, which removes any small-order component from a point. So
+for any small-order point `T`, `A + T` gives exactly the same
+Diffie-Hellman results as `A`, and without this check the holder of one
+key could authenticate as eight different addresses, getting past
+anything a node decides by address. Refusing points of small order alone
+is not enough; the vectors include a `message_3` whose MAC is correct
+for such an address. libsodium's conversion refuses these points too.
 
 **The credential carries the Ed25519 key.** `U(A)` loses the sign of
 `A`'s x-coordinate, so an address and its negation have the same X25519
