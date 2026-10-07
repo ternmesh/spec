@@ -461,9 +461,9 @@ def initiator_receive_2(st, f, c_i):
     return frame(3, st["ctag"][3], m3)
 
 
-def responder_receive_3(st, f, check_address=True):
-    """(message_4, the initiator's address, S), or None if f fails. check_address=False is only
-    for showing that a rejected vector would otherwise be accepted."""
+def responder_receive_3(st, f, check_address=True, check_mac=True):
+    """(message_4, the initiator's address, S), or None if f fails. check_address and check_mac
+    are only for showing that a rejected vector would otherwise be accepted."""
     if len(f) != PREFIX + 65 or f[0] != hdr(3) or f[4:8] != st["ctag"][3]:
         return None
     m3 = f[PREFIX:]
@@ -482,7 +482,7 @@ def responder_receive_3(st, f, check_address=True):
         return None
     prk_4e3m = extract(kdf(prk_3e2m, 5, th_3, HASH_LEN), g_iy)
     mac_3 = kdf(prk_4e3m, 6, id_cred_i(a_i) + cbor(th_3) + cred(a_i), MAC_LEN)
-    if not hmac.compare_digest(mac_3, pt_3[47:]):
+    if check_mac and not hmac.compare_digest(mac_3, pt_3[47:]):
         return None
     th_4 = H(cbor(th_3) + pt_3 + cred(a_i))
     k_4, iv_4 = kdf(prk_4e3m, 8, th_4, KEY_LEN), kdf(prk_4e3m, 9, th_4, IV_LEN)
@@ -697,6 +697,17 @@ def build() -> dict:
     assert responder_receive_3(r_state(), f3_mixed, check_address=False) is not None
     reject("message_3-mixed-order", "message_3 from the initiator's own key, claiming its address plus a "
            "point of order 8: the MAC verifies, and only the address check refuses it", 3, f3_mixed, as_responder_3)
+
+    # The initiator claiming another node's address. It holds K_3, so message_3 decrypts, and the
+    # address is valid; but MAC_3 needs G_IY from the claimed address's private key, which it does
+    # not have, so it uses its own. Only the MAC_3 check refuses this.
+    victim = address(other_seed)
+    mac_3 = kdf(prk_4e3m, 6, id_cred_i(victim) + cbor(st_r["th_3"]) + cred(victim), MAC_LEN)
+    pt_3 = id_cred_i(victim) + cbor(mac_3)
+    f3_imp = frame(3, st_r["ctag"][3], cbor(seal(k_3, iv_3, st_r["th_3"], pt_3)))
+    assert responder_receive_3(r_state(), f3_imp, check_mac=False) is not None
+    reject("message_3-impersonation", "message_3 from the initiator, claiming the third node's address: it "
+           "decrypts and names a valid address, and only the MAC_3 check refuses it", 3, f3_imp, as_responder_3)
 
     return {
         "description": (
