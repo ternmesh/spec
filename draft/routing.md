@@ -173,6 +173,16 @@ case the sender started again unheard: the node forgets it, and every
 route through it, and takes the frame as from a neighbour it has just
 found.
 
+**A full table.** A node keeps as many neighbours as it has room for,
+and where there are more nodes to hear than that, which ones it keeps
+decides whether it has routes at all. On hearing an announce from a
+node it does not keep, with no room left, a node looks at the
+neighbours whose links are not up. If the floor the announce gives is
+`REPLACE_BAND` or more below the highest floor among them, the node
+MUST forget that neighbour, and every route through it, and keep the
+sender in its place. Otherwise it MUST take nothing from the announce.
+A node MUST NOT replace a neighbour whose link is up.
+
 ### Power for every neighbour
 
 A frame meant for every neighbour, as an announce is, goes only as loud
@@ -379,6 +389,7 @@ starved node asks again anyway.
 | `LINK_MARGIN` | 0 dB | |
 | `LINK_BAND` | 3 dB | |
 | `SILENT_MAX` | 24 h | |
+| `REPLACE_BAND` | 6 dB | nearer a node must be to take a place |
 | `POWER_K` | 8 | neighbours a frame for all should reach |
 | `POWER_MARGIN` | 10 dB | |
 | `REF_LEN` | 32 bytes | the frame the metric is reckoned in |
@@ -512,6 +523,23 @@ and a node in twelve restarting every hundred seconds, three runs of
 five had no loop at all, and the longest loop in the others lasted 82
 seconds; without the wait, loops lasted about three minutes.
 
+**Why the nearest are kept, and links that are up never given up.**
+A board has room for tens of neighbours, and in a town a node at full
+power is heard by hundreds. Keeping whichever came first fills the
+table with nodes too far off to hear back, or too busy with nearer ones
+to name this node, and no link comes up. In the simulator, a thousand
+nodes with 200 relays among them and 32 places each (three seeds), the
+share of pairs of nodes holding a route once settled was 64% at SF7
+and 17% at SF8 on 62.5 kHz keeping the first heard, and 88% and 82%
+under this rule; with 64 places 93% and 77% against 96% and 91%; with
+255, 97% and 92% either way. Letting a nearer node take the place of a
+link that was up, on one seed with 64 places at SF8, left 91.5% of
+pairs holding a route and 88.8% holding one that arrived, with requests
+that never stopped, against 91.4% for both and no requests. Preferring
+relays, or keeping half the places for them, held fewer routes than
+taking no account of role: 23% and 84% at SF7 with 32 places, against
+88%, on one seed.
+
 ## Not yet measured
 
 * **Any of the parameters, on radios.** Each is the simulator's
@@ -520,6 +548,9 @@ seconds; without the wait, loops lasted about three minutes.
   floor well enough, frame to frame, for a 3 dB band.
 * **Memory and time** for a table of a thousand destinations on the
   nRF52840.
+* **Why a crowded network with small tables does not always settle.**
+  With 32 or 64 places at SF7, six hours on, some seeds still sent
+  requests and five times the announces of the others.
 
 ## Not yet specified
 
