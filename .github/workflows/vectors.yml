@@ -24,6 +24,7 @@ jobs:
       - run: python3 vectors/tools/first_contact.py check
       - run: python3 vectors/tools/phy.py check
       - run: python3 vectors/tools/routing.py check
+      - run: python3 vectors/tools/forwarding.py check
       # Analyses whose tables are generated: fails if a table no longer matches its script. Each
       # script also checks itself against published values first.
       - run: python3 analysis/first_contact_fit.py check
