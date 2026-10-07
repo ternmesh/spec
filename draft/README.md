@@ -9,3 +9,4 @@ proper when v0 is assembled.
 | Section | What it covers | Vectors |
 |---|---|---|
 | [unicast-security.md](unicast-security.md) | The secured unicast frame: layout, keys, the blinded destination tag, sending and receiving | [`vectors/unicast-security.json`](../vectors/unicast-security.json) |
+| [first-contact.md](first-contact.md) | Addresses, and the EDHOC handshake that gives two nodes a session: profile, frames, contact tags | [`vectors/first-contact.json`](../vectors/first-contact.json) |
