@@ -243,6 +243,13 @@
       "handshake": "first",
       "message": 3,
       "frame": "53000000c846abec583f48d0290cde97914882e0dcc14fbec6487c07d038b22c19ea37b0ac4eff03eb1c8c57c18eff4b124905f24d9ea998b69259c80cf07b0d2a088625fe0878a077"
+    },
+    {
+      "name": "message_3-impersonation",
+      "note": "message_3 from the initiator, claiming the third node's address: it decrypts and names a valid address, and only the MAC_3 check refuses it",
+      "handshake": "first",
+      "message": 3,
+      "frame": "53000000c846abec583f48d0290cde97914882e0dcc14fbe53f87cfd2b8ad35d0fe131e57fff2c07fb36a4d2bcae1349a577c10b546e8e07b69abf0b2db6d116ac5b4d875dc4bc607c"
     }
   ]
 }
