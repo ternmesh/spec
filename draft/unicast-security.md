@@ -282,8 +282,10 @@ deliberately left out of this draft:
 
 * **First contact.** The handshake that produces `S`. The intent is
   EDHOC (RFC 9528) with cipher suite 0, with `S` taken from its
-  exporter; whether each EDHOC message fits one frame at each region's
-  slowest legal setting is still to be checked.
+  exporter. Each EDHOC message fits one frame, but where a region
+  limits dwell time to 400 ms, not at its slowest legal setting:
+  first contact needs SF8 or faster at 125 kHz there
+  ([analysis/first-contact-fit.md](../analysis/first-contact-fit.md)).
 * **A Diffie-Hellman step.** The epoch chain heals nothing: a node whose
   current epoch key is stolen loses every later message in that
   direction. A periodic DH step (MSH-36) would fix that, at the cost of

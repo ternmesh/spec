@@ -16,6 +16,7 @@ specified.
 * [CONTRIBUTING.md](CONTRIBUTING.md) — DCO sign-off and how to write spec text
 * [draft/](draft/README.md) — sections written ahead of v0 because they do not depend on routing, starting with [secured unicast frames](draft/unicast-security.md)
 * `vectors/` — conformance test vectors
+* [analysis/](analysis/) — questions the specification needs answered, worked from public sources, starting with [whether first contact fits one frame](analysis/first-contact-fit.md)
 
 ## Licence
 

@@ -21,3 +21,6 @@ jobs:
           python-version: "3.12"
       - run: pip install "cryptography>=42"
       - run: python3 vectors/tools/unicast.py check
+      # Analyses whose tables are generated: fails if a table no longer matches its script. Each
+      # script also checks itself against published values first.
+      - run: python3 analysis/first_contact_fit.py check
