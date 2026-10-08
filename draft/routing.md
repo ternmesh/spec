@@ -573,8 +573,6 @@ taking no account of role: 23% and 84% at SF7 with 32 places, against
 * **Two nodes with one routing id.**
 * **Rotating routing ids**, so that a node cannot be followed by its
   announces.
-* **Broadcast.** The simulator floods, through relays, with a hop limit
-  and cancelling.
 * **Who is a relay.** The simulator has nodes elect themselves from
   what they hear. Here it is configured.
 * **Leaves that move**: finding a new relay, and moving the routes

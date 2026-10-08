@@ -22,6 +22,8 @@ import routing  # noqa: E402
 OUT = Path(__file__).resolve().parent.parent / "forwarding.json"
 
 HDR_MESSAGE, HDR_ACK = 0x48, 0x50
+# A message for the node itself is a message here: the node flag (draft/unicast-security.md).
+MESSAGES = (HDR_MESSAGE, HDR_MESSAGE | 0x01)
 # First contact's four frames (draft/first-contact.md), and how long each is: the head, a tag,
 # for the first the routing id it came from, and the handshake's message.
 CONTACT_LEN = {0x51: 56, 0x52: 60, 0x53: 80, 0x54: 24}
@@ -43,13 +45,13 @@ def head(h):
 
 def accepted(frame):
     """Whether a receiver takes a frame at all."""
-    if len(frame) > 255 or not frame or frame[0] not in (HDR_MESSAGE, HDR_ACK, *CONTACT_LEN):
+    if len(frame) > 255 or not frame or frame[0] not in (*MESSAGES, HDR_ACK, *CONTACT_LEN):
         return False
     if frame[0] in CONTACT_LEN and len(frame) != CONTACT_LEN[frame[0]]:
         return False
     if frame[0] == HDR_ACK and len(frame) != ACK_LEN:
         return False
-    if frame[0] == HDR_MESSAGE and len(frame) < MESSAGE_MIN:
+    if frame[0] in MESSAGES and len(frame) < MESSAGE_MIN:
         return False
     _, _, _, nxt, dst = struct.unpack(">BBbII", frame[:HEAD])
     return nxt not in RESERVED and dst not in RESERVED
@@ -59,7 +61,7 @@ def ends(sent, heard):
     """Whether hearing one frame ends the hop of another this node sent: both whole frames."""
     passed = sent[AT_DEST:] == heard[AT_DEST:] and sent[0] == heard[0] and heard[1] + 1 == sent[1]
     answered = (
-        sent[0] == HDR_MESSAGE
+        sent[0] in MESSAGES
         and heard[0] == HDR_ACK
         and heard[HEAD : HEAD + TAG] == sent[HEAD : HEAD + TAG]
     )
@@ -70,7 +72,7 @@ def hop_heard(frame):
     """Whether a node that has sent a frame listens for the hop to succeed. On the last hop of an
     acknowledgement or a first-contact frame there is nothing to hear."""
     _, _, _, nxt, dst = struct.unpack(">BBbII", frame[:HEAD])
-    return frame[0] == HDR_MESSAGE or nxt != dst
+    return frame[0] in MESSAGES or nxt != dst
 
 
 def clamp(sixteenths, lowest, full):
@@ -192,6 +194,8 @@ def build():
          bytes(range(0x30, 0x30 + 4 + 5 + 8))),
         ({"hdr": 0x48, "hops": 1, "power": -9, "next": 1, "destination": 0xFFFFFFFE},
          bytes(range(0x80, 0x80 + 4 + 8))),
+        ({"hdr": 0x49, "hops": 32, "power": 14, "next": 0x1D2E3F40, "destination": 0x0A0B0C0D},
+         bytes(range(0x30, 0x30 + 4 + 20 + 8))),
         ({"hdr": 0x50, "hops": 31, "power": 0, "next": 0x0A0B0C0D, "destination": 0x1D2E3F40},
          bytes(range(0x30, 0x34)) + bytes.fromhex("c0ffee01")),
         ({"hdr": 0x51, "hops": 32, "power": 14, "next": 0x1D2E3F40, "destination": 0x0A0B0C0D},
@@ -214,6 +218,8 @@ def build():
         ("a message with a tag and no check", head(good) + bytes(4)),
         ("a message a byte short of its check", head(good) + bytes(11)),
         ("not a frame of this section's", head({**good, "hdr": 0x59}) + bytes(12)),
+        ("a message for the node a byte short of its check", head({**good, "hdr": 0x49}) + bytes(11)),
+        ("a message with a reserved flag", head({**good, "hdr": 0x4A}) + bytes(12)),
         ("an acknowledgement too long", head({**good, "hdr": 0x50}) + bytes(9)),
         ("an acknowledgement too short", head({**good, "hdr": 0x50}) + bytes(7)),
         ("for every neighbour", head({**good, "next": 0xFFFFFFFF}) + bytes(12)),
@@ -234,8 +240,8 @@ def build():
     tag, other = bytes.fromhex("30313233"), bytes.fromhex("40414243")
     body = tag + bytes(range(0x60, 0x6D))  # the tag, five bytes of message and the check
 
-    def message(hops, destination=9, rest=body, nxt=7, pw=14):
-        return head({"hdr": 0x48, "hops": hops, "power": pw, "next": nxt, "destination": destination}) + rest
+    def message(hops, destination=9, rest=body, nxt=7, pw=14, hdr=0x48):
+        return head({"hdr": hdr, "hops": hops, "power": pw, "next": nxt, "destination": destination}) + rest
 
     def ack(hops, destination=77, t=tag, nxt=7):
         return head({"hdr": 0x50, "hops": hops, "power": 3, "next": nxt, "destination": destination}) + t + bytes(4)
@@ -253,6 +259,9 @@ def build():
         ("the same tag and another message", message(20), message(19, rest=tag + bytes(13))),
         ("the same tag and a longer message", message(20), message(19, rest=body + b"\x00")),
         ("for another node", message(20), message(19, destination=10)),
+        ("a message for the node, passed on", message(20, hdr=0x49), message(19, nxt=8, hdr=0x49)),
+        ("a message for the node, acknowledged", message(20, hdr=0x49), ack(32)),
+        ("the same bytes as a message for the user: another frame", message(20, hdr=0x49), message(19)),
         ("acknowledged", message(20), ack(32)),
         ("acknowledged, heard further off", message(20), ack(5)),
         ("another message acknowledged", message(20), ack(32, t=other)),
@@ -273,6 +282,7 @@ def build():
     for why, f in [
         ("a message", message(20)),
         ("a message to its destination: its acknowledgement is listened for", message(20, nxt=9)),
+        ("a message for the node, to its destination", message(20, nxt=9, hdr=0x49)),
         ("an acknowledgement on its way", ack(20)),
         ("an acknowledgement to the node it is for", ack(20, nxt=77)),
         ("first contact on its way", contact(1, 32)),

@@ -122,9 +122,19 @@ The frame is `23 + p` bytes. A LoRa frame carries at most 255 bytes, so
 |---|---|---|
 | 7–6 | format | `01`: draft 0 |
 | 5–3 | type | `001`: secured unicast |
-| 2–0 | flags | `000`: none defined |
+| 2–0 | flags | bit 0 is `node`; bits 2 and 1 are `0` |
 
-So `hdr` is `0x48`. Other formats, types and flags are reserved.
+So `hdr` is `0x48`, or `0x49` with `node` set. Other formats, types and
+flags are reserved.
+
+**`node`** says who the plaintext is for. Clear, it is for the node's
+user: words to show. Set, it is for the node itself, and its first byte
+says what it is: `0x01` is [a group's invite](groups.md#invites), the
+one kind there is. A frame with `node` set is in every other way a
+frame like any other: it takes the next counter, is sealed and opened
+the same way, and is acknowledged. A receiver that accepts one whose
+plaintext is empty, or whose first byte it does not know, MUST do
+nothing more with it, and MUST NOT show it as words.
 
 `route` belongs to the routing layer, which defines it in
 [Frames that follow routes](forwarding.md#the-head): `hops`, `power`,
@@ -151,7 +161,7 @@ To send plaintext `P` as message `n` in direction `d`:
 2. A sender MUST NOT send with `n` above `2^32 - 1`. A sender that has
    used every counter needs a new session.
 3. The sender computes `dtag_d(n)`, and sets
-   `A = hdr || dtag_d(n)`.
+   `A = hdr || dtag_d(n)`, with `hdr` as the frame will carry it.
 4. The frame is
    `hdr || route || dtag_d(n) || CCM(MK_d(n), N_d(n), A, P)`, with
    `route` as the routing layer sets it.
@@ -208,8 +218,8 @@ receiver answers, and with what.
 An implementation conforms to this section if, for every case in
 [`vectors/unicast-security.json`](../vectors/unicast-security.json):
 
-* **accepted:** given `session_secret`, `direction`, `counter`, `hops`,
-  `power`, `next`, `destination` and `plaintext` (setting the counter is
+* **accepted:** given `session_secret`, `direction`, `counter`, `hdr`,
+  `hops`, `power`, `next`, `destination` and `plaintext` (setting the counter is
   a test hook; in use, a sender chooses it, as `senders` checks), it
   produces exactly `frame`, and, as a
   receiver holding `session_secret` and expecting `counter`, it accepts
@@ -320,6 +330,7 @@ deliberately left out of this draft:
 * **Length.** The ciphertext is as long as the plaintext, so an
   observer learns the message's length. Padding costs airtime, and the
   trade-off is undecided.
-* **Groups, broadcast and announces**, each a different frame type.
+* **Announces** of a node to others, a different frame type.
+  [Groups](groups.md) have theirs.
 * **Measured cost on the nRF52840:** tag lookups at 50, 100 and 500
   contacts, AES and HKDF timings, and RAM per session.

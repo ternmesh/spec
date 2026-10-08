@@ -62,7 +62,7 @@ Three kinds of frame are defined:
 
 | `hdr` | Frame | After the head |
 |---|---|---|
-| `0x48` | a **message**: a secured unicast frame | `tag` is its destination tag; then its ciphertext and check |
+| `0x48`, `0x49` | a **message**: a secured unicast frame, for the node's user or, with the low bit set, [for the node](unicast-security.md#the-frame) | `tag` is its destination tag; then its ciphertext and check |
 | `0x50` | an **acknowledgement** | `tag` is that of the message it answers; then 4 bytes, `proof` |
 | `0x51` to `0x54` | a **first-contact frame**, one of a handshake's four | `tag` is its contact tag; then, for `0x51`, the 4-byte routing id it came from; then the handshake's message |
 
@@ -76,9 +76,9 @@ first-contact frame of any other length, and a frame whose `next` or
 
 **The same frame.** Four bytes of tag do not tell every message from
 every other: two in the air at once share one now and then. So two
-frames are **the same frame** only if they are of one length and every
-byte from `destination` on is equal, which for a message takes in its
-ciphertext and check. `tag` is only where an acknowledgement is matched
+frames are **the same frame** only if they are of one length, have one
+`hdr`, and every byte from `destination` on is equal, which for a
+message takes in its ciphertext and check. `tag` is only where an acknowledgement is matched
 to its message, since an acknowledgement carries nothing else of it.
 
 Bytes 1 to 10 are what the
@@ -554,8 +554,9 @@ dead found sooner.
 * **Routing ids that change** ([above](#what-an-observer-learns)).
 * **A flood when the routes are stale.** The simulator floods a message
   given up at a leaf that has moved, through relays, a few hops. It
-  needs broadcast, which is not specified.
+  would be [a flood](flooding.md) of a kind not yet defined.
 * **A share of the air** for each node, where the channel is full.
-* **Broadcast**, and messages to groups.
+* **Frames for every node** are [their own section](flooding.md), and
+  follow no route.
 * **Fragments**: a message is one frame.
 * **Priority** between messages.
