@@ -13,6 +13,7 @@ Like everything under vectors/, this file is dedicated to the public domain (CC0
 
 import hashlib
 import json
+import struct
 import sys
 from pathlib import Path
 
@@ -26,10 +27,20 @@ OUT = Path(__file__).resolve().parent.parent / "unicast-security.json"
 FORMAT_V0 = 0b01
 TYPE_UNICAST = 0b001
 HDR = (FORMAT_V0 << 6) | (TYPE_UNICAST << 3)  # 0x48
+HDR_ACK = 0x50  # an acknowledgement (draft/forwarding.md)
 TAG_LEN = 8
 EPOCH_SHIFT = 5  # 32 messages per epoch
 MAX_FRAME = 255
-OVERHEAD = 16
+HEAD = 11  # hdr, and the ten bytes that are the forwarding layer's
+DTAG = HEAD  # where the destination tag is
+BODY = DTAG + 4  # where the ciphertext starts
+OVERHEAD = BODY + TAG_LEN  # 23
+ACK_LEN = BODY + 4
+BEHIND = 31  # how far below H the window reaches
+
+# The forwarding layer's part of the head, where a case does not say otherwise: a frame as its
+# source sends it, at 14 dBm, to a neighbour and a destination that are not reserved ids.
+ROUTE = {"hops": 32, "power": 14, "next": 0x0A0B0C0D, "destination": 0x01020304}
 
 INITIATOR_TO_RESPONDER = 0x01
 RESPONDER_TO_INITIATOR = 0x02
@@ -67,25 +78,51 @@ def dtag(s: bytes, d: int, n: int) -> bytes:
     return (enc.update(bytes(12) + u32be(n)) + enc.finalize())[:4]
 
 
+def proof(s: bytes, d: int, n: int) -> bytes:
+    """What the destination of message n answers with: the tag's block with 0x01 at byte 11."""
+    enc = Cipher(algorithms.AES(tag_key(s, d)), modes.ECB()).encryptor()
+    return (enc.update(bytes(11) + b"\x01" + u32be(n)) + enc.finalize())[:4]
+
+
+def head(hdr: int, route: dict) -> bytes:
+    return struct.pack(">BBbII", hdr, route["hops"], route["power"], route["next"],
+                       route["destination"])
+
+
 def nonce(s: bytes, d: int, n: int) -> bytes:
     return bytes(a ^ b for a, b in zip(iv(s, d), bytes(9) + u32be(n)))
 
 
-def seal(s: bytes, d: int, n: int, hop: int, label: int, plaintext: bytes) -> bytes:
+def seal(s: bytes, d: int, n: int, plaintext: bytes, route: dict = ROUTE) -> bytes:
     assert 0 <= n < 2**32 and len(plaintext) <= MAX_FRAME - OVERHEAD
     t = dtag(s, d, n)
     aad = bytes([HDR]) + t
     ct = AESCCM(message_key(s, d, n), tag_length=TAG_LEN).encrypt(nonce(s, d, n), plaintext, aad)
-    return bytes([HDR, hop]) + label.to_bytes(2, "big") + t + ct
+    return head(HDR, route) + t + ct
+
+
+def acknowledgement(s: bytes, d: int, n: int, route: dict = ROUTE) -> bytes:
+    """The frame that answers message n of direction d. It travels the other way."""
+    return head(HDR_ACK, route) + dtag(s, d, n) + proof(s, d, n)
+
+
+def acknowledges(s: bytes, d: int, n: int, frame: bytes) -> bool:
+    """The source's check: whether a frame shows that its message n of direction d arrived."""
+    return (
+        len(frame) == ACK_LEN
+        and frame[0] == HDR_ACK
+        and frame[DTAG:BODY] == dtag(s, d, n)
+        and frame[BODY:] == proof(s, d, n)
+    )
 
 
 def open_frame(s: bytes, d: int, n: int, frame: bytes):
     """The receiver's check for one candidate counter: the plaintext, or None if it fails."""
-    if len(frame) < OVERHEAD or frame[0] != HDR or frame[4:8] != dtag(s, d, n):
+    if len(frame) < OVERHEAD or frame[0] != HDR or frame[DTAG:BODY] != dtag(s, d, n):
         return None
     try:
         return AESCCM(message_key(s, d, n), tag_length=TAG_LEN).decrypt(
-            nonce(s, d, n), frame[8:], frame[0:1] + frame[4:8]
+            nonce(s, d, n), frame[BODY:], frame[0:1] + frame[DTAG:BODY]
         )
     except Exception:
         return None
@@ -104,7 +141,15 @@ class Receiver:
         return [n for n in range(lo, min(hi, 2**32 - 1) + 1) if n not in self.accepted]
 
     def matches(self, frame: bytes):
-        return [n for n in self.window() if frame[4:8] == dtag(self.s, self.d, n)]
+        return [n for n in self.window() if frame[DTAG:BODY] == dtag(self.s, self.d, n)]
+
+    def copies(self, frame: bytes):
+        """The counters already accepted, no more than 31 below H, whose tag a frame carries: the
+        messages a copy of which is acknowledged again."""
+        if len(frame) < OVERHEAD or frame[0] != HDR:
+            return []
+        return [n for n in sorted(self.accepted)
+                if self.high - n <= BEHIND and frame[DTAG:BODY] == dtag(self.s, self.d, n)]
 
     def accept(self, n: int) -> None:
         self.accepted.add(n)
@@ -162,8 +207,8 @@ def self_test() -> None:
     )
 
 
-def case(name, note, s, d, n, hop, label, plaintext):
-    frame = seal(s, d, n, hop, label, plaintext)
+def case(name, note, s, d, n, plaintext, route=ROUTE):
+    frame = seal(s, d, n, plaintext, route)
     assert open_frame(s, d, n, frame) == plaintext
     return {
         "name": name,
@@ -171,8 +216,7 @@ def case(name, note, s, d, n, hop, label, plaintext):
         "session_secret": s.hex(),
         "direction": d,
         "counter": n,
-        "hop": hop,
-        "label": label,
+        **route,
         "plaintext": plaintext.hex(),
         "intermediate": {
             "epoch": n >> EPOCH_SHIFT,
@@ -182,6 +226,7 @@ def case(name, note, s, d, n, hop, label, plaintext):
             "iv": iv(s, d).hex(),
             "nonce": nonce(s, d, n).hex(),
             "dtag": dtag(s, d, n).hex(),
+            "proof": proof(s, d, n).hex(),
         },
         "frame": frame.hex(),
     }
@@ -193,15 +238,17 @@ def build() -> dict:
     hello = "hello".encode()
     greek = "Καλημέρα".encode()  # 16 bytes of UTF-8 for 8 characters
     accepted = [
-        case("first", "counter 0, initiator to responder", s1, 1, 0, 0, 0, hello),
-        case("reply", "same session, the other direction", s1, 2, 0, 0, 0, hello),
-        case("last-of-epoch-0", "counter 31: still epoch 0", s1, 1, 31, 0, 0, hello),
-        case("first-of-epoch-1", "counter 32: epoch 1, one step of the epoch chain", s1, 1, 32, 0, 0, hello),
-        case("far", "counter 1000: epoch 31", s1, 1, 1000, 0, 0, hello),
-        case("relayed", "hop and label set by relays; not authenticated", s1, 1, 0, 3, 0xBEEF, hello),
-        case("empty", "no plaintext: the 16-byte minimum frame", s1, 1, 7, 0, 0, b""),
-        case("non-latin", "UTF-8 text outside Latin script", s2, 1, 5, 0, 0, greek),
-        case("largest", "239 bytes of plaintext: a 255-byte frame", s2, 2, 2, 0, 0, bytes(i & 0xFF for i in range(239))),
+        case("first", "counter 0, initiator to responder", s1, 1, 0, hello),
+        case("reply", "same session, the other direction", s1, 2, 0, hello),
+        case("last-of-epoch-0", "counter 31: still epoch 0", s1, 1, 31, hello),
+        case("first-of-epoch-1", "counter 32: epoch 1, one step of the epoch chain", s1, 1, 32, hello),
+        case("far", "counter 1000: epoch 31", s1, 1, 1000, hello),
+        case("relayed", "hops, power and next as a relay three hops on left them; not authenticated",
+             s1, 1, 0, hello, {**ROUTE, "hops": 29, "power": -4, "next": 0xBEEF0001}),
+        case("empty", "no plaintext: the 23-byte minimum frame", s1, 1, 7, b""),
+        case("non-latin", "UTF-8 text outside Latin script", s2, 1, 5, greek),
+        case("largest", "232 bytes of plaintext: a 255-byte frame", s2, 2, 2,
+             bytes(i & 0xFF for i in range(MAX_FRAME - OVERHEAD))),
     ]
 
     base = accepted[0]
@@ -223,10 +270,12 @@ def build() -> dict:
     flipped[-1] ^= 0x01
     reject("tag-flipped", "last bit of the AEAD tag changed", bytes(flipped))
     flipped = bytearray(frame)
-    flipped[8] ^= 0x80
+    flipped[BODY] ^= 0x80
     reject("ciphertext-flipped", "first ciphertext bit changed", bytes(flipped))
     reject("header-changed", "a reserved flag set: the header is authenticated", bytes([HDR | 1]) + frame[1:])
-    reject("truncated", "15 bytes: shorter than any frame", frame[:15])
+    reject("truncated", "22 bytes: shorter than any frame", frame[: OVERHEAD - 1])
+    reject("first-draft-layout", "the tag at offset 4, as this section first had it: 16 bytes",
+           frame[:4] + frame[DTAG:])
     wrong_dir = bytes.fromhex(accepted[1]["frame"])
     reject("wrong-direction", "the responder's counter-0 frame, checked as the initiator's", wrong_dir)
 
@@ -235,13 +284,19 @@ def build() -> dict:
         deliveries = []
         for n in counters:
             p = f"message {n}".encode()
-            f = seal(s1, 1, n, 0, 0, p)
+            f = seal(s1, 1, n, p)
             got = rx.receive(f)
+            # A frame not accepted is acknowledged all the same if it is a copy of one that was,
+            # and not too old a one.
+            copy = [] if got else rx.copies(f)
+            assert copy in ([], [n])
             deliveries.append({
                 "frame": f.hex(),
                 "accept": got is not None,
                 "counter": n if got else None,
                 "plaintext": p.hex() if got else None,
+                "acknowledge": bool(got or copy),
+                "proof": proof(s1, 1, n).hex() if got or copy else None,
             })
         return {
             "name": name,
@@ -260,6 +315,9 @@ def build() -> dict:
         sequence("ahead-beyond", "H + 33 is outside it: 32 lost in a row", [0, 33]),
         sequence("behind", "after H = 60, counter 28 has left the window and 29 has not",
                  [0, 30, 60, 28, 29]),
+        sequence("copy-kept", "a copy of counter 0 is acknowledged while H is 31 or less",
+                 [0, 31, 0]),
+        sequence("copy-forgotten", "and no longer once H is 32", [0, 32, 0]),
     ]
     expected = {
         "replay": [True, False],
@@ -269,9 +327,23 @@ def build() -> dict:
         "ahead-edge": [True, True],
         "ahead-beyond": [True, False],
         "behind": [True, True, True, False, True],
+        "copy-kept": [True, True, False],
+        "copy-forgotten": [True, True, False],
+    }
+    acknowledged = {
+        "replay": [True, True],
+        "replay-later": [True, True, True, True],
+        "reordered": [True, True, True],
+        "first-window": [False, True],
+        "ahead-edge": [True, True],
+        "ahead-beyond": [True, False],
+        "behind": [True, True, True, False, True],
+        "copy-kept": [True, True, True],
+        "copy-forgotten": [True, True, False],
     }
     for seq in sequences:
         assert [x["accept"] for x in seq["deliveries"]] == expected[seq["name"]], seq["name"]
+        assert [x["acknowledge"] for x in seq["deliveries"]] == acknowledged[seq["name"]], seq["name"]
 
     # Both sessions are held by one receiver, so their tags share one table, and the frame matches
     # both entries; only one passes the AEAD check. There is one case for each session's frame,
@@ -286,7 +358,7 @@ def build() -> dict:
     for which, (sec, n) in enumerate([(sa, na), (sb, nb)]):
         rxs = [Receiver(sa, 1), Receiver(sb, 1)]
         p = f"collision {which}".encode()
-        f = seal(sec, 1, n, 0, 0, p)
+        f = seal(sec, 1, n, p)
         assert sum(len(rx.matches(f)) for rx in rxs) == 2
         assert receive_any(rxs, f) == (which, n, p)
         # Tried the other way round, the wrong session's entry comes first and must fail.
@@ -307,7 +379,7 @@ def build() -> dict:
     deliveries = []
     for which, (sec, n) in enumerate([(sa, na), (sb, nb)]):
         p = f"collision {which}".encode()
-        f = seal(sec, 1, n, 0, 0, p)
+        f = seal(sec, 1, n, p)
         assert receive_any(rxs, f) == (which, n, p)
         deliveries.append({"frame": f.hex(), "accept": True, "session": which, "counter": n,
                            "plaintext": p.hex()})
@@ -330,7 +402,7 @@ def build() -> dict:
         def send(self, d, p):
             n = self.next[d]
             self.next[d] = n + 1
-            return n, seal(self.s, d, n, 0, 0, p)
+            return n, seal(self.s, d, n, p)
 
     senders = []
     for name, note, sec, plan in [
@@ -349,26 +421,75 @@ def build() -> dict:
             sends.append({"direction": d, "plaintext": p.hex(), "counter": n, "frame": f.hex()})
         senders.append({"name": name, "note": note, "session_secret": sec.hex(), "sends": sends})
 
+    # Acknowledgements, as the source of the message checks them. The first is the one its
+    # destination sends; the rest are what a node on the way, holding no key, might try.
+    back = {"hops": 32, "power": 2, "next": 0x0A0B0C0D, "destination": 0x05060708}
+    acknowledgements = []
+
+    def ack(name, note, d, n, f, valid):
+        assert acknowledges(s1, d, n, f) == valid, name
+        acknowledgements.append({
+            "name": name,
+            "note": note,
+            "session_secret": s1.hex(),
+            "direction": d,
+            "counter": n,
+            "dtag": dtag(s1, d, n).hex(),
+            "proof": proof(s1, d, n).hex(),
+            "frame": f.hex(),
+            "valid": valid,
+        })
+
+    good = acknowledgement(s1, 1, 0, back)
+    ack("first", "the destination's answer to counter 0, initiator to responder", 1, 0, good, True)
+    ack("relayed", "the same, some hops on: the head is not checked here", 1, 0,
+        acknowledgement(s1, 1, 0, {**back, "hops": 30, "power": -9, "next": 0xBEEF0001}), True)
+    ack("epoch-1", "counter 32: the proof needs no epoch key", 1, 32,
+        acknowledgement(s1, 1, 32, back), True)
+    ack("reply", "the responder's counter 0, answered by the initiator", 2, 0,
+        acknowledgement(s1, 2, 0, back), True)
+    flipped = bytearray(good)
+    flipped[-1] ^= 0x01
+    ack("proof-flipped", "last bit of the proof changed", 1, 0, bytes(flipped), False)
+    ack("tag-for-proof", "the message's tag sent back as its proof: all a node on the way has",
+        1, 0, good[:BODY] + good[DTAG:BODY], False)
+    ack("another-counter", "counter 0's tag with counter 1's proof", 1, 0,
+        good[:BODY] + proof(s1, 1, 1), False)
+    ack("another-direction", "counter 0's tag with the other direction's proof", 1, 0,
+        good[:BODY] + proof(s1, 2, 0), False)
+    ack("another-message", "the acknowledgement of counter 1, checked against counter 0", 1, 0,
+        acknowledgement(s1, 1, 1, back), False)
+    ack("too-long", "a byte more than an acknowledgement has", 1, 0, good + b"\x00", False)
+    ack("too-short", "a byte fewer", 1, 0, good[:-1], False)
+    ack("a-message", "a message's header on it", 1, 0, bytes([HDR]) + good[1:], False)
+
     return {
-        "description": "Secured unicast frames, draft 0 (draft/unicast-security.md). For each "
-        "accepted case, an implementation given session_secret, direction, counter, hop, label "
-        "and plaintext MUST produce frame, and given session_secret, direction and frame MUST "
-        "recover counter and plaintext. Each rejected case MUST be rejected by a receiver holding "
-        "session_secret and expecting counter in direction. For each sequence, a receiver of a new "
-        "session given the deliveries in order MUST accept exactly those marked accept, with "
-        "that counter and plaintext. For each collision case, a receiver holding every listed "
-        "session, all new, given the deliveries in order MUST accept each, attributed to that "
-        "session (an index into sessions) and counter, with that plaintext. Values are hex; "
-        "label is an integer sent big-endian. For each senders case, an implementation acting as "
-        "both ends of a new session, given each send's direction and plaintext in order (hop "
-        "and label 0) and choosing the counter itself, MUST produce that send's frame; counter "
-        "is given only to help debugging.",
+        "description": "Secured unicast frames, draft 0 (draft/unicast-security.md), and their "
+        "acknowledgements (draft/forwarding.md). For each accepted case, an implementation given "
+        "session_secret, direction, counter, hops, power, next, destination and plaintext MUST "
+        "produce frame, and given session_secret, direction and frame MUST recover counter and "
+        "plaintext. Each rejected case MUST be rejected by a receiver holding session_secret and "
+        "expecting counter in direction. For each sequence, a receiver of a new session given the "
+        "deliveries in order MUST accept exactly those marked accept, with that counter and "
+        "plaintext, and MUST acknowledge exactly those marked acknowledge, with the frame's tag "
+        "and that proof. For each collision case, a receiver holding every listed session, all "
+        "new, given the deliveries in order MUST accept each, attributed to that session (an "
+        "index into sessions) and counter, with that plaintext. For each senders case, an "
+        "implementation acting as both ends of a new session, given each send's direction and "
+        "plaintext in order and choosing the counter itself, MUST produce that send's frame; "
+        "counter is given only to help debugging. For each acknowledgements case, the node that "
+        "sent message counter in direction, holding session_secret, MUST take frame as showing "
+        "that the message arrived if valid is true, and MUST NOT if it is false. Values are hex; "
+        "hops, power, next and destination are integers, power signed, laid out as "
+        "draft/forwarding.md gives, and where a case does not give them they are 32, 14, "
+        "0x0A0B0C0D and 0x01020304.",
         "generator": "vectors/tools/unicast.py",
         "accepted": accepted,
         "rejected": rejected,
         "sequences": sequences,
         "collisions": collisions,
         "senders": senders,
+        "acknowledgements": acknowledgements,
     }
 
 

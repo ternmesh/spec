@@ -133,8 +133,8 @@ PRK_c   = Extract(G_X, G_RX)
 ctag_n  = Expand(PRK_c, "tern v0 contact" || n, 4)
 ```
 
-`n` is one byte. `hop` and `label` are not protected, as in a unicast
-frame.
+`n` is one byte. `hop` and `label` are not protected, as a unicast
+frame's `route` is not.
 
 ## Initiating
 
