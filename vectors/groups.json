@@ -181,7 +181,7 @@
     },
     {
       "name": "header-changed",
-      "note": "a reserved flag set",
+      "note": "another header, 0x59, which is an announce's: the header is authenticated",
       "group_secret": "000102030405060708090a0b0c0d0e0f",
       "self": 168496141,
       "frame": "59050e0001020304050607f4be03745408b7a32f0c17de0d48a80d48503fe402"

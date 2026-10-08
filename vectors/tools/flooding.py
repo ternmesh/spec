@@ -148,7 +148,7 @@ def build():
         ("short", good[:-1]),
         ("a-message", bytes([0x48]) + good[1:]),
         ("an-acknowledgement", bytes([0x50]) + good[1:]),
-        ("a-flag-set", bytes([0x59]) + good[1:]),
+        ("an-announce", bytes([0x59]) + good[1:]),
         ("empty", b""),
     ]:
         assert not flooded(f)

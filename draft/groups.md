@@ -75,8 +75,7 @@ group.
 | 15 | 4 + `c` | ciphertext | yes (encrypted) |
 | 19 + `c` | 8 | AEAD tag | |
 
-`hdr` is `0x58`: format `01`, draft 0; type `011`, a group frame; flags
-`000`, none defined. The frame is `27 + c` bytes, so `c`, the length of
+`hdr` is `0x58`. The frame is `27 + c` bytes, so `c`, the length of
 what the writer has to say, is at most 228.
 
 What is encrypted is the **plaintext**:
@@ -230,7 +229,7 @@ LoRa has least of.
 * *Signing each frame* would stop a member writing as another. An
   Ed25519 signature is 64 bytes: more than the whole of a short
   message's frame, on every frame, for every relay that passes it on.
-  A flag in `hdr` is free for it.
+  It would be a frame of its own, with another `hdr`.
 * *A key for each writer*, handed to every member over sessions and
   moved forward as it is used, gives forward secrecy and lets a group
   drop a member by handing new keys to the rest. It costs a unicast

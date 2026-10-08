@@ -76,9 +76,9 @@ first-contact frame of any other length, and a frame whose `next` or
 
 **The same frame.** Four bytes of tag do not tell every message from
 every other: two in the air at once share one now and then. So two
-frames are **the same frame** only if they are of one length and every
-byte from `destination` on is equal, which for a message takes in its
-ciphertext and check. `tag` is only where an acknowledgement is matched
+frames are **the same frame** only if they are of one length, have one
+`hdr`, and every byte from `destination` on is equal, which for a
+message takes in its ciphertext and check. `tag` is only where an acknowledgement is matched
 to its message, since an acknowledgement carries nothing else of it.
 
 Bytes 1 to 10 are what the

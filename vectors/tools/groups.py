@@ -24,7 +24,7 @@ import unicast  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "groups.json"
 
-HDR = 0x58  # format 01, type 011, no flags
+HDR = 0x58
 HEAD = 3
 NONCE = HEAD  # where the nonce is
 GTAG = NONCE + 8
@@ -200,7 +200,8 @@ def build():
     other[GTAG:BODY] = gtag(g1, bytes(other[NONCE:GTAG]))
     reject("nonce-changed", "another nonce, with the tag that goes with it: the check fails", bytes(other))
     reject("tag-flipped", "a bit of the group tag changed", flip(GTAG))
-    reject("header-changed", "a reserved flag set", bytes([HDR | 1]) + frame[1:])
+    reject("header-changed", "another header, 0x59, which is an announce's: the header is authenticated",
+           bytes([HDR | 1]) + frame[1:])
     reject("a-message", "a unicast message's header on it", bytes([0x48]) + frame[1:])
     reject("truncated", "26 bytes: shorter than any frame", frame[:MIN_FRAME - 1])
     reject("another-group", "a frame of a group this node does not hold",
