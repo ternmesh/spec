@@ -17,7 +17,7 @@ from pathlib import Path
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 0
+VERSION = 1
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -40,6 +40,7 @@ FRAMES = {
     0x11: ("READ", [("through", U32)]),
     0x18: ("SAVE_CONTACT", [("address", ADDR), ("name", STR, NAME_MAX)]),
     0x19: ("REMOVE_CONTACT", [("address", ADDR)]),
+    0x1A: ("END_SESSION", [("address", ADDR)]),
     # Answers, node to client.
     0x40: ("OK", []),
     0x41: ("ERROR", [("code", U8)]),
@@ -59,6 +60,7 @@ FRAMES = {
     0x86: ("NEIGHBOUR_GONE", [("routing_id", U32)]),
     0x87: ("AIRTIME", [("period", U32), ("allowed", U32), ("used", U32), ("wait", U32)]),
     0x88: ("POWER", [("millivolts", U16), ("percent", U8), ("flags", U8)]),
+    0x89: ("ASKED", [("address", ADDR), ("why", U8)]),
 }
 BY_NAME = {name: t for t, (name, _) in FRAMES.items()}
 
@@ -211,7 +213,7 @@ def parse(stream):
 def self_check():
     assert crc16(b"123456789") == 0x29B1  # the published check value
     assert encode("PING", 7) == b"\x03\x07"
-    assert encode("HELLO", 1, version=0) == b"\x01\x01\x00"
+    assert encode("HELLO", 1, version=1) == b"\x01\x01\x01"
     assert encode("SET", 9, setting=3, value=-9) == b"\x05\x09\x03\xf7"
     assert wrap(b"\x03\x07") == bytes.fromhex("f5540002") + b"\x03\x07" + struct.pack(
         ">H", crc16(bytes.fromhex("00020307")))
@@ -221,15 +223,17 @@ def self_check():
     assert len(encode("SEND", 1, ref=0, to=bytes(32), text="x" * TEXT_MAX)) == 39 + TEXT_MAX
 
 
-# The public keys of RFC 8032's first two Ed25519 test vectors (section 7.1): valid addresses.
+# The public keys of RFC 8032's first three Ed25519 test vectors (section 7.1): valid addresses.
 ALICE = bytes.fromhex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
 BOB = bytes.fromhex("3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c")
+CAROL = bytes.fromhex("fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025")
 
 
 def build():
     self_check()
 
     examples = [
+        ("HELLO", 1, {"version": 1}),
         ("HELLO", 1, {"version": 0}),
         ("SYNC", 2, {"after": 0}),
         ("SYNC", 3, {"after": 0x00000102}),
@@ -245,9 +249,10 @@ def build():
         ("SAVE_CONTACT", 13, {"address": BOB, "name": "Bob"}),
         ("SAVE_CONTACT", 14, {"address": BOB, "name": ""}),
         ("REMOVE_CONTACT", 15, {"address": BOB}),
+        ("END_SESSION", 16, {"address": BOB}),
         ("OK", 4, {}),
         ("ERROR", 15, {"code": 4}),
-        ("INFO", 1, {"version": 0, "firmware": "tern 0.1.0 heltec-v3"}),
+        ("INFO", 1, {"version": 1, "firmware": "tern 0.1.0 heltec-v3"}),
         ("SYNCED", 2, {}),
         ("QUEUED", 10, {"id": 18}),
         ("SELF", 0, {"address": ALICE, "role": 1, "region": "EU868", "power": 14,
@@ -268,6 +273,8 @@ def build():
         ("AIRTIME", 11, {"period": 0, "allowed": 0, "used": 812, "wait": 0}),
         ("POWER", 12, {"millivolts": 3987, "percent": 81, "flags": 1}),
         ("POWER", 13, {"millivolts": 0, "percent": 255, "flags": 2}),
+        ("ASKED", 14, {"address": CAROL, "why": 1}),
+        ("ASKED", 15, {"address": CAROL, "why": 2}),
     ]
     frames = []
     for name, seq, values in examples:
@@ -287,7 +294,7 @@ def build():
         extended.append({"frame": frame.hex(), "type": fields.pop("type"),
                          "seq": fields.pop("seq"), "fields": fields})
 
-    hello = encode("HELLO", 1, version=0)
+    hello = encode("HELLO", 1, version=1)
     rejected = []
     for frame in [
         b"\x03",
@@ -307,6 +314,8 @@ def build():
         + bytes([TEXT_MAX + 1]) + b"x" * (TEXT_MAX + 1),
         encode("MESSAGE", 5, id=1, contact=BOB, time=0, flags=0, state=0, reason=0, wait=0,
                text="hi")[:-3],
+        encode("END_SESSION", 16, address=BOB)[:-1],
+        encode("ASKED", 14, address=CAROL, why=1)[:-1],
     ]:
         why = decode(frame)
         assert isinstance(why, str), frame.hex()
@@ -337,8 +346,8 @@ def build():
     # A connection, as both ends see it: who sends what, in order.
     exchange = []
     for side, frame in [
-        ("client", encode("HELLO", 1, version=0)),
-        ("node", encode("INFO", 1, version=0, firmware="tern 0.1.0 heltec-v3")),
+        ("client", encode("HELLO", 1, version=1)),
+        ("node", encode("INFO", 1, version=1, firmware="tern 0.1.0 heltec-v3")),
         ("client", encode("SET_TIME", 2, time=1_790_000_000)),
         ("node", encode("OK", 2)),
         ("client", encode("SYNC", 3, after=0)),
@@ -362,13 +371,44 @@ def build():
                         reason=1, wait=0, text="On the ridge by six")),
         ("node", encode("STATE", 8, id=18, state=1, reason=0, wait=0)),
         ("node", encode("STATE", 9, id=18, state=2, reason=0, wait=0)),
+        # Carol makes first contact, and is refused: she is not a contact.
+        ("node", encode("ASKED", 10, address=CAROL, why=1)),
+        ("client", encode("SAVE_CONTACT", 6, address=CAROL, name="Carol")),
+        ("node", encode("OK", 6)),
+        ("node", encode("CONTACT", 11, address=CAROL, session=0, name="Carol")),
+        ("client", encode("END_SESSION", 7, address=BOB)),
+        ("node", encode("OK", 7)),
+        ("node", encode("CONTACT", 12, address=BOB, session=0, name="Bob")),
     ]:
         fields = decode(frame)
         exchange.append({"from": side, "type": fields["type"], "seq": fields["seq"],
                          "frame": frame.hex()})
 
+    # The same node with a client of version 0. Carol is refused after the sync, and the client
+    # is not told: the news after it is counted on from the sync's.
+    older = []
+    for side, frame in [
+        ("client", encode("HELLO", 1, version=0)),
+        ("node", encode("INFO", 1, version=1, firmware="tern 0.1.0 heltec-v3")),
+        ("client", encode("SYNC", 2, after=17)),
+        ("node", encode("SELF", 0, address=ALICE, role=1, region="EU868", power=14,
+                        time=1_790_000_000)),
+        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("NEIGHBOUR", 2, routing_id=0x1D2E3F40, role=1, snr_quarter_db=-38,
+                        heard=42)),
+        ("node", encode("AIRTIME", 3, period=3600, allowed=360_000, used=12_345, wait=0)),
+        ("node", encode("POWER", 4, millivolts=3987, percent=81, flags=1)),
+        ("node", encode("SYNCED", 2)),
+        ("client", encode("SAVE_CONTACT", 3, address=CAROL, name="Carol")),
+        ("node", encode("OK", 3)),
+        ("node", encode("CONTACT", 5, address=CAROL, session=0, name="Carol")),
+    ]:
+        fields = decode(frame)
+        older.append({"from": side, "type": fields["type"], "seq": fields["seq"],
+                      "frame": frame.hex()})
+
     return {
-        "description": "The companion protocol, draft 0 (draft/companion.md). Frames, streams "
+        "description": "The companion protocol, version 1 (draft/companion.md). Frames, streams "
         "and addresses are hex; numbers are numbers; strings are text. In frames, frame is the "
         "frame alone, as one BLE write or notification carries it, and stream is the same frame "
         "as it goes on a byte stream. In extended, frame carries bytes past the fields this "
@@ -376,8 +416,11 @@ def build():
         "discards frame; answer is the ERROR code a node answers it with, null for none. In "
         "streams, items are what a receiver finds in stream, in order: a frame, or a run of "
         "bytes that is not one, and pending is what it holds at the end waiting for more. "
-        "Exchange is one connection, in order. The two addresses are the public keys of RFC "
-        "8032's first two Ed25519 test vectors.",
+        "Exchange is one connection, in order; the node refuses first contact from the "
+        "third address just before the ASKED in it. Older is a connection to the same node by a "
+        "client of version 0; the node refuses that first contact after the sync, before the "
+        "client's SAVE_CONTACT. The three addresses are the public keys of RFC 8032's first "
+        "three Ed25519 test vectors.",
         "generator": "vectors/tools/companion.py",
         "crc_check": {"input": b"123456789".hex(), "crc": crc16(b"123456789")},
         "frames": frames,
@@ -385,6 +428,7 @@ def build():
         "rejected": rejected,
         "streams": streams,
         "exchange": exchange,
+        "older": older,
     }
 
 
