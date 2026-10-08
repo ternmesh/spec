@@ -57,6 +57,52 @@
     "",
     "TERN:"
   ],
+  "not_contacts": [
+    {
+      "link": "TERN:0100000000000000000000000000000000000000000000000000000000000000",
+      "reason": "a point of order 1"
+    },
+    {
+      "link": "TERN:ECFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF7F",
+      "reason": "a point of order 2"
+    },
+    {
+      "link": "TERN:26E8958FC2B227B045C3F489F2EF98F0D5DFAC05D3C63339B13802886D53FC05",
+      "reason": "a point of order 8"
+    },
+    {
+      "link": "TERN:C7176A703D4DD84FBA3C0B760D10670F2A2053FA2C39CCC64EC7FD7792AC037A",
+      "reason": "a point of order 8"
+    },
+    {
+      "link": "TERN:0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "a point of order 4"
+    },
+    {
+      "link": "TERN:0000000000000000000000000000000000000000000000000000000000000080",
+      "reason": "a point of order 4"
+    },
+    {
+      "link": "TERN:26E8958FC2B227B045C3F489F2EF98F0D5DFAC05D3C63339B13802886D53FC85",
+      "reason": "a point of order 8"
+    },
+    {
+      "link": "TERN:C7176A703D4DD84FBA3C0B760D10670F2A2053FA2C39CCC64EC7FD7792AC03FA",
+      "reason": "a point of order 8"
+    },
+    {
+      "link": "TERN:4A70CC431E247B7246B0BE201F7FA5E2845452533B635F7BDA3936871056D7CB",
+      "reason": "the first address plus a point of order 8: not of prime order"
+    },
+    {
+      "link": "TERN:EEFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF7F",
+      "reason": "y is not reduced modulo p"
+    },
+    {
+      "link": "TERN:8F1378ED3F124C4256D4304D50778F1613E47A73DEF3B90B39874A323496DC18",
+      "reason": "no point has this y"
+    }
+  ],
   "short_code_forms": [
     {
       "value": 0,

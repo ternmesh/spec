@@ -127,6 +127,15 @@ def build():
     for r in refused:
         assert read(r) is None
 
+    # Links that read, but to an address first contact rejects: never kept as a contact. They are
+    # first-contact.json's own rejected addresses, so that generator, not this one, says why.
+    fc = json.loads((VECTORS / "first-contact.json").read_text())
+    not_contacts = []
+    for r in fc["rejected_addresses"]:
+        a = bytes.fromhex(r["address"])
+        assert read(link(a)) == a
+        not_contacts.append({"link": link(a), "reason": r["reason"]})
+
     # The short code's form, on values chosen for it, so that leading zeros are seen kept.
     forms = [0, 42, 10**8, 10**12 - 1, 123456789012]
     formatting = [{"value": v, "text": code_text(v)} for v in forms]
@@ -140,6 +149,7 @@ def build():
         "short_code_label": SHORT_CODE_LABEL.decode(),
         "cases": cases,
         "refused": refused,
+        "not_contacts": not_contacts,
         "short_code_forms": formatting,
     }
 

@@ -20,7 +20,8 @@ produced by [`vectors/tools/sharing.py`](../vectors/tools/sharing.py).
    app and a command line all show and take the same thing.
 2. **A QR code that is small enough for a node's screen.** The link
    below fits a version 3 code, 29 modules square, which a 128 by 64
-   display draws at two pixels a module.
+   display draws at two pixels a module (58 of its 64 rows; see
+   [Rationale](#rationale) for the margin round it).
 3. **A check two people can do aloud.** Twelve digits that each
    person's device shows for an address, the same in every
    implementation, which differ for any other address with high
@@ -58,7 +59,9 @@ Sixty-nine characters, all of them in the QR code's alphanumeric set
 that shows an address as a QR code MUST encode the link, SHOULD use
 alphanumeric mode, and then needs no larger than version 3 at error
 correction level L, the lowest, which holds 77 such characters. A
-larger version or a higher level is allowed.
+larger version or a higher level is allowed. It SHOULD leave as wide a
+light margin round the code as its display allows, up to the four
+modules ISO/IEC 18004 asks for.
 
 An implementation that reads a link MUST accept the scheme in any case
 (`TERN:`, `tern:`) and the digits as the text form allows. It MUST also
@@ -95,6 +98,9 @@ An implementation conforms to this section if, for every case in
   `link` in any QR code it makes of it, and shows `short_code` as its
   short code; and it reads `address` from each of `reads`;
 * **refused:** it reads no address from any of `refused`;
+* **not contacts:** it reads each `link` in `not_contacts`, and refuses
+  to keep the address as a contact: each is one of
+  [first contact's](first-contact.md#conformance) rejected addresses;
 * **short code forms:** it shows each `value`, as a code, as `text`.
 
 A QR code's modules are not given: encoders may choose different masks,
@@ -109,6 +115,19 @@ would need version 4, 33 modules square, which a 64-pixel screen can
 draw only at one pixel a module. A denser alphabet (base32, base58)
 saves a version but not a size worth having, and is one more thing to
 get right in every implementation.
+
+**The margin a small screen leaves.** ISO/IEC 18004 asks for a light
+margin, the quiet zone, four modules wide on every side. A version 3
+code with that margin is 37 modules square: 74 pixels at two a module,
+more than a 64-pixel screen has, and a version 3 code at one pixel a
+module is too small for most phone cameras to resolve at arm's length.
+So a 64-pixel screen draws the code at two pixels a module with the
+margin it has room for, three pixels (a module and a half) above and
+below. That is short of the standard; common decoders read it, as the
+Heltec V3 port's tests check against ZXing and OpenCV, but a reader is
+not promised to, and a display with room for the full margin should
+give it. A version 2 code would fit with its margin, but holds 47
+alphanumeric characters, too few for an address.
 
 **A scheme.** A QR code holding bare hex is just text to a phone. With
 a scheme, an app can register for `tern:` links and be opened by them,
