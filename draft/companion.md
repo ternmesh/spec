@@ -285,8 +285,9 @@ SHOULD NOT show it as proved. `time`, `flags` and `text` are as for a
 A group message this node wrote is **waiting** until it has gone on the
 air, with `reason` 4 while it waits for
 [the node's allowance](flooding.md#the-allowance), and **sent** from
-then on. It is never delivered or not delivered: nothing answers a
-flood, and a writer does not learn who received it. One received is
+then on. It is never delivered: nothing answers a flood, and a writer
+does not learn who received it. It is **not delivered** only if its
+group is [left](#the-requests) while it still waits. One received is
 **received**.
 
 **Invites** (`INVITE`). An [invite](groups.md#invites) to a group, sent
@@ -531,8 +532,10 @@ node draws, and holds it under `name`. The answer, `MADE`, gives its
 id. A node with no room for another group answers `ERROR` 5.
 
 **`LEAVE_GROUP`** leaves the group: the node erases its secret and its
-keys. Its messages are kept. Nothing goes on the air, so the other
-members are not told. A node answers `OK` for a group it does not
+keys. Its messages are kept; one still waiting to go to it, and an
+invite to it still waiting, become not delivered, since neither will
+now be sent. Nothing goes on the air, so the other members are not
+told. A node answers `OK` for a group it does not
 hold.
 
 **`NAME_GROUP`** changes the user's name for a group the node holds.
