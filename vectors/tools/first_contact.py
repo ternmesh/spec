@@ -18,6 +18,7 @@ Like everything under vectors/, this file is dedicated to the public domain (CC0
 import hashlib
 import hmac
 import json
+import struct
 import sys
 from pathlib import Path
 
@@ -33,7 +34,12 @@ OUT = Path(__file__).resolve().parent.parent / "first-contact.json"
 
 FORMAT_V0 = 0b01
 TYPE_FIRST_CONTACT = 0b010
-PREFIX = 8
+HEAD, TAG = 11, 4  # the head every frame that follows a route starts with, and its tag
+PREFIX = HEAD + TAG  # where message_2 to message_4 start
+PREFIX_1 = PREFIX + 4  # and message_1, after the initiator's routing id
+HOP_MAX = 32
+POWER = 14  # what the frames here say they were sent at; any power is as good
+RESERVED = (0, 0xFFFFFFFF)
 EXPORTER_LABEL = 32768  # RFC 9528's private-use range, until Tern registers one
 CTAG_LABEL = b"tern v0 contact"
 METHOD = 3  # static DH on both sides
@@ -383,8 +389,35 @@ def ctags(g_x: bytes, g_rx: bytes):
     return {n: expand(prk, CTAG_LABEL + bytes([n]), 4) for n in (1, 2, 3, 4)}
 
 
-def frame(n, ctag, message, hop=0, label=0):
-    return bytes([hdr(n), hop]) + label.to_bytes(2, "big") + ctag + message
+def rid(a: bytes) -> int:
+    """A node's routing id (draft/routing.md), as vectors/tools/routing.py has it."""
+    h = hashlib.sha256(b"tern routing id" + a).digest()
+    return next(v for v in (int.from_bytes(h[i : i + 4], "big") for i in range(0, 32, 4)) if v not in RESERVED)
+
+
+def frame(n, ctag, message, destination, source=None):
+    """A first-contact frame as its sender makes it, for a destination it hears: hops, power and
+    next are the nodes' on the way to set."""
+    head = struct.pack(">BBbII", hdr(n), HOP_MAX, POWER, destination, destination)
+    return head + ctag + (struct.pack(">I", source) if n == 1 else b"") + message
+
+
+def ctag_of(f):
+    return f[HEAD:PREFIX]
+
+
+def destination_of(f):
+    return int.from_bytes(f[7:11], "big")
+
+
+def readdress(f, destination):
+    """The same frame for another destination, which it hears."""
+    return f[:3] + struct.pack(">II", destination, destination) + f[HEAD:]
+
+
+def resource(f, source):
+    """A message_1 frame naming another routing id as where it came from."""
+    return f[:PREFIX] + struct.pack(">I", source) + f[PREFIX_1:]
 
 
 def initiator_start(seed, target, x, c_i):
@@ -395,14 +428,17 @@ def initiator_start(seed, target, x, c_i):
     assert g_rx is not None
     m1 = cbor(METHOD) + cbor(SUITE) + cbor(g_x) + conn_id(c_i)
     st = dict(seed=seed, target=target, x=x, g_x=g_x, g_rx=g_rx, m1=m1, ctag=ctags(g_x, g_rx))
-    return st, frame(1, st["ctag"][1], m1)
+    return st, frame(1, st["ctag"][1], m1, rid(target), rid(address(seed)))
 
 
 def responder_receive_1(seed, y, c_r, f):
     """message_2 in reply to f, or None if f is not a message_1 for this node, or fails."""
-    if len(f) != PREFIX + 37 or f[0] != hdr(1):
+    if len(f) != PREFIX_1 + 37 or f[0] != hdr(1):
         return None
-    m1 = f[PREFIX:]
+    source = int.from_bytes(f[PREFIX:PREFIX_1], "big")
+    if source in RESERVED or source == rid(address(seed)):
+        return None  # nowhere an answer could go
+    m1 = f[PREFIX_1:]
     if m1[:4] != b"\x03\x00\x58\x20" or not one_byte_int(m1[36:]):
         return None
     g_x = m1[4:36]
@@ -410,7 +446,7 @@ def responder_receive_1(seed, y, c_r, f):
     if g_rx is None:
         return None
     ct = ctags(g_x, g_rx)
-    if f[4:8] != ct[1]:
+    if ctag_of(f) != ct[1]:
         return None  # not for this node
     g_y = X25519.public(y)
     th_2 = H(cbor(g_y) + cbor(H(m1)))
@@ -422,12 +458,12 @@ def responder_receive_1(seed, y, c_r, f):
     ks = kdf(prk_2e, 0, th_2, len(pt_2))
     m2 = cbor(g_y + bytes(a ^ b for a, b in zip(pt_2, ks)))
     st = dict(seed=seed, y=y, ctag=ct, prk_3e2m=prk_3e2m, th_3=H(cbor(th_2) + pt_2 + cred_r))
-    return st, frame(2, ct[2], m2)
+    return st, frame(2, ct[2], m2, source)
 
 
 def initiator_receive_2(st, f, c_i):
     """message_3 in reply to f, or None if it fails."""
-    if len(f) != PREFIX + 45 or f[0] != hdr(2) or f[4:8] != st["ctag"][2]:
+    if len(f) != PREFIX + 45 or f[0] != hdr(2) or ctag_of(f) != st["ctag"][2]:
         return None
     m2 = f[PREFIX:]
     if m2[:2] != b"\x58\x2b":
@@ -458,13 +494,13 @@ def initiator_receive_2(st, f, c_i):
     k_3, iv_3 = kdf(prk_3e2m, 3, th_3, KEY_LEN), kdf(prk_3e2m, 4, th_3, IV_LEN)
     m3 = cbor(seal(k_3, iv_3, th_3, pt_3))
     st.update(prk_4e3m=prk_4e3m, th_4=H(cbor(th_3) + pt_3 + cred(me)))
-    return frame(3, st["ctag"][3], m3)
+    return frame(3, st["ctag"][3], m3, rid(st["target"]))
 
 
 def responder_receive_3(st, f, check_address=True, check_mac=True):
     """(message_4, the initiator's address, S), or None if f fails. check_address and check_mac
     are only for showing that a rejected vector would otherwise be accepted."""
-    if len(f) != PREFIX + 65 or f[0] != hdr(3) or f[4:8] != st["ctag"][3]:
+    if len(f) != PREFIX + 65 or f[0] != hdr(3) or ctag_of(f) != st["ctag"][3]:
         return None
     m3 = f[PREFIX:]
     if m3[:2] != b"\x58\x3f":
@@ -487,16 +523,16 @@ def responder_receive_3(st, f, check_address=True, check_mac=True):
     th_4 = H(cbor(th_3) + pt_3 + cred(a_i))
     k_4, iv_4 = kdf(prk_4e3m, 8, th_4, KEY_LEN), kdf(prk_4e3m, 9, th_4, IV_LEN)
     m4 = cbor(seal(k_4, iv_4, th_4, b""))
-    return frame(4, st["ctag"][4], m4), a_i, session_secret(prk_4e3m, th_4)
+    return frame(4, st["ctag"][4], m4, rid(a_i)), a_i, session_secret(prk_4e3m, th_4)
 
 
 def initiator_receive_4(st, f):
     """S, or None if f fails."""
-    if len(f) != PREFIX + 9 or f[0] != hdr(4) or f[4:8] != st["ctag"][4] or f[8] != 0x48:
+    if len(f) != PREFIX + 9 or f[0] != hdr(4) or ctag_of(f) != st["ctag"][4] or f[PREFIX] != 0x48:
         return None
     prk_4e3m, th_4 = st["prk_4e3m"], st["th_4"]
     k_4, iv_4 = kdf(prk_4e3m, 8, th_4, KEY_LEN), kdf(prk_4e3m, 9, th_4, IV_LEN)
-    if unseal(k_4, iv_4, th_4, f[9:]) != b"":
+    if unseal(k_4, iv_4, th_4, f[PREFIX + 1 :]) != b"":
         return None
     return session_secret(prk_4e3m, th_4)
 
@@ -531,7 +567,7 @@ def run(i_seed, r_seed, x, y, c_i, c_r):
         x25519_private(i_seed), x25519_private(r_seed),
     )  # fmt: skip
     for n, f in enumerate((f1, f2, f3, f4), 1):
-        assert f[PREFIX:] == core[f"message_{n}"], f"message_{n} differs from the EDHOC core"
+        assert f[PREFIX_1 if n == 1 else PREFIX :] == core[f"message_{n}"], f"message_{n} differs from the EDHOC core"
     return dict(st_i=st_i, st_r=st_r, frames=(f1, f2, f3, f4), s=s_i, core=core)
 
 
@@ -552,6 +588,8 @@ def handshake_case(name, note, i_seed, r_seed, x, y, c_i, c_r):
         "intermediate": {
             "initiator_address": address(i_seed).hex(),
             "responder_address": address(r_seed).hex(),
+            "initiator_id": rid(address(i_seed)),
+            "responder_id": rid(address(r_seed)),
             "g_x": st_i["g_x"].hex(),
             "g_y": X25519.public(y).hex(),
             "g_rx": st_i["g_rx"].hex(),
@@ -632,6 +670,33 @@ def build() -> dict:
             "note": "the first handshake's message_1, heard by a node it is not for",
             "responder_seed": other_seed.hex(),
             "frame": f1.hex(),
+        },
+        {
+            "name": "other-node-named",
+            "note": "the same message_1 with the third node's routing id as its destination: the "
+            "contact tag is still not one the third node computes",
+            "responder_seed": other_seed.hex(),
+            "frame": readdress(f1, rid(address(other_seed))).hex(),
+        },
+    ]
+    assert responder_receive_1(other_seed, det("y 0"), b"\x01", readdress(f1, rid(address(other_seed)))) is None
+
+    # message_2 goes to the routing id its message_1 names, whoever that is: the responder cannot
+    # yet know. Here the first handshake's message_1 names the third node.
+    elsewhere = resource(f1, rid(address(other_seed)))
+    _, f2_elsewhere = responder_receive_1(r_seed, det("y 0"), b"\x01", elsewhere)
+    assert f2_elsewhere[HEAD:] == f2[HEAD:] and destination_of(f2_elsewhere) == rid(address(other_seed))
+    sources = [
+        {
+            "name": "another-source",
+            "note": "the first handshake's message_1, naming the third node's routing id as where "
+            "it came from: message_2 is the first handshake's, sent there",
+            "responder_seed": r_seed.hex(),
+            "responder_ephemeral": det("y 0").hex(),
+            "c_r": "01",
+            "frame": elsewhere.hex(),
+            "source": rid(address(other_seed)),
+            "reply": f2_elsewhere.hex(),
         }
     ]
 
@@ -669,11 +734,18 @@ def build() -> dict:
 
     reject("message_1-ead", "message_1 with one byte of EAD padding: v0 carries none", 1, f1 + b"\x00", as_responder)
     reject("message_1-suites", "message_1 offering suites [6, 0]", 1,
-           f1[:PREFIX + 1] + b"\x82\x06\x00" + f1[PREFIX + 2:], as_responder)  # fmt: skip
-    reject("message_1-method", "message_1 with method 0 (signatures)", 1, f1[:PREFIX] + b"\x00" + f1[PREFIX + 1 :], as_responder)
+           f1[:PREFIX_1 + 1] + b"\x82\x06\x00" + f1[PREFIX_1 + 2:], as_responder)  # fmt: skip
+    reject("message_1-method", "message_1 with method 0 (signatures)", 1, f1[:PREFIX_1] + b"\x00" + f1[PREFIX_1 + 1 :], as_responder)
+    reject("message_1-no-source", "message_1 with routing id 0 as where it came from", 1, resource(f1, 0), as_responder)
+    reject("message_1-every-source", "message_1 with the routing id that means every neighbour as where it came from", 1,
+           resource(f1, 0xFFFFFFFF), as_responder)  # fmt: skip
+    reject("message_1-own-source", "message_1 with the responder's own routing id as where it came from", 1,
+           resource(f1, rid(address(r_seed))), as_responder)  # fmt: skip
+    reject("message_1-short", "message_1 without the routing id it came from: the frame of an earlier draft's length", 1,
+           f1[:PREFIX] + f1[PREFIX_1:], as_responder)  # fmt: skip
     reject("message_2-ciphertext", "message_2 with a bit of CIPHERTEXT_2 flipped", 2, flip(f2, len(f2) - 1), as_initiator_2)
-    reject("message_2-ctag", "message_2 with a bit of its tag flipped", 2, flip(f2, 4), as_initiator_2)
-    reject("message_3-ciphertext", "message_3 with a bit of CIPHERTEXT_3 flipped", 3, flip(f3, 20), as_responder_3)
+    reject("message_2-ctag", "message_2 with a bit of its tag flipped", 2, flip(f2, HEAD), as_initiator_2)
+    reject("message_3-ciphertext", "message_3 with a bit of CIPHERTEXT_3 flipped", 3, flip(f3, PREFIX + 12), as_responder_3)
     reject("message_4-ciphertext", "message_4 with a bit of its tag flipped", 4, flip(f4, len(f4) - 1), as_initiator_4)
 
     # message_3 that decrypts, but names a point of order 8 as the initiator's address. X25519 on
@@ -684,7 +756,7 @@ def build() -> dict:
     iv_3 = kdf(st_r["prk_3e2m"], 4, st_r["th_3"], IV_LEN)
     bad = encode(small_order_points()[-1])
     pt_3 = id_cred_i(bad) + cbor(bytes(MAC_LEN))
-    f3_bad = frame(3, st_r["ctag"][3], cbor(seal(k_3, iv_3, st_r["th_3"], pt_3)))
+    f3_bad = frame(3, st_r["ctag"][3], cbor(seal(k_3, iv_3, st_r["th_3"], pt_3)), rid(address(r_seed)))
     reject("message_3-address", "message_3 that decrypts, naming a small-order address", 3, f3_bad, as_responder_3)
 
     # The initiator's own key, claiming its address plus a point of order 8. X25519 gives the same
@@ -693,7 +765,7 @@ def build() -> dict:
     prk_4e3m = extract(kdf(st_r["prk_3e2m"], 5, st_r["th_3"], HASH_LEN), g_iy)
     mac_3 = kdf(prk_4e3m, 6, id_cred_i(mixed) + cbor(st_r["th_3"]) + cred(mixed), MAC_LEN)
     pt_3 = id_cred_i(mixed) + cbor(mac_3)
-    f3_mixed = frame(3, st_r["ctag"][3], cbor(seal(k_3, iv_3, st_r["th_3"], pt_3)))
+    f3_mixed = frame(3, st_r["ctag"][3], cbor(seal(k_3, iv_3, st_r["th_3"], pt_3)), rid(address(r_seed)))
     assert responder_receive_3(r_state(), f3_mixed, check_address=False) is not None
     reject("message_3-mixed-order", "message_3 from the initiator's own key, claiming its address plus a "
            "point of order 8: the MAC verifies, and only the address check refuses it", 3, f3_mixed, as_responder_3)
@@ -704,7 +776,7 @@ def build() -> dict:
     victim = address(other_seed)
     mac_3 = kdf(prk_4e3m, 6, id_cred_i(victim) + cbor(st_r["th_3"]) + cred(victim), MAC_LEN)
     pt_3 = id_cred_i(victim) + cbor(mac_3)
-    f3_imp = frame(3, st_r["ctag"][3], cbor(seal(k_3, iv_3, st_r["th_3"], pt_3)))
+    f3_imp = frame(3, st_r["ctag"][3], cbor(seal(k_3, iv_3, st_r["th_3"], pt_3)), rid(address(r_seed)))
     assert responder_receive_3(r_state(), f3_imp, check_mac=False) is not None
     reject("message_3-impersonation", "message_3 from the initiator, claiming the third node's address: it "
            "decrypts and names a valid address, and only the MAC_3 check refuses it", 3, f3_imp, as_responder_3)
@@ -720,10 +792,15 @@ def build() -> dict:
             "responder_ephemeral and c_r MUST send frames[1] on receiving frames[0], and on "
             "receiving frames[2] MUST send frames[3], learn the initiator's address and derive "
             "session_secret. Setting the ephemeral keys and connection identifiers is a test hook. "
-            "A node given a not_for_me frame MUST NOT reply. Each rejected frame replaces message "
-            "number `message` of the named handshake, and its receiver, otherwise in the state that "
-            "handshake leaves it in, MUST reject it: send nothing and derive no session. hop and "
-            "label are 0 throughout. Values are hex."
+            "A node given a not_for_me frame MUST NOT reply. For each of sources, a responder "
+            "given responder_seed, responder_ephemeral and c_r MUST send reply on receiving frame: "
+            "message_2 to the routing id, source, that frame names. Each rejected frame replaces "
+            "message number `message` of the named handshake, and its receiver, otherwise in the "
+            "state that handshake leaves it in, MUST reject it: send nothing and derive no "
+            "session. Every frame is as its sender makes it for a destination it hears: hops is "
+            "32, power 14, and next the destination. Those three are the nodes' on the way to "
+            "set (draft/forwarding.md), and a frame is the one given if it is equal in hdr, "
+            "byte 0, and from destination, byte 7, on. Routing ids are numbers; other values are hex."
         ),
         "generator": "vectors/tools/first_contact.py",
         "exporter_label": EXPORTER_LABEL,
@@ -731,6 +808,7 @@ def build() -> dict:
         "rejected_addresses": rejected_addresses,
         "handshakes": [case0, case1, case2],
         "not_for_me": not_for_me,
+        "sources": sources,
         "rejected": rejected,
     }
 

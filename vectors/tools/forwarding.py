@@ -22,6 +22,9 @@ import routing  # noqa: E402
 OUT = Path(__file__).resolve().parent.parent / "forwarding.json"
 
 HDR_MESSAGE, HDR_ACK = 0x48, 0x50
+# First contact's four frames (draft/first-contact.md), and how long each is: the head, a tag,
+# for the first the routing id it came from, and the handshake's message.
+CONTACT_LEN = {0x51: 56, 0x52: 60, 0x53: 80, 0x54: 24}
 RESERVED = (0, 0xFFFFFFFF)
 HEAD, TAG = 11, 4
 ACK_LEN = HEAD + TAG + 4
@@ -40,7 +43,9 @@ def head(h):
 
 def accepted(frame):
     """Whether a receiver takes a frame at all."""
-    if len(frame) > 255 or not frame or frame[0] not in (HDR_MESSAGE, HDR_ACK):
+    if len(frame) > 255 or not frame or frame[0] not in (HDR_MESSAGE, HDR_ACK, *CONTACT_LEN):
+        return False
+    if frame[0] in CONTACT_LEN and len(frame) != CONTACT_LEN[frame[0]]:
         return False
     if frame[0] == HDR_ACK and len(frame) != ACK_LEN:
         return False
@@ -59,6 +64,13 @@ def ends(sent, heard):
         and heard[HEAD : HEAD + TAG] == sent[HEAD : HEAD + TAG]
     )
     return passed or answered
+
+
+def hop_heard(frame):
+    """Whether a node that has sent a frame listens for the hop to succeed. On the last hop of an
+    acknowledgement or a first-contact frame there is nothing to hear."""
+    _, _, _, nxt, dst = struct.unpack(">BBbII", frame[:HEAD])
+    return frame[0] == HDR_MESSAGE or nxt != dst
 
 
 def clamp(sixteenths, lowest, full):
@@ -182,6 +194,14 @@ def build():
          bytes(range(0x80, 0x80 + 4 + 8))),
         ({"hdr": 0x50, "hops": 31, "power": 0, "next": 0x0A0B0C0D, "destination": 0x1D2E3F40},
          bytes(range(0x30, 0x34)) + bytes.fromhex("c0ffee01")),
+        ({"hdr": 0x51, "hops": 32, "power": 14, "next": 0x1D2E3F40, "destination": 0x0A0B0C0D},
+         bytes(range(0x30, 0x30 + 4 + 4 + 37))),
+        ({"hdr": 0x52, "hops": 30, "power": 2, "next": 0x0A0B0C0D, "destination": 0x30313233},
+         bytes(range(0x40, 0x40 + 4 + 45))),
+        ({"hdr": 0x53, "hops": 32, "power": 22, "next": 0x1D2E3F40, "destination": 0x0A0B0C0D},
+         bytes(range(0x50, 0x50 + 4 + 65))),
+        ({"hdr": 0x54, "hops": 2, "power": -9, "next": 0x30313233, "destination": 0x30313233},
+         bytes(range(0x60, 0x60 + 4 + 9))),
     ]:
         frame = head(h) + body
         assert accepted(frame)
@@ -200,6 +220,13 @@ def build():
         ("for neighbour zero", head({**good, "next": 0}) + bytes(12)),
         ("for destination zero", head({**good, "destination": 0}) + bytes(12)),
         ("for every destination", head({**good, "destination": 0xFFFFFFFF}) + bytes(12)),
+        ("a first message_1 a byte long", head({**good, "hdr": 0x51}) + bytes(46)),
+        ("a first message_1 with no routing id it came from", head({**good, "hdr": 0x51}) + bytes(41)),
+        ("a first-contact message_2 a byte short", head({**good, "hdr": 0x52}) + bytes(48)),
+        ("a first-contact message_3 of message_2's length", head({**good, "hdr": 0x53}) + bytes(49)),
+        ("a first-contact message_4 a byte long", head({**good, "hdr": 0x54}) + bytes(14)),
+        ("a first-contact message_4 for neighbour zero", head({**good, "hdr": 0x54, "next": 0}) + bytes(13)),
+        ("first contact has no message_5", head({**good, "hdr": 0x55}) + bytes(13)),
     ]:
         assert not accepted(frame)
         rejected.append({"why": why, "frame": frame.hex()})
@@ -212,6 +239,10 @@ def build():
 
     def ack(hops, destination=77, t=tag, nxt=7):
         return head({"hdr": 0x50, "hops": hops, "power": 3, "next": nxt, "destination": destination}) + t + bytes(4)
+
+    def contact(n, hops, destination=9, nxt=7, fill=0x70):
+        h = {"hdr": 0x50 + n, "hops": hops, "power": 6, "next": nxt, "destination": destination}
+        return head(h) + tag + bytes(range(fill, fill + CONTACT_LEN[0x50 + n] - HEAD - TAG))
 
     hops = []
     for why, s, h in [
@@ -228,9 +259,29 @@ def build():
         ("an acknowledgement passed on", ack(20, destination=9), ack(19, destination=9, nxt=8)),
         ("an acknowledgement is not ended by a message", ack(20, destination=9), message(19)),
         ("hops do not wrap", message(0), message(255)),
+        ("first contact passed on", contact(1, 20), contact(1, 19, nxt=8)),
+        ("first contact, another copy of what it sent", contact(3, 20), contact(3, 20)),
+        ("first contact, another message with the same tag", contact(2, 20), contact(2, 19, fill=0x71)),
+        ("first contact is not ended by an acknowledgement with its tag", contact(1, 20), ack(32)),
+        ("first contact is not ended by its answer", contact(1, 20), contact(2, 32, destination=77)),
+        ("a message is not ended by first contact with its tag", message(20), contact(4, 19)),
     ]:
         assert accepted(s) and accepted(h)
         hops.append({"why": why, "sent": s.hex(), "heard": h.hex(), "ends": ends(s, h)})
+
+    waits = []
+    for why, f in [
+        ("a message", message(20)),
+        ("a message to its destination: its acknowledgement is listened for", message(20, nxt=9)),
+        ("an acknowledgement on its way", ack(20)),
+        ("an acknowledgement to the node it is for", ack(20, nxt=77)),
+        ("first contact on its way", contact(1, 32)),
+        ("first contact to the node it is for", contact(1, 32, nxt=9)),
+        ("the last frame of first contact to the node it is for", contact(4, 3, nxt=9)),
+        ("the last frame of first contact on its way", contact(4, 3)),
+    ]:
+        assert accepted(f)
+        waits.append({"why": why, "sent": f.hex(), "listens": hop_heard(f)})
 
     backs = [
         {
@@ -270,7 +321,8 @@ def build():
     return {
         "description": "Frames that follow routes, draft 0 (draft/forwarding.md). Routing ids "
         "are numbers; frames and tags are hex. In hops, sent is the frame the node sent and "
-        "heard the one it then received. In backs, power is what a frame was sent at in dBm and "
+        "heard the one it then received. In waits, listens is whether a node that has sent the "
+        "frame listens for its hop to succeed, and sends it again if it does not. In backs, power is what a frame was sent at in dBm and "
         "snr_quarter_db what it was heard at, and needs is what an answer must go at for its "
         "sender to hear it, between the node's lowest and full power. In powers, neighbour is "
         "what Routes gives for the neighbour, its boost included, back is what the node the "
@@ -287,6 +339,7 @@ def build():
         "heads": heads,
         "rejected": rejected,
         "hops": hops,
+        "waits": waits,
         "backs": backs,
         "powers": powers,
         "agains": agains,

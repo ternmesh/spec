@@ -153,7 +153,7 @@ communities began moving to 500 kHz in 2026.
 **`US915`: SF9.** At 500 kHz, SF9 has the sensitivity of SF7 at 125 kHz
 within a decibel (four times the noise bandwidth is 6 dB, and two steps
 of spreading factor win back 5 dB), and slightly less time on air
-(116 ms against 142 ms for first contact's largest frame). SF7 at
+(121 ms against 152 ms for first contact's largest frame). SF7 at
 125 kHz is the setting at which the simulator
 ([ternmesh/sim](https://github.com/ternmesh/sim)) compared routing
 designs over a thousand nodes, and at which Tern's delivered 89 to 97%

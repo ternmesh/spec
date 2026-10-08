@@ -16,13 +16,14 @@ produced by [`vectors/tools/first_contact.py`](../vectors/tools/first_contact.py
 
 ## Goals
 
-1. **Every message in one frame.** The handshake is four frames of 45,
-   53, 73 and 17 bytes, so none needs fragmenting. Where a region limits
+1. **Every message in one frame.** The handshake is four frames of 56,
+   60, 80 and 24 bytes, so none needs fragmenting. Where a region limits
    each transmission's time, they need a faster setting than its
    slowest ([analysis/first-contact-fit.md](../analysis/first-contact-fit.md)).
 2. **No address in clear.** The responder's address is never sent. The
-   initiator's is encrypted. An observer cannot tell whom a first
-   contact is for unless it holds the responder's private key.
+   initiator's is encrypted. The frames do carry both nodes' routing
+   ids, as every [frame that follows a route](forwarding.md) carries
+   its destination's: see [What an observer learns](#what-an-observer-learns).
 3. **A standard handshake, unchanged.** EDHOC (RFC 9528) with method 3
    and cipher suite 0, the AEAD and hash that unicast frames already
    use. The generator reproduces RFC 9529's published EDHOC traces
@@ -34,6 +35,9 @@ produced by [`vectors/tools/first_contact.py`](../vectors/tools/first_contact.py
 5. **One key per node.** A node's address is its Ed25519 public key.
    The same key pair gives it the X25519 key it uses here, and can sign
    what later sections need signed.
+6. **As far as a message goes.** The frames follow routes, so two nodes
+   can make first contact wherever one can send the other a message,
+   and not only where each hears the other.
 
 ## Notation
 
@@ -46,6 +50,11 @@ As in [unicast-security.md](unicast-security.md#notation), and:
   `ID_CRED_R`, `CRED_I`, `CRED_R`, `PLAINTEXT_2`, `PLAINTEXT_3` and
   `message_1` to `message_4` are as in RFC 9528.
 * `h'..'` is a byte string in hex.
+* `rid(A)` is the [routing id](routing.md#routing-ids) of the node with
+  address `A`.
+* The names in `CAPITALS` are parameters of
+  [Frames that follow routes](forwarding.md#parameters), but for
+  `CONTACT_HOLD`, which is [below](#sending-again).
 
 ## Addresses
 
@@ -113,28 +122,60 @@ aborted if it is one (RFC 7748, section 6.1; RFC 9528, section 9.2).
 | Offset | Bytes | Field |
 |---|---|---|
 | 0 | 1 | `hdr` |
-| 1 | 1 | `hop`: for the routing layer |
-| 2 | 2 | `label`: for the routing layer |
-| 4 | 4 | `ctag_n`: the contact tag |
-| 8 | 37, 45, 65 or 9 | `message_n` |
+| 1 | 10 | `route`: for the routing layer |
+| 11 | 4 | `ctag_n`: the contact tag |
+| 15 | 4 | `source`: in `message_1`'s frame only |
+| 15, or 19 | 37, 45, 65 or 9 | `message_n` |
+
+So the four frames are exactly 56, 60, 80 and 24 bytes.
 
 `hdr` has format `01` (draft 0), type `010` (first contact), and as its
 flags the message number `n`, from 1 to 4. So it is `0x51`, `0x52`,
 `0x53` or `0x54`.
 
-The **contact tags** let the two ends recognise their frames without
-naming each other. Both ends can compute `G_RX`, the Diffie-Hellman
-result of the initiator's ephemeral key and the responder's X25519 key:
-the initiator as `X25519(x, U(A_R))`, and the responder as
-`X25519(k_R, G_X)`. Nobody else can. From it:
+`route` is `hops`, `power`, `next` and `destination`, as
+[Frames that follow routes](forwarding.md#the-head) defines them. With
+`hdr` before it, it is the head every frame that follows a route starts
+with, and `ctag_n` is what that section calls the frame's `tag`. A
+first-contact frame is sent, passed on and received as that section
+says. What its `destination` is, is [below](#where-each-frame-goes).
+
+The **contact tags** let the two ends tell the frames of one handshake
+from those of every other. Both ends can compute `G_RX`, the
+Diffie-Hellman result of the initiator's ephemeral key and the
+responder's X25519 key: the initiator as `X25519(x, U(A_R))`, and the
+responder as `X25519(k_R, G_X)`. Nobody else can. From it:
 
 ```
 PRK_c   = Extract(G_X, G_RX)
 ctag_n  = Expand(PRK_c, "tern v0 contact" || n, 4)
 ```
 
-`n` is one byte. `hop` and `label` are not protected, as a unicast
-frame's `route` is not.
+`n` is one byte.
+
+`source` is the initiator's routing id, four bytes, big-endian. It is
+where `message_2` is sent: the responder does not learn the initiator's
+address until `message_3`.
+
+`route` and `source` are not protected, as a unicast frame's `route` is
+not. A frame whose `destination` or `source` has been changed goes
+astray, or its answer does, as a frame that is dropped does.
+
+### Where each frame goes
+
+| Frame | `destination` |
+|---|---|
+| `message_1`, `message_3` | `rid(A_R)`, from the address the initiator set out to contact |
+| `message_2` | the `source` of the `message_1` frame it answers |
+| `message_4` | `rid(A_I)`, from the address in `message_3` |
+
+A node acts on a first-contact frame only if the frame is
+[for it](forwarding.md#receiving): its `next` and its `destination` are
+the node's routing id.
+
+Every frame but `message_1` answers one received, and is
+[sent as an answer is](forwarding.md#sending): no quieter than the
+node the frame it answers came from needs, and after a random wait.
 
 ## Initiating
 
@@ -143,7 +184,7 @@ To contact the node with address `A_R`:
 1. The initiator MUST check that `A_R` is valid.
 2. It makes a fresh ephemeral X25519 key pair (`x`, `G_X`), chooses
    `C_I`, computes `G_RX` and the contact tags, and sends `message_1` in
-   a frame with `ctag_1`.
+   a frame with `ctag_1`, and its own routing id as `source`.
 3. On a frame with `hdr` `0x52` and `ctag_2`, it processes `message_2`
    as RFC 9528, section 5.3.3 requires, with
    `CRED_R = h'a108a101a301012006215820' || A_R`. It MUST reject a
@@ -158,17 +199,20 @@ has verified `message_4`.
 ## Responding
 
 1. On a frame with `hdr` `0x51`, a node checks that `message_1` has the
-   form above. If it does, the node computes `G_RX` and `ctag_1`. If
-   `ctag_1` is not bytes 4 to 7 of the frame, the frame is not for this
-   node, and the node MUST NOT reply to it or treat it as an error.
+   form above, and that `source` is a routing id an answer can go to:
+   not `0x00000000`, not `0xFFFFFFFF`, and not the node's own. If so,
+   the node computes `G_RX` and `ctag_1`. If `ctag_1` is not bytes 11
+   to 14 of the frame, the frame is not for this node, and the node
+   MUST NOT reply to it or treat it as an error.
 2. If it is, the node makes a fresh ephemeral key pair (`y`, `G_Y`),
-   chooses `C_R`, and sends `message_2` in a frame with `ctag_2`.
+   chooses `C_R`, and sends `message_2` in a frame with `ctag_2`, to
+   `source`.
 3. On a frame with `hdr` `0x53` and `ctag_3`, it processes `message_3`
    as RFC 9528, section 5.4.3 requires. It MUST reject a `PLAINTEXT_3`
    other than the form above, and one whose `CRED_I` holds an invalid
    address. The address in `CRED_I` is the initiator's.
-4. On success it sends `message_4` in a frame with `ctag_4`, and
-   derives `S`.
+4. On success it sends `message_4` in a frame with `ctag_4`, to
+   `rid(A_I)`, and derives `S`.
 
 Whether a node accepts contact from a given address is up to it. This
 section only establishes who the address is.
@@ -182,10 +226,50 @@ section only establishes who the address is.
 * A frame whose contact tag matches, but which fails any check in this
   section or in RFC 9528, is discarded, and the node MUST abort that
   handshake and erase its state.
-* A node MUST NOT process the same message twice in one handshake. On
-  receiving again a frame it has already processed, it MAY send again,
-  unchanged, the frame it sent in reply. It MUST NOT compute that reply
-  again (RFC 9528, section 7).
+* A node MUST NOT process the same message twice in one handshake, and
+  MUST NOT compute its reply again (RFC 9528, section 7). What it does
+  on receiving one again is [below](#sending-again).
+
+## Sending again
+
+Any of the four frames may be lost. The initiator sends again, and the
+responder answers again; the responder never sends unasked.
+
+**The initiator** keeps `message_1`'s frame until it has processed
+`message_2`, and `message_3`'s until it has processed `message_4`, as
+[the source of a message](forwarding.md#messages) keeps it until it is
+acknowledged. The answer takes the acknowledgement's place, and the
+rest is the same: it waits
+
+```
+ACK_WAIT + ACK_FACTOR × the route's metric, in milliseconds
+```
+
+from when the frame first goes on the air, and without the answer by
+then starts the frame again — the same frame, with `hops` at `HOP_MAX`,
+on whatever route it has now, and
+[not at once](forwarding.md#hops) — up to `RETRIES` times. An initiator
+with no route asks for one, and counts that as a try, waiting
+`ACK_WAIT`. After the last wait it MUST abort the handshake.
+
+**The responder**, on receiving again a `message_1` or `message_3` it
+has processed in a handshake it still holds, MUST send again the frame
+it sent in reply, with the same contact tag and message: `message_2` to
+the `source` of the copy just received, whatever the first named, and
+`message_4` where it went before. Two frames are the same message if
+they are equal from `ctag_n` on, `source` left out.
+
+A responder with no route for its reply asks for one and sends nothing:
+the initiator's next try brings the frame again.
+
+A responder holds a handshake, and after `message_4` what it needs to
+send `message_4` again, until `CONTACT_HOLD` has passed with no frame
+of the handshake received. Then it MUST abort the handshake, or erase
+what it kept.
+
+| Name | Value | |
+|---|---|---|
+| `CONTACT_HOLD` | 60 s | provisional |
 
 ## Erasure
 
@@ -204,6 +288,10 @@ An implementation conforms to this section if, for every case in
   and `x25519_public`;
 * **rejected addresses:** it refuses each `address`, both as an address
   to contact and as the address in a `message_3`;
+* **frames:** two frames are equal, here, if they are equal in `hdr`
+  and from `destination` on, byte 7. `hops`, `power` and `next`, bytes
+  1 to 6, are the routing layer's, and each frame in the file has them
+  as its sender sets them for a destination it hears;
 * **handshakes:** as the initiator, given `initiator_seed`, the address
   of `responder_seed`, and as test hooks `initiator_ephemeral` and
   `c_i`, it sends `frames[0]`, then `frames[2]` on receiving
@@ -213,6 +301,9 @@ An implementation conforms to this section if, for every case in
   `frames[0]`, then `frames[3]` on receiving `frames[2]`, learning the
   initiator's address, and derives `session_secret`;
 * **not for me:** given `responder_seed` and `frame`, it sends nothing;
+* **sources:** as the responder, given `responder_seed` and as test
+  hooks `responder_ephemeral` and `c_r`, it sends `reply` on receiving
+  `frame`: `message_2`, to the routing id `source` that `frame` names;
 * **rejected:** with the receiver of message `message` of the named
   handshake in the state that handshake leaves it in, given `frame` in
   its place, it sends nothing and derives no session.
@@ -220,18 +311,33 @@ An implementation conforms to this section if, for every case in
 Erasure cannot be checked by vectors. It is checked by reviewing an
 implementation.
 
-Each handshake also gives intermediate values (both addresses, `G_X`,
+Each handshake also gives intermediate values (both addresses and
+routing ids, `G_X`,
 `G_Y`, `G_RX`, the contact tags, `TH_2` to `TH_4` and `PRK_out`) to
 help find where an implementation goes wrong.
+
+## What an observer learns
+
+Of a handshake's frames, what it learns of any
+[frame that follows a route](forwarding.md#what-an-observer-learns):
+the routing id each is for. `message_1` names both ends at once, where
+a message names one and its acknowledgement the other. So an observer
+who hears a `message_1` knows that the node with one routing id is
+making first contact with the node with another, and anyone who knows
+both addresses knows which nodes those are. It does not learn either
+address from the frames, nor anything the handshake carries.
+
+A responder that refuses the initiator is silent after `message_3`, so
+an observer who hears three frames and no fourth may guess as much.
 
 ## Rationale
 
 **EDHOC, method 3.** EDHOC is a published standard designed for
 constrained radios, with published traces to test against. Method 3
 authenticates with Diffie-Hellman keys and an 8-byte MAC instead of
-64-byte signatures. For first contact that makes the frames 45, 53 and
-73 bytes, against 45, 110 and 130 with signatures, which saves about
-3.6 s of airtime per handshake at SF12/125 kHz
+64-byte signatures. For first contact that makes the frames 56, 60 and
+80 bytes, against 56, 117 and 137 with signatures, which saves about
+3.9 s of airtime per handshake at SF12/125 kHz
 ([analysis](../analysis/first-contact-fit.md)).
 
 **Ed25519 addresses, converted for key agreement.** A node will need to
@@ -268,19 +374,61 @@ encrypted, in `message_3`. Two nodes that have met before could save
 45 bytes of `message_3` by naming the initiator by `kid`; that is left
 for later.
 
-**Contact tags from `G_RX`.** `message_1` has to tell its recipient that
-it is for it. A tag made from the recipient's address would tell anyone
-who knows that address too. One made from `G_RX` can be computed only by
-the two ends. It costs the responder one X25519 for every `message_1` it
-hears, whoever it is for. That cost is bounded by the airtime others
-can spend sending them, but a node may still need to limit it (see
-below).
+**Contact tags from `G_RX`.** A frame has to tell its two ends which
+handshake it belongs to, and a tag made from `G_RX` can be computed
+only by them. As first drafted the tag did more: the frame named no
+node, and `ctag_1` was all that told a responder a `message_1` was for
+it, at the cost of one X25519 for every `message_1` it heard, whoever
+it was for. Now `destination` says so first, and a node computes only
+for frames that name it. The tags are kept at four bytes because they
+are what a relay tells two frames apart by, and so that
+[routing ids that change](forwarding.md#not-yet-specified) can hide the
+ends again without another change here.
+
+**Frames that follow routes.** As first drafted, a first-contact frame
+carried three bytes for the routing layer and was heard only by the
+node it was for, so two nodes could make a session only while each
+heard the other, and then send messages through a mesh neither could
+have met across. Carrying the head that messages carry costs 7 bytes a
+frame, and lets every relay pass the frames on with the code and the
+rules it already has.
+
+**`source` in `message_1`.** `message_2` has to get back, and the
+responder does not yet know to whom. Two other ways were considered.
+Relays could remember which neighbour each `message_1` came from and
+send `message_2` back the same way: that hides the initiator's routing
+id, and costs every relay memory for each handshake under way, a
+timeout, and a way to fail when the route changes mid-handshake; and
+what it hides, the first acknowledgement in the session gives away
+([below](#what-an-observer-learns)). Or `source` could go in EDHOC's
+`EAD_1`, which the handshake's transcript covers: that is 2 bytes more,
+needs an EAD label, and protects nothing, since a node on the way that
+can change `source` can as easily drop the frame.
+
+**`message_4` to the address, not to `source`.** By then the responder
+knows who the initiator is, and has checked it. `source` is believed
+only for `message_2`, when there is nothing else to go by, and only
+for the copy of `message_1` it came in: a `message_1` sent again with
+another `source` is answered there, so a forged copy that arrives
+first does not keep the answer from the node that began the handshake.
+
+**The initiator sends again, the responder answers.** One end has to
+drive, and the initiator is the one that knows the handshake is wanted.
+A responder that sent again unasked would do so for every `message_1`
+anyone made it answer.
+
+**What `source` lets a stranger do.** Anyone who knows a node's address
+can send it a `message_1` naming a third node as `source`, and
+`message_2`, 60 bytes, goes to that node across the mesh. That is no
+more than the stranger could do by sending the third node a frame
+itself: relays pass on what they are given. Limits on that belong with
+[a share of the air](forwarding.md#not-yet-specified).
 
 **`message_4` always.** EDHOC needs `message_4` when the responder sends
-nothing protected afterwards, and Tern does not yet define an
-acknowledgement that could take its place. Without it, an initiator
+nothing protected afterwards. Without it, an initiator
 whose `message_3` was lost would send unicast frames that are never
-accepted. It costs one 17-byte frame. A later draft may let the
+accepted, and would have nothing to tell it to send `message_3` again.
+It costs one 24-byte frame. A later draft may let the
 responder's first unicast frame stand in for it.
 
 **No error messages.** They cost airtime. Silence also means a node
@@ -302,12 +450,11 @@ published as a standard.
   1 s limit, SF10 or faster
   ([analysis](../analysis/first-contact-fit.md)). This belongs with the
   region profiles.
-* **Retransmission and timeouts:** how long a node waits before sending
-  a frame again or giving up a handshake.
-* **Delivering first-contact frames** to a responder whose address they
-  do not show: `hop` and `label`, which the routing layer defines.
 * **Limits on handshakes** a node will respond to, against nodes that
   send `message_1` to make it compute.
 * **A shortcut for nodes that have met before.**
+* **The waits, measured.** `CONTACT_HOLD` is a guess, and the others
+  were settled for messages. No handshake has yet crossed a relay on
+  radios.
 * **Measured cost on the nRF52840:** X25519, and a handshake from end to
   end.
