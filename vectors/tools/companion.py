@@ -23,7 +23,7 @@ import routing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 2
+VERSION = 3
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -58,7 +58,7 @@ FRAMES = {
     0x40: ("OK", []),
     0x41: ("ERROR", [("code", U8)]),
     0x42: ("INFO", [("version", U8), ("firmware", STR, FIRMWARE_MAX)]),
-    0x43: ("SYNCED", []),
+    0x43: ("SYNCED", [("news", U8)]),
     0x44: ("QUEUED", [("id", U32)]),
     0x45: ("MADE", [("group", GID)]),
     # News, node to client.
@@ -85,6 +85,10 @@ FRAMES = {
                       ("name", STR, NAME_MAX)]),
 }
 BY_NAME = {name: t for t, (name, _) in FRAMES.items()}
+
+# Fields a later version added to a frame, and the version that added them. A frame is built and
+# read by the version both ends speak, and has none of the fields a later version added.
+SINCE = {(0x43, "news"): 3}
 
 SETTINGS = {
     1: ("region", [("value", STR, REGION_MAX)]),
@@ -120,18 +124,19 @@ def expand(prk, info, length):
     return hmac.new(prk, info + b"\x01", hashlib.sha256).digest()[:length]
 
 
-def fields_of(t, values):
-    fields = list(FRAMES[t][1])
+def fields_of(t, values, speak=VERSION):
+    fields = [f for f in FRAMES[t][1] if SINCE.get((t, f[0]), 0) <= speak]
     if t == BY_NAME["SET"]:
         fields += SETTINGS[values["setting"]][1]
     return fields
 
 
-def encode(kind, seq, /, **values):
-    """One frame: its type, its sequence number, and its fields in order."""
+def encode(kind, seq, /, *, speak=VERSION, **values):
+    """One frame: its type, its sequence number, and its fields in order, as a connection of
+    version speak carries it."""
     t = BY_NAME[kind]
     out = bytes([t, seq])
-    for field in fields_of(t, values):
+    for field in fields_of(t, values, speak):
         v = values[field[0]]
         kind = field[1]
         if kind in FIXED:
@@ -147,9 +152,10 @@ def encode(kind, seq, /, **values):
     return out
 
 
-def decode(frame):
-    """The fields of a frame, or the reason a receiver discards it. Bytes past the last field a
-    receiver knows are ignored: that is how a later version adds one."""
+def decode(frame, speak=VERSION):
+    """The fields of a frame, or the reason a receiver discards it, on a connection of version
+    speak. Bytes past the last field a receiver knows are ignored: that is how a later version
+    adds one."""
     if len(frame) < 2:
         return "shorter than a type and a sequence number"
     if len(frame) > MAX_FRAME:
@@ -157,7 +163,7 @@ def decode(frame):
     if frame[0] not in FRAMES:
         return "a type this version does not define"
     t, at, values = frame[0], 2, {"type": FRAMES[frame[0]][0], "seq": frame[1]}
-    fields = list(FRAMES[t][1])
+    fields = [f for f in FRAMES[t][1] if SINCE.get((t, f[0]), 0) <= speak]
     i = 0
     while i < len(fields):
         name, kind = fields[i][0], fields[i][1]
@@ -250,6 +256,9 @@ def self_check():
                   bytes.fromhex("f0f1f2f3f4f5f6f7f8f9"), 32).hex() == (
         "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf")
     assert encode("PING", 7) == b"\x03\x07"
+    assert encode("SYNCED", 3, news=6) == b"\x43\x03\x06"
+    assert encode("SYNCED", 3, speak=2) == b"\x43\x03"
+    assert decode(b"\x43\x03", speak=2) == {"type": "SYNCED", "seq": 3}
     assert encode("HELLO", 1, version=1) == b"\x01\x01\x01"
     assert len(encode("GROUP_MESSAGE", 0, id=0, group=bytes(8), time=0, flags=0, state=0,
                       reason=0, wait=0, text="x" * TEXT_MAX, **{"from": 0})) == 28 + TEXT_MAX
@@ -277,6 +286,7 @@ def build():
     self_check()
 
     examples = [
+        ("HELLO", 1, {"version": 3}),
         ("HELLO", 1, {"version": 2}),
         ("HELLO", 1, {"version": 1}),
         ("HELLO", 1, {"version": 0}),
@@ -304,7 +314,7 @@ def build():
         ("OK", 4, {}),
         ("ERROR", 15, {"code": 4}),
         ("INFO", 1, {"version": 2, "firmware": "tern 0.1.0 heltec-v3"}),
-        ("SYNCED", 2, {}),
+        ("SYNCED", 2, {"news": 6}),
         ("QUEUED", 10, {"id": 18}),
         ("MADE", 17, {"group": HUT}),
         ("SELF", 0, {"address": ALICE, "role": 1, "region": "EU868", "power": 14,
@@ -369,6 +379,7 @@ def build():
         b"\xc0\x01",
         b"\x9f\x01",
         encode("SYNC", 2, after=1)[:5],
+        encode("SYNCED", 3, news=6)[:-1],
         encode("SET", 6, setting=1, value="EU868")[:6],
         b"\x05\x06\x09\x00",
         encode("SAVE_CONTACT", 13, address=BOB, name="Bob")[:34],
@@ -434,10 +445,10 @@ def build():
     invited = dict(id=22, contact=BOB, group=RIDGE, time=1_790_000_200, state=4, reason=0,
                    wait=0, name="Ridge")
 
-    def connection(frames):
+    def connection(frames, speak=VERSION):
         out = []
         for side, frame in frames:
-            fields = decode(frame)
+            fields = decode(frame, speak)
             out.append({"from": side, "type": fields["type"], "seq": fields["seq"],
                         "frame": frame.hex()})
         return out
@@ -454,7 +465,7 @@ def build():
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
         ("node", encode("AIRTIME", 4, **airtime)),
         ("node", encode("POWER", 5, **power)),
-        ("node", encode("SYNCED", 3)),
+        ("node", encode("SYNCED", 3, news=6)),
         ("client", encode("READ", 4, through=17)),
         ("node", encode("OK", 4)),
         ("node", encode("MESSAGE", 6, flags=1, **where)),
@@ -506,7 +517,8 @@ def build():
     # the sync, and the client is not told: the news after it is counted on from the sync's. To
     # one of version 1, the node holds the group it made, and Bob's group message and invite come
     # after the sync: the client is told of none of them, and the message it then sends has an
-    # id three past the last it saw.
+    # id three past the last it saw. To one of version 2, holding what the exchange begins with,
+    # the sync ends with a SYNCED as version 2 has it, without the count.
     older = [
         {"version": 0, "frames": connection([
             ("client", encode("HELLO", 1, version=0)),
@@ -517,11 +529,11 @@ def build():
             ("node", encode("NEIGHBOUR", 2, **neighbour)),
             ("node", encode("AIRTIME", 3, **airtime)),
             ("node", encode("POWER", 4, **power)),
-            ("node", encode("SYNCED", 2)),
+            ("node", encode("SYNCED", 2, speak=0)),
             ("client", encode("SAVE_CONTACT", 3, address=CAROL, name="Carol")),
             ("node", encode("OK", 3)),
             ("node", encode("CONTACT", 5, address=CAROL, session=0, name="Carol")),
-        ])},
+        ], 0)},
         {"version": 1, "frames": connection([
             ("client", encode("HELLO", 1, version=1)),
             ("node", info),
@@ -534,21 +546,33 @@ def build():
             ("node", encode("NEIGHBOUR", 5, **neighbour)),
             ("node", encode("AIRTIME", 6, **airtime)),
             ("node", encode("POWER", 7, **power)),
-            ("node", encode("SYNCED", 2)),
+            ("node", encode("SYNCED", 2, speak=1)),
             ("client", encode("SEND", 3, ref=0xC0FFEE03, to=BOB, text="Coming down")),
             ("node", encode("QUEUED", 3, id=23)),
             ("node", encode("MESSAGE", 8, id=23, contact=BOB, time=1_790_000_300, flags=0,
                             state=0, reason=1, wait=0, text="Coming down")),
             ("client", encode("MAKE_GROUP", 4, name="Hut")),
             ("node", encode("ERROR", 4, code=1)),
-        ])},
+        ], 1)},
+        {"version": 2, "frames": connection([
+            ("client", encode("HELLO", 1, version=2)),
+            ("node", info),
+            ("client", encode("SYNC", 2, after=0)),
+            ("node", encode("SELF", 0, **self_)),
+            ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+            ("node", encode("MESSAGE", 2, flags=0, **where)),
+            ("node", encode("NEIGHBOUR", 3, **neighbour)),
+            ("node", encode("AIRTIME", 4, **airtime)),
+            ("node", encode("POWER", 5, **power)),
+            ("node", encode("SYNCED", 2, speak=2)),
+        ], 2)},
     ]
 
     group_ids = [{"group_secret": g.hex(), "group": group_id(g).hex()}
                  for g in (MADE_SECRET, INVITED_SECRET, bytes(16), bytes([0xFF] * 16))]
 
     return {
-        "description": "The companion protocol, version 2 (draft/companion.md). Frames, streams, "
+        "description": "The companion protocol, version 3 (draft/companion.md). Frames, streams, "
         "addresses and group ids are hex; numbers are numbers; strings are text. In frames, "
         "frame is the frame alone, as one BLE write or notification carries it, and stream is "
         "the same frame as it goes on a byte stream. In extended, frame carries bytes past the "
@@ -568,7 +592,9 @@ def build():
         "group message and the invite received, which come after the sync and before the "
         "client's SEND; the client's last request is one its version does not define, which a "
         "client must not send, and the node answers it as it would any other it does not know "
-        "from that client. The three addresses are the public keys of RFC 8032's first three "
+        "from that client. To the client of version 2 it holds what the exchange begins with, "
+        "and its SYNCED is version 2's, without news. Each connection's frames are read by the "
+        "version its client speaks. The three addresses are the public keys of RFC 8032's first three "
         "Ed25519 test vectors.",
         "generator": "vectors/tools/companion.py",
         "crc_check": {"input": b"123456789".hex(), "crc": crc16(b"123456789")},

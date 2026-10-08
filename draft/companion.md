@@ -123,13 +123,17 @@ Any request may instead be answered by `ERROR`.
 | `0x40` | `OK` | |
 | `0x41` | `ERROR` | `code` `u8` |
 | `0x42` | `INFO` | `version` `u8`, `firmware` `str` up to 31 |
-| `0x43` | `SYNCED` | |
+| `0x43` | `SYNCED` | `news` `u8` |
 | `0x44` | `QUEUED` | `id` `u32` |
 | `0x45` | `MADE` | `group` `gid` |
 
 `firmware` names the node's software, for a person to read. A client
 MUST NOT decide what the node supports from it: that is what `version`
 is for.
+
+`news` in `SYNCED` is the node's [count](#news) as it answers: the
+`seq` its next news frame will carry. It is how a client knows it
+received all of a [sync](#syncing).
 
 Error codes:
 
@@ -372,10 +376,13 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 2. Version 1 is the same without [groups](#groups): the
+version 3. Version 2 is the same without `SYNCED`'s `news`. Version 1
+is version 2 without [groups](#groups): the
 requests `0x20` to `0x25`, `MADE`, error 9, and the news `GROUP`,
 `GROUP_GONE`, `GROUP_MESSAGE` and `INVITE`. Version 0 is version 1
-without `END_SESSION` and `ASKED`. A client of an earlier version is
+without `END_SESSION` and `ASKED`. A receiver reads a frame by the
+version both ends speak: a client of version 3 reads a `SYNCED` from a
+node of version 2 as the two bytes it is. A client of an earlier version is
 not told of group messages or invites at all: their `id`s are ones it
 never sees. A node MUST answer a request that the client's version does
 not define with `ERROR` 1, as it does one its own version does not: it
@@ -389,8 +396,8 @@ A client then, typically, sets the node's clock and syncs:
 
 ```
 client                         node
-HELLO       seq 1, version 2  ─▶
-                              ◀─  INFO        seq 1, version 2
+HELLO       seq 1, version 3  ─▶
+                              ◀─  INFO        seq 1, version 3
 SET_TIME    seq 2             ─▶
                               ◀─  OK          seq 2
 SYNC        seq 3, after 0    ─▶
@@ -420,6 +427,12 @@ neighbour it holds that the sync did not send, as if it had received
 its `_GONE`. Messages are
 not: a sync sends only those after `after`, and a client keeps the
 rest.
+
+A client that has missed news since it sent the `SYNC`, either by a
+gap in the count or because the count it expects next is not the
+`SYNCED`'s `news`, cannot tell what the sync did not send from what
+it lost. It MUST NOT forget anything on that sync's account, and
+SHOULD sync again.
 
 A client that holds messages already gives the greatest `id` it holds
 as `after`. One that has [missed news](#news) gives one less than the
@@ -683,7 +696,8 @@ An implementation conforms to this section if, for
   order. The node refuses the same first contact and sends a client of
   version 0 no `ASKED`; it receives the same invite and group message
   and sends a client of version 1 neither, and refuses that client a
-  request its version does not define.
+  request its version does not define; and it answers a client of
+  version 2's `SYNC` with a `SYNCED` without `news`.
 
 What a node holds, and so which news it sends and when, depends on the
 rest of the node, and is checked by running a client against it. The
@@ -732,6 +746,16 @@ laptop. A name kept on one client is missing on the node and on the
 other. Kept on the node, it is in one place, and still never on the
 air, which is what "local" in the firmware's interface draft has to
 mean: kept by the user's own equipment.
+
+**Why `SYNCED` carries the count.** A sync's last news frame is the
+one a client cannot find missing: the count shows a gap only when the
+news after it arrives, and `SYNCED` is an answer, numbered by the
+request. A client that took the `SYNCED` as the end of a whole list
+would forget a contact, group or neighbour whose record was the one
+lost, and on a quiet node nothing might come to show it. On a byte
+stream a frame can be lost so, its CRC wrong. With the count in the
+`SYNCED`, the client knows at once. It is a field and not a news
+frame of its own, so a sync costs no frame more.
 
 **Why a record, and not a change.** A record says the whole of one
 thing, so a client that applies records in order is right after each,
