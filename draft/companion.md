@@ -50,6 +50,7 @@ Fields are big-endian. Kinds:
 | `u8`, `u16`, `u32` | 1, 2, 4 | unsigned |
 | `i8` | 1 | two's complement |
 | `addr` | 32 | an [address](first-contact.md#addresses) |
+| `gid` | 8 | a [group's id](#groups) |
 | `str` | 1 + `n` | a `u8` length `n`, then `n` bytes of UTF-8; each field gives its longest `n` |
 
 A **routing id** is a `u32`, as in [Routes](routing.md#routing-ids).
@@ -106,6 +107,12 @@ its field allows, or if a `str` is not valid UTF-8.
 | `0x18` | `SAVE_CONTACT` | `address` `addr`, `name` `str` up to 31 | `OK` |
 | `0x19` | `REMOVE_CONTACT` | `address` `addr` | `OK` |
 | `0x1A` | `END_SESSION` | `address` `addr` | `OK` |
+| `0x20` | `MAKE_GROUP` | `name` `str` up to 31 | `MADE` |
+| `0x21` | `LEAVE_GROUP` | `group` `gid` | `OK` |
+| `0x22` | `NAME_GROUP` | `group` `gid`, `name` `str` up to 31 | `OK` |
+| `0x23` | `SEND_GROUP` | `ref` `u32`, `group` `gid`, `text` `str` up to 128 | `QUEUED` |
+| `0x24` | `SEND_INVITE` | `group` `gid`, `to` `addr` | `QUEUED` |
+| `0x25` | `JOIN` | `id` `u32` | `OK` |
 
 Any request may instead be answered by `ERROR`.
 
@@ -118,6 +125,7 @@ Any request may instead be answered by `ERROR`.
 | `0x42` | `INFO` | `version` `u8`, `firmware` `str` up to 31 |
 | `0x43` | `SYNCED` | |
 | `0x44` | `QUEUED` | `id` `u32` |
+| `0x45` | `MADE` | `group` `gid` |
 
 `firmware` names the node's software, for a person to read. A client
 MUST NOT decide what the node supports from it: that is what `version`
@@ -135,6 +143,7 @@ Error codes:
 | 6 | `HELLO` first |
 | 7 | the Bluetooth link's MTU is too small ([below](#bluetooth-le)) |
 | 8 | not now: the node cannot act on this request until it has finished something else |
+| 9 | not held: a group the node is not in, or an invite it does not hold |
 
 Other codes are reserved. A client MUST treat one it does not know as
 a refusal.
@@ -153,11 +162,16 @@ a refusal.
 | `0x87` | `AIRTIME` | `period` `u32`, `allowed` `u32`, `used` `u32`, `wait` `u32` |
 | `0x88` | `POWER` | `millivolts` `u16`, `percent` `u8`, `flags` `u8` |
 | `0x89` | `ASKED` | `address` `addr`, `why` `u8` |
+| `0x8A` | `GROUP` | `group` `gid`, `name` `str` up to 31 |
+| `0x8B` | `GROUP_GONE` | `group` `gid` |
+| `0x8C` | `GROUP_MESSAGE` | `id` `u32`, `group` `gid`, `from` `u32`, `time` `u32`, `flags` `u8`, `state` `u8`, `reason` `u8`, `wait` `u16`, `text` `str` up to 128 |
+| `0x8D` | `INVITE` | `id` `u32`, `contact` `addr`, `group` `gid`, `time` `u32`, `flags` `u8`, `state` `u8`, `reason` `u8`, `wait` `u16`, `name` `str` up to 31 |
 
-Each news frame but `STATE`, the two `_GONE`s and `ASKED` is a
+Each news frame but `STATE`, the three `_GONE`s and `ASKED` is a
 **record**: the whole of one thing as the node holds it now. A record
 replaces any the client holds for the same thing. `STATE` replaces
-those fields of the `MESSAGE` with its `id`. `ASKED` is something that
+those fields of the `MESSAGE`, `GROUP_MESSAGE` or `INVITE` with its
+`id`. `ASKED` is something that
 happened, and the node does not hold it: a [sync](#syncing) does not
 send it again.
 
@@ -241,6 +255,53 @@ node cannot measure it. `percent` is the node's estimate of the charge
 left, 255 if it has none. `flags` bit 0: the battery is charging. Bit
 1: the node is running from external power. The other bits are 0.
 
+### Groups
+
+**Groups** (`GROUP`). A [group](groups.md) the node holds, with the
+user's name for it. A client knows a group by its **id**, which the
+node works out from the group's secret `G`:
+
+```
+gid = Expand(G, "tern v0 group id", 8)
+```
+
+with `Expand` as in [Secured unicast frames](unicast-security.md#notation).
+The id is the same on every node that holds the group, and gives
+nothing of the secret away. Like the name, it is for the node and its
+clients: a node MUST NOT send either on the air, but for the name in an
+[invite](groups.md#invites). No frame of this protocol carries a
+group's secret, in either direction.
+
+**Group messages** (`GROUP_MESSAGE`). A message written to a group, or
+received from one. Its `id` is from the same count as a `MESSAGE`'s,
+so `READ`, `STATE` and a sync's `after` mean for it what they mean for
+a `MESSAGE`. `from` is the routing id the frame gave for its writer,
+and 0 for a message this node wrote. It is
+[what a member claimed](groups.md#receiving), and a client that shows
+it as a name it knows by that [routing id](routing.md#routing-ids)
+SHOULD NOT show it as proved. `time`, `flags` and `text` are as for a
+`MESSAGE`.
+
+A group message this node wrote is **waiting** until it has gone on the
+air, with `reason` 4 while it waits for
+[the node's allowance](flooding.md#the-allowance), and **sent** from
+then on. It is never delivered: nothing answers a flood, and a writer
+does not learn who received it. It is **not delivered** only if its
+group is [left](#the-requests) while it still waits. One received is
+**received**.
+
+**Invites** (`INVITE`). An [invite](groups.md#invites) to a group, sent
+to `contact` or received from it. Its `id` is from the same count
+again. `group` is the id of the group it is to, and `name` what the
+inviter calls it. `state`, `reason` and `wait` are a `MESSAGE`'s: an
+invite is a unicast message, and is waiting, sent, delivered or not
+delivered as one is, or received. `flags` bit 0 is set once a received
+invite has been [read](#reading).
+
+A node holds the secret a received invite carried for as long as it
+holds the invite, so that the user can [`JOIN`](#the-requests) later.
+It MUST NOT hold the group itself until then.
+
 ### Who may make first contact
 
 A session starts with [first contact](first-contact.md), which either
@@ -281,8 +342,10 @@ asked: it is taken the next time it makes first contact.
 A node with a client that has said `HELLO` MUST send that client:
 
 * `MESSAGE` when a message is sent or received, and when a received
-  message is marked read;
-* `STATE` when a message's `state` or `reason` changes;
+  message is marked read; `GROUP_MESSAGE` and `INVITE` likewise;
+* `STATE` when the `state` or `reason` of any of the three changes;
+* `GROUP` and `GROUP_GONE` when a group is made, joined, renamed or
+  left;
 * `CONTACT` and `CONTACT_GONE` when a contact is saved, renamed,
   removed, or gains or loses a session;
 * `SELF` when anything in it but `time` changes;
@@ -309,7 +372,14 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 1. Version 0 is the same without `END_SESSION` and `ASKED`.
+version 2. Version 1 is the same without [groups](#groups): the
+requests `0x20` to `0x25`, `MADE`, error 9, and the news `GROUP`,
+`GROUP_GONE`, `GROUP_MESSAGE` and `INVITE`. Version 0 is version 1
+without `END_SESSION` and `ASKED`. A client of an earlier version is
+not told of group messages or invites at all: their `id`s are ones it
+never sees. A node MUST answer a request that the client's version does
+not define with `ERROR` 1, as it does one its own version does not: it
+could not tell that client what the request changed.
 Later versions only add types, settings, error codes and
 fields at the end of a frame, so any two versions can talk. A change
 that cannot be made that way is a new protocol, with its own magic and
@@ -319,8 +389,8 @@ A client then, typically, sets the node's clock and syncs:
 
 ```
 client                         node
-HELLO       seq 1, version 1  ─▶
-                              ◀─  INFO        seq 1, version 1
+HELLO       seq 1, version 2  ─▶
+                              ◀─  INFO        seq 1, version 2
 SET_TIME    seq 2             ─▶
                               ◀─  OK          seq 2
 SYNC        seq 3, after 0    ─▶
@@ -337,23 +407,31 @@ goes back to 0.
 ### Syncing
 
 `SYNC` asks for everything. The node sends news: one `SELF`, then a
-`CONTACT` for every contact, a `MESSAGE` for every message it holds
-whose `id` is greater than `after`, a `NEIGHBOUR` for every neighbour,
-one `AIRTIME` and one `POWER`. Then it answers `SYNCED`. News that a
+`CONTACT` for every contact, a `GROUP` for every group, a `MESSAGE`,
+`GROUP_MESSAGE` or `INVITE` for every one it holds whose `id` is
+greater than `after`, in order of `id`, a `NEIGHBOUR` for every
+neighbour, one `AIRTIME` and one `POWER`. Then it answers `SYNCED`. News that a
 change prompts while it syncs is sent as at any other time, among the
 rest.
 
-For contacts and neighbours, a sync is the whole list: a client that
-receives `SYNCED` MUST forget every contact and neighbour it holds that
-the sync did not send, as if it had received its `_GONE`. Messages are
+For contacts, groups and neighbours, a sync is the whole list: a
+client that receives `SYNCED` MUST forget every contact, group and
+neighbour it holds that the sync did not send, as if it had received
+its `_GONE`. Messages are
 not: a sync sends only those after `after`, and a client keeps the
 rest.
 
 A client that holds messages already gives the greatest `id` it holds
 as `after`. One that has [missed news](#news) gives one less than the
 least `id` of any message it holds that is still waiting or sent,
-since those are the ones whose state may have changed unseen. `after`
+since those are the ones whose state may have changed unseen. A group
+message that is sent is not one of them: it stays sent. `after`
 of 0 asks for every message.
+
+A client that speaks a later version to a node than it did when it
+last synced with it gives `after` of 0, once. The node may hold
+records of kinds the client was not sent then, with `id`s below ones
+it was.
 
 A node keeps only so many messages, and MAY forget the oldest without
 news. A client that wants them keeps its own copy.
@@ -367,8 +445,12 @@ each news frame. An answer whose `seq` is not that of the request the
 client is waiting on is one it gave up on, and the client MUST ignore
 it.
 
-A request given up on may have been acted on. Every request but `SEND`
-can be sent again without harm. `SEND` carries `ref`, the client's own
+A request given up on may have been acted on. Every request but
+`SEND`, `SEND_GROUP`, `SEND_INVITE` and `MAKE_GROUP` can be sent again
+without harm. `SEND_GROUP` carries a `ref` as `SEND` does, under the
+same rule, with `group` in the place of `to`. An invite sent twice is
+two invites to one group, and a group made twice is two groups, one of
+which the user leaves: neither is worth a number to prevent. `SEND` carries `ref`, the client's own
 number for the message, which it SHOULD choose at random for each new
 message: several clients may drive one node, and a client may restart,
 so a counter would repeat another's. A node that receives a `SEND`
@@ -423,9 +505,12 @@ address, with `ERROR` 4, and empty `text` with `ERROR` 3. It sends to
 an address whether or not it is a contact, making first contact if it
 has no session.
 
-**`READ`** marks every received message whose `id` is `through` or
-less as read. It is how a client tells the node, and every other
-client, that the user has seen them.
+**`READ`** marks as read every received message whose `id` is
+`through` or less, and every received group message and invite
+likewise, if the client's version defines them. A client of an earlier
+version was never sent those, so its user has not seen them, and its
+`READ` leaves them unread. It is how a client tells the node, and
+every other client, that the user has seen them.
 
 **`SAVE_CONTACT`** saves `address` as a contact with `name`, or
 renames it if it is one already. An empty name is a name. A node MUST
@@ -450,6 +535,37 @@ Nothing goes on the air, so the other node is not told and keeps its
 half. What it sends is not read, and is not acknowledged. The session
 starts again when this node makes first contact, by a `SEND` to the
 address, or when the other node does, after its own session is ended.
+
+**`MAKE_GROUP`** makes a new [group](groups.md), with a secret the
+node draws, and holds it under `name`. The answer, `MADE`, gives its
+id. A node with no room for another group answers `ERROR` 5.
+
+**`LEAVE_GROUP`** leaves the group: the node erases its secret and its
+keys. Its messages are kept; one still waiting to go to it, and an
+invite to it still waiting, become not delivered, since neither will
+now be sent. Nothing goes on the air, so the other members are not
+told. A node answers `OK` for a group it does not
+hold.
+
+**`NAME_GROUP`** changes the user's name for a group the node holds.
+An empty name is a name. A node answers `ERROR` 9 for a group it does
+not hold.
+
+**`SEND_GROUP`** sends `text` to the group, as a new group message.
+`QUEUED` means what it means for `SEND`. A node MUST refuse a group it
+does not hold with `ERROR` 9, and empty `text` with `ERROR` 3.
+
+**`SEND_INVITE`** sends the node at `to` an invite to the group, with
+the name this node holds the group under. It goes as a `SEND` does,
+first contact included, and `QUEUED` gives the invite's `id`. A node
+MUST refuse a group it does not hold with `ERROR` 9, and an invalid
+`to`, or its own address, with `ERROR` 4.
+
+**`JOIN`** takes the group that the received invite `id` is to, under
+the name the invite gave. A node MUST answer `ERROR` 9 if it holds no
+such invite, or the invite is one it sent, and `ERROR` 5 if it has no
+room for another group. It answers `OK` for a group it holds already,
+and changes nothing.
 
 ## Byte streams
 
@@ -553,14 +669,21 @@ An implementation conforms to this section if, for
 * **streams:** given the bytes of `stream` as they arrive, it finds
   the frames and the runs of text in `items`, in that order, and holds
   `pending` waiting for more;
+* **group_ids:** from `group_secret`, it works out `group`;
 * **exchange:** as a node holding what the exchange shows, given the
   client's frames in order, it sends the node's, in order. This checks
   that an answer carries its request's `seq`, and that news is counted
   from 0 after `HELLO`, through a sync and after it. The `ASKED` in it
-  is the node refusing first contact from the address it names;
-* **older:** as a node, given the frames of a client of version 0, it
-  sends the node's, in order: the same node refusing the same first
-  contact sends that client no `ASKED`.
+  is the node refusing first contact from the address it names. The
+  group it makes has the secret `made`, which in use the node draws;
+  the `INVITE` it receives is to the group whose secret is `invited`;
+  and the `GROUP_MESSAGE` it receives comes when the file says;
+* **older:** for each of its connections, as the same node, given the
+  frames of a client of the `version` given, it sends the node's, in
+  order. The node refuses the same first contact and sends a client of
+  version 0 no `ASKED`; it receives the same invite and group message
+  and sends a client of version 1 neither, and refuses that client a
+  request its version does not define.
 
 What a node holds, and so which news it sends and when, depends on the
 rest of the node, and is checked by running a client against it. The
@@ -578,6 +701,30 @@ already carries, would mean a general decoder where EDHOC needs only
 fixed byte strings. What a schema buys is growth without breaking, and
 the two rules here buy most of it: a receiver ignores bytes past the
 fields it knows, and a client ignores news it does not know.
+
+**Why a group has an id, and a client never its secret.** A client
+has to name a group to the node, and the node to a client. The secret
+would do, and would put on every `SEND_GROUP`, over a Bluetooth link
+and into every browser's storage, the one thing that lets anyone read
+the group. The id is derived from the secret one way, so it is the
+same on each of a user's nodes, and a client that kept a group's
+history under it finds the group again after joining it afresh. Eight
+bytes are enough to tell a node's few groups apart.
+
+**Why group messages and invites are records of their own.** A
+`MESSAGE` with a group's id and a writer added would have been one
+frame type for everything in a conversation. It would also have been
+188 bytes at its longest, past the 180 a node's buffer and a Bluetooth
+link's MTU are sized for, and a client of version 1 would have read it
+as a message from an address of zeros. As types of their own, a group
+message has no need of the 32-byte address, and an older client is not
+sent them, by the rule it already relies on.
+
+**Why an invite waits for the user.** A node that took every group it
+was invited to would let any contact fill its few places for groups,
+and have it relay nothing more than it already does but show the user
+conversations they never chose. The invite is held, shown, and taken
+only by `JOIN`.
 
 **Why the node keeps the names.** The node's own screen shows who a
 message is from, and a user may drive one node from a phone and a
@@ -671,9 +818,11 @@ node they were near, and follow it about.
 
 ## Not yet specified
 
-* **Groups**, their messages and their invites. The radio protocol has
-  them ([Groups](groups.md)); the frames a client holds them with come
-  with this protocol's next version.
+* **A group's secret as a code**, to hand to someone with no session,
+  as an address is [shared](sharing.md). No frame carries a secret, so
+  for now a group is joined by invite alone.
+* **Who is in a group.** A node does not know, and nor does a client:
+  it sees the routing ids that have written.
 * **The airtime budget**: `reason` 4 names it, and `AIRTIME` gives only
   the region's limit. The budget's fields come with its section.
 * **What a message carries on the air**: its text, its time, whether it

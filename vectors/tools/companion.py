@@ -4,20 +4,26 @@
     python3 vectors/tools/companion.py generate   # rewrite vectors/companion.json
     python3 vectors/tools/companion.py check      # fail if the file differs from what this computes
 
-Needs nothing outside the standard library. Before computing anything it checks its CRC against
-the published check value for CRC-16/IBM-3740, and its encoder against frames worked by hand.
+Needs nothing outside the standard library; routing ids come from routing.py, beside this file.
+Before computing anything it checks its CRC against the published check value for CRC-16/IBM-3740,
+its HKDF-Expand against RFC 5869, and its encoder against frames worked by hand.
 
 Like everything under vectors/, this file is dedicated to the public domain (CC0-1.0).
 """
 
+import hashlib
+import hmac
 import json
 import struct
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import routing  # noqa: E402
+
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 1
+VERSION = 2
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -26,8 +32,9 @@ STREAM_TAIL = 2  # the CRC
 NAME_MAX, TEXT_MAX, FIRMWARE_MAX, REGION_MAX = 31, 128, 31, 15
 
 # Each field is (name, kind, and for a string its longest). Kinds: u8, i8, u16, u32, addr (32
-# bytes), str (a u8 length, then that many bytes of UTF-8).
-U8, I8, U16, U32, ADDR, STR = "u8", "i8", "u16", "u32", "addr", "str"
+# bytes), gid (a group's id, 8 bytes), str (a u8 length, then that many bytes of UTF-8).
+U8, I8, U16, U32, ADDR, GID, STR = "u8", "i8", "u16", "u32", "addr", "gid", "str"
+BYTES = {ADDR: 32, GID: 8}
 
 FRAMES = {
     # Requests, client to node.
@@ -41,12 +48,19 @@ FRAMES = {
     0x18: ("SAVE_CONTACT", [("address", ADDR), ("name", STR, NAME_MAX)]),
     0x19: ("REMOVE_CONTACT", [("address", ADDR)]),
     0x1A: ("END_SESSION", [("address", ADDR)]),
+    0x20: ("MAKE_GROUP", [("name", STR, NAME_MAX)]),
+    0x21: ("LEAVE_GROUP", [("group", GID)]),
+    0x22: ("NAME_GROUP", [("group", GID), ("name", STR, NAME_MAX)]),
+    0x23: ("SEND_GROUP", [("ref", U32), ("group", GID), ("text", STR, TEXT_MAX)]),
+    0x24: ("SEND_INVITE", [("group", GID), ("to", ADDR)]),
+    0x25: ("JOIN", [("id", U32)]),
     # Answers, node to client.
     0x40: ("OK", []),
     0x41: ("ERROR", [("code", U8)]),
     0x42: ("INFO", [("version", U8), ("firmware", STR, FIRMWARE_MAX)]),
     0x43: ("SYNCED", []),
     0x44: ("QUEUED", [("id", U32)]),
+    0x45: ("MADE", [("group", GID)]),
     # News, node to client.
     0x80: ("SELF", [("address", ADDR), ("role", U8), ("region", STR, REGION_MAX), ("power", I8),
                     ("time", U32)]),
@@ -61,6 +75,14 @@ FRAMES = {
     0x87: ("AIRTIME", [("period", U32), ("allowed", U32), ("used", U32), ("wait", U32)]),
     0x88: ("POWER", [("millivolts", U16), ("percent", U8), ("flags", U8)]),
     0x89: ("ASKED", [("address", ADDR), ("why", U8)]),
+    0x8A: ("GROUP", [("group", GID), ("name", STR, NAME_MAX)]),
+    0x8B: ("GROUP_GONE", [("group", GID)]),
+    0x8C: ("GROUP_MESSAGE", [("id", U32), ("group", GID), ("from", U32), ("time", U32),
+                             ("flags", U8), ("state", U8), ("reason", U8), ("wait", U16),
+                             ("text", STR, TEXT_MAX)]),
+    0x8D: ("INVITE", [("id", U32), ("contact", ADDR), ("group", GID), ("time", U32),
+                      ("flags", U8), ("state", U8), ("reason", U8), ("wait", U16),
+                      ("name", STR, NAME_MAX)]),
 }
 BY_NAME = {name: t for t, (name, _) in FRAMES.items()}
 
@@ -87,6 +109,17 @@ def crc16(data):
     return crc
 
 
+def group_id(secret):
+    """A group's id: HKDF-Expand (RFC 5869) with SHA-256, keyed with the group's secret, for
+    eight bytes, which is the first block's first eight."""
+    return expand(secret, b"tern v0 group id", 8)
+
+
+def expand(prk, info, length):
+    assert length <= 32
+    return hmac.new(prk, info + b"\x01", hashlib.sha256).digest()[:length]
+
+
 def fields_of(t, values):
     fields = list(FRAMES[t][1])
     if t == BY_NAME["SET"]:
@@ -103,8 +136,8 @@ def encode(kind, seq, /, **values):
         kind = field[1]
         if kind in FIXED:
             out += struct.pack(FIXED[kind], v)
-        elif kind == ADDR:
-            assert len(v) == 32
+        elif kind in BYTES:
+            assert len(v) == BYTES[kind]
             out += v
         else:
             raw = v.encode("utf-8")
@@ -134,11 +167,11 @@ def decode(frame):
                 return "a field cut short"
             values[name] = struct.unpack(FIXED[kind], frame[at : at + size])[0]
             at += size
-        elif kind == ADDR:
-            if at + 32 > len(frame):
+        elif kind in BYTES:
+            if at + BYTES[kind] > len(frame):
                 return "a field cut short"
-            values[name] = frame[at : at + 32].hex()
-            at += 32
+            values[name] = frame[at : at + BYTES[kind]].hex()
+            at += BYTES[kind]
         else:
             if at + 1 > len(frame) or at + 1 + frame[at] > len(frame):
                 return "a field cut short"
@@ -212,8 +245,14 @@ def parse(stream):
 
 def self_check():
     assert crc16(b"123456789") == 0x29B1  # the published check value
+    # RFC 5869, test case 1, cut to one block.
+    assert expand(bytes.fromhex("077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5"),
+                  bytes.fromhex("f0f1f2f3f4f5f6f7f8f9"), 32).hex() == (
+        "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf")
     assert encode("PING", 7) == b"\x03\x07"
     assert encode("HELLO", 1, version=1) == b"\x01\x01\x01"
+    assert len(encode("GROUP_MESSAGE", 0, id=0, group=bytes(8), time=0, flags=0, state=0,
+                      reason=0, wait=0, text="x" * TEXT_MAX, **{"from": 0})) == 28 + TEXT_MAX
     assert encode("SET", 9, setting=3, value=-9) == b"\x05\x09\x03\xf7"
     assert wrap(b"\x03\x07") == bytes.fromhex("f5540002") + b"\x03\x07" + struct.pack(
         ">H", crc16(bytes.fromhex("00020307")))
@@ -228,11 +267,17 @@ ALICE = bytes.fromhex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f
 BOB = bytes.fromhex("3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c")
 CAROL = bytes.fromhex("fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025")
 
+# Two groups' secrets: the one the node makes in the exchange, and the one it is invited to.
+MADE_SECRET = bytes(range(16))
+INVITED_SECRET = bytes.fromhex("c4" * 16)
+HUT, RIDGE = group_id(MADE_SECRET), group_id(INVITED_SECRET)
+
 
 def build():
     self_check()
 
     examples = [
+        ("HELLO", 1, {"version": 2}),
         ("HELLO", 1, {"version": 1}),
         ("HELLO", 1, {"version": 0}),
         ("SYNC", 2, {"after": 0}),
@@ -250,11 +295,18 @@ def build():
         ("SAVE_CONTACT", 14, {"address": BOB, "name": ""}),
         ("REMOVE_CONTACT", 15, {"address": BOB}),
         ("END_SESSION", 16, {"address": BOB}),
+        ("MAKE_GROUP", 17, {"name": "Hut"}),
+        ("LEAVE_GROUP", 18, {"group": HUT}),
+        ("NAME_GROUP", 19, {"group": RIDGE, "name": "Ridge walkers"}),
+        ("SEND_GROUP", 20, {"ref": 0xC0FFEE02, "group": HUT, "text": "Anyone at the hut?"}),
+        ("SEND_INVITE", 21, {"group": HUT, "to": BOB}),
+        ("JOIN", 22, {"id": 22}),
         ("OK", 4, {}),
         ("ERROR", 15, {"code": 4}),
-        ("INFO", 1, {"version": 1, "firmware": "tern 0.1.0 heltec-v3"}),
+        ("INFO", 1, {"version": 2, "firmware": "tern 0.1.0 heltec-v3"}),
         ("SYNCED", 2, {}),
         ("QUEUED", 10, {"id": 18}),
+        ("MADE", 17, {"group": HUT}),
         ("SELF", 0, {"address": ALICE, "role": 1, "region": "EU868", "power": 14,
                      "time": 1_790_000_000}),
         ("SELF", 1, {"address": ALICE, "role": 0, "region": "US915", "power": -9, "time": 0}),
@@ -275,6 +327,19 @@ def build():
         ("POWER", 13, {"millivolts": 0, "percent": 255, "flags": 2}),
         ("ASKED", 14, {"address": CAROL, "why": 1}),
         ("ASKED", 15, {"address": CAROL, "why": 2}),
+        ("GROUP", 16, {"group": HUT, "name": "Hut"}),
+        ("GROUP", 17, {"group": RIDGE, "name": ""}),
+        ("GROUP_GONE", 18, {"group": HUT}),
+        ("GROUP_MESSAGE", 19, {"id": 20, "group": HUT, "from": 0, "time": 1_790_000_120,
+                               "flags": 0, "state": 0, "reason": 4, "wait": 22,
+                               "text": "Anyone at the hut?"}),
+        ("GROUP_MESSAGE", 20, {"id": 21, "group": HUT, "from": routing.rid(BOB),
+                               "time": 1_790_000_150, "flags": 1, "state": 4, "reason": 0,
+                               "wait": 0, "text": "Two of us"}),
+        ("INVITE", 21, {"id": 19, "contact": BOB, "group": HUT, "time": 1_790_000_100,
+                        "flags": 0, "state": 2, "reason": 0, "wait": 0, "name": "Hut"}),
+        ("INVITE", 22, {"id": 22, "contact": BOB, "group": RIDGE, "time": 1_790_000_200,
+                        "flags": 0, "state": 4, "reason": 0, "wait": 0, "name": "Ridge"}),
     ]
     frames = []
     for name, seq, values in examples:
@@ -300,7 +365,7 @@ def build():
         b"\x03",
         hello[:2],
         b"\x00\x01",
-        b"\x20\x01",
+        b"\x2f\x01",
         b"\xc0\x01",
         b"\x9f\x01",
         encode("SYNC", 2, after=1)[:5],
@@ -316,6 +381,14 @@ def build():
                text="hi")[:-3],
         encode("END_SESSION", 16, address=BOB)[:-1],
         encode("ASKED", 14, address=CAROL, why=1)[:-1],
+        encode("LEAVE_GROUP", 18, group=HUT)[:-1],
+        encode("MAKE_GROUP", 17, name="")[:-1] + b"\x20" + b"x" * 32,
+        encode("SEND_GROUP", 20, ref=1, group=HUT, text="")[:-1] + b"\x02\xc3\x28",
+        encode("SEND_INVITE", 21, group=HUT, to=BOB)[:-1],
+        encode("JOIN", 22, id=22)[:-1],
+        encode("GROUP", 16, group=HUT, name="Hut")[:-1],
+        encode("INVITE", 22, id=22, contact=BOB, group=RIDGE, time=0, flags=0, state=4, reason=0,
+               wait=0, name="Ridge")[:-6],
     ]:
         why = decode(frame)
         assert isinstance(why, str), frame.hex()
@@ -344,31 +417,50 @@ def build():
                         "pending": pending.hex()})
 
     # A connection, as both ends see it: who sends what, in order.
-    exchange = []
-    for side, frame in [
-        ("client", encode("HELLO", 1, version=1)),
-        ("node", encode("INFO", 1, version=1, firmware="tern 0.1.0 heltec-v3")),
+    info = encode("INFO", 1, version=VERSION, firmware="tern 0.1.0 heltec-v3")
+    self_ = dict(address=ALICE, role=1, region="EU868", power=14, time=1_790_000_000)
+    neighbour = dict(routing_id=0x1D2E3F40, role=1, snr_quarter_db=-38, heard=42)
+    airtime = dict(period=3600, allowed=360_000, used=12_345, wait=0)
+    power = dict(millivolts=3987, percent=81, flags=1)
+    where = dict(id=17, contact=BOB, time=1_789_999_000, state=4, reason=0, wait=0,
+                 text="Where are you?")
+    ridge = dict(id=18, contact=BOB, time=1_790_000_060, flags=0, text="On the ridge by six")
+    bob = routing.rid(BOB)
+    invite = dict(id=19, contact=BOB, group=HUT, time=1_790_000_100, flags=0, name="Hut")
+    anyone = dict(id=20, group=HUT, time=1_790_000_120, flags=0, text="Anyone at the hut?",
+                  **{"from": 0})
+    two = dict(id=21, group=HUT, time=1_790_000_150, state=4, reason=0, wait=0, text="Two of us",
+               **{"from": bob})
+    invited = dict(id=22, contact=BOB, group=RIDGE, time=1_790_000_200, state=4, reason=0,
+                   wait=0, name="Ridge")
+
+    def connection(frames):
+        out = []
+        for side, frame in frames:
+            fields = decode(frame)
+            out.append({"from": side, "type": fields["type"], "seq": fields["seq"],
+                        "frame": frame.hex()})
+        return out
+
+    exchange = connection([
+        ("client", encode("HELLO", 1, version=VERSION)),
+        ("node", info),
         ("client", encode("SET_TIME", 2, time=1_790_000_000)),
         ("node", encode("OK", 2)),
         ("client", encode("SYNC", 3, after=0)),
-        ("node", encode("SELF", 0, address=ALICE, role=1, region="EU868", power=14,
-                        time=1_790_000_000)),
+        ("node", encode("SELF", 0, **self_)),
         ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
-        ("node", encode("MESSAGE", 2, id=17, contact=BOB, time=1_789_999_000, flags=0, state=4,
-                        reason=0, wait=0, text="Where are you?")),
-        ("node", encode("NEIGHBOUR", 3, routing_id=0x1D2E3F40, role=1, snr_quarter_db=-38,
-                        heard=42)),
-        ("node", encode("AIRTIME", 4, period=3600, allowed=360_000, used=12_345, wait=0)),
-        ("node", encode("POWER", 5, millivolts=3987, percent=81, flags=1)),
+        ("node", encode("MESSAGE", 2, flags=0, **where)),
+        ("node", encode("NEIGHBOUR", 3, **neighbour)),
+        ("node", encode("AIRTIME", 4, **airtime)),
+        ("node", encode("POWER", 5, **power)),
         ("node", encode("SYNCED", 3)),
         ("client", encode("READ", 4, through=17)),
         ("node", encode("OK", 4)),
-        ("node", encode("MESSAGE", 6, id=17, contact=BOB, time=1_789_999_000, flags=1, state=4,
-                        reason=0, wait=0, text="Where are you?")),
+        ("node", encode("MESSAGE", 6, flags=1, **where)),
         ("client", encode("SEND", 5, ref=0xC0FFEE01, to=BOB, text="On the ridge by six")),
         ("node", encode("QUEUED", 5, id=18)),
-        ("node", encode("MESSAGE", 7, id=18, contact=BOB, time=1_790_000_060, flags=0, state=0,
-                        reason=1, wait=0, text="On the ridge by six")),
+        ("node", encode("MESSAGE", 7, state=0, reason=1, wait=0, **ridge)),
         ("node", encode("STATE", 8, id=18, state=1, reason=0, wait=0)),
         ("node", encode("STATE", 9, id=18, state=2, reason=0, wait=0)),
         # Carol makes first contact, and is refused: she is not a contact.
@@ -376,57 +468,117 @@ def build():
         ("client", encode("SAVE_CONTACT", 6, address=CAROL, name="Carol")),
         ("node", encode("OK", 6)),
         ("node", encode("CONTACT", 11, address=CAROL, session=0, name="Carol")),
-        ("client", encode("END_SESSION", 7, address=BOB)),
-        ("node", encode("OK", 7)),
-        ("node", encode("CONTACT", 12, address=BOB, session=0, name="Bob")),
-    ]:
-        fields = decode(frame)
-        exchange.append({"from": side, "type": fields["type"], "seq": fields["seq"],
-                         "frame": frame.hex()})
+        # A group is made, Bob is invited to it, and a message is written to it.
+        ("client", encode("MAKE_GROUP", 7, name="Hut")),
+        ("node", encode("MADE", 7, group=HUT)),
+        ("node", encode("GROUP", 12, group=HUT, name="Hut")),
+        ("client", encode("SEND_INVITE", 8, group=HUT, to=BOB)),
+        ("node", encode("QUEUED", 8, id=19)),
+        ("node", encode("INVITE", 13, state=0, reason=1, wait=0, **invite)),
+        ("node", encode("STATE", 14, id=19, state=1, reason=0, wait=0)),
+        ("node", encode("STATE", 15, id=19, state=2, reason=0, wait=0)),
+        ("client", encode("SEND_GROUP", 9, ref=0xC0FFEE02, group=HUT, text="Anyone at the hut?")),
+        ("node", encode("QUEUED", 9, id=20)),
+        ("node", encode("GROUP_MESSAGE", 16, state=0, reason=0, wait=0, **anyone)),
+        ("node", encode("STATE", 17, id=20, state=1, reason=0, wait=0)),
+        # Bob answers in the group, and invites this node to another.
+        ("node", encode("GROUP_MESSAGE", 18, flags=0, **two)),
+        ("node", encode("INVITE", 19, flags=0, **invited)),
+        ("client", encode("JOIN", 10, id=22)),
+        ("node", encode("OK", 10)),
+        ("node", encode("GROUP", 20, group=RIDGE, name="Ridge")),
+        ("client", encode("NAME_GROUP", 11, group=RIDGE, name="Ridge walkers")),
+        ("node", encode("OK", 11)),
+        ("node", encode("GROUP", 21, group=RIDGE, name="Ridge walkers")),
+        ("client", encode("READ", 12, through=22)),
+        ("node", encode("OK", 12)),
+        ("node", encode("GROUP_MESSAGE", 22, flags=1, **two)),
+        ("node", encode("INVITE", 23, flags=1, **invited)),
+        ("client", encode("LEAVE_GROUP", 13, group=HUT)),
+        ("node", encode("OK", 13)),
+        ("node", encode("GROUP_GONE", 24, group=HUT)),
+        ("client", encode("END_SESSION", 14, address=BOB)),
+        ("node", encode("OK", 14)),
+        ("node", encode("CONTACT", 25, address=BOB, session=0, name="Bob")),
+    ])
 
-    # The same node with a client of version 0. Carol is refused after the sync, and the client
-    # is not told: the news after it is counted on from the sync's.
-    older = []
-    for side, frame in [
-        ("client", encode("HELLO", 1, version=0)),
-        ("node", encode("INFO", 1, version=1, firmware="tern 0.1.0 heltec-v3")),
-        ("client", encode("SYNC", 2, after=17)),
-        ("node", encode("SELF", 0, address=ALICE, role=1, region="EU868", power=14,
-                        time=1_790_000_000)),
-        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
-        ("node", encode("NEIGHBOUR", 2, routing_id=0x1D2E3F40, role=1, snr_quarter_db=-38,
-                        heard=42)),
-        ("node", encode("AIRTIME", 3, period=3600, allowed=360_000, used=12_345, wait=0)),
-        ("node", encode("POWER", 4, millivolts=3987, percent=81, flags=1)),
-        ("node", encode("SYNCED", 2)),
-        ("client", encode("SAVE_CONTACT", 3, address=CAROL, name="Carol")),
-        ("node", encode("OK", 3)),
-        ("node", encode("CONTACT", 5, address=CAROL, session=0, name="Carol")),
-    ]:
-        fields = decode(frame)
-        older.append({"from": side, "type": fields["type"], "seq": fields["seq"],
-                      "frame": frame.hex()})
+    # The same node with clients of earlier versions. To one of version 0, Carol is refused after
+    # the sync, and the client is not told: the news after it is counted on from the sync's. To
+    # one of version 1, the node holds the group it made, and Bob's group message and invite come
+    # after the sync: the client is told of none of them, and the message it then sends has an
+    # id three past the last it saw.
+    older = [
+        {"version": 0, "frames": connection([
+            ("client", encode("HELLO", 1, version=0)),
+            ("node", info),
+            ("client", encode("SYNC", 2, after=17)),
+            ("node", encode("SELF", 0, **self_)),
+            ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+            ("node", encode("NEIGHBOUR", 2, **neighbour)),
+            ("node", encode("AIRTIME", 3, **airtime)),
+            ("node", encode("POWER", 4, **power)),
+            ("node", encode("SYNCED", 2)),
+            ("client", encode("SAVE_CONTACT", 3, address=CAROL, name="Carol")),
+            ("node", encode("OK", 3)),
+            ("node", encode("CONTACT", 5, address=CAROL, session=0, name="Carol")),
+        ])},
+        {"version": 1, "frames": connection([
+            ("client", encode("HELLO", 1, version=1)),
+            ("node", info),
+            ("client", encode("SYNC", 2, after=0)),
+            ("node", encode("SELF", 0, **{**self_, "time": 1_790_000_130})),
+            ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+            ("node", encode("CONTACT", 2, address=CAROL, session=0, name="Carol")),
+            ("node", encode("MESSAGE", 3, flags=1, **where)),
+            ("node", encode("MESSAGE", 4, state=2, reason=0, wait=0, **ridge)),
+            ("node", encode("NEIGHBOUR", 5, **neighbour)),
+            ("node", encode("AIRTIME", 6, **airtime)),
+            ("node", encode("POWER", 7, **power)),
+            ("node", encode("SYNCED", 2)),
+            ("client", encode("SEND", 3, ref=0xC0FFEE03, to=BOB, text="Coming down")),
+            ("node", encode("QUEUED", 3, id=23)),
+            ("node", encode("MESSAGE", 8, id=23, contact=BOB, time=1_790_000_300, flags=0,
+                            state=0, reason=1, wait=0, text="Coming down")),
+            ("client", encode("MAKE_GROUP", 4, name="Hut")),
+            ("node", encode("ERROR", 4, code=1)),
+        ])},
+    ]
+
+    group_ids = [{"group_secret": g.hex(), "group": group_id(g).hex()}
+                 for g in (MADE_SECRET, INVITED_SECRET, bytes(16), bytes([0xFF] * 16))]
 
     return {
-        "description": "The companion protocol, version 1 (draft/companion.md). Frames, streams "
-        "and addresses are hex; numbers are numbers; strings are text. In frames, frame is the "
-        "frame alone, as one BLE write or notification carries it, and stream is the same frame "
-        "as it goes on a byte stream. In extended, frame carries bytes past the fields this "
-        "version defines, and fields is what a receiver reads from it. In rejected, a receiver "
-        "discards frame; answer is the ERROR code a node answers it with, null for none. In "
-        "streams, items are what a receiver finds in stream, in order: a frame, or a run of "
-        "bytes that is not one, and pending is what it holds at the end waiting for more. "
-        "Exchange is one connection, in order; the node refuses first contact from the "
-        "third address just before the ASKED in it. Older is a connection to the same node by a "
-        "client of version 0; the node refuses that first contact after the sync, before the "
-        "client's SAVE_CONTACT. The three addresses are the public keys of RFC 8032's first "
-        "three Ed25519 test vectors.",
+        "description": "The companion protocol, version 2 (draft/companion.md). Frames, streams, "
+        "addresses and group ids are hex; numbers are numbers; strings are text. In frames, "
+        "frame is the frame alone, as one BLE write or notification carries it, and stream is "
+        "the same frame as it goes on a byte stream. In extended, frame carries bytes past the "
+        "fields this version defines, and fields is what a receiver reads from it. In rejected, "
+        "a receiver discards frame; answer is the ERROR code a node answers it with, null for "
+        "none. In streams, items are what a receiver finds in stream, in order: a frame, or a "
+        "run of bytes that is not one, and pending is what it holds at the end waiting for more. "
+        "In group_ids, group is the id of the group whose secret is group_secret. Exchange is "
+        "one connection, in order. In it the node refuses first contact from the third address "
+        "just before the ASKED; the group it makes has the secret made, where a node in use "
+        "draws one; and after its own group message is sent it receives a message to that group "
+        "from the second address's routing id, and then an invite from that address to the "
+        "group whose secret is invited. Older holds connections to the same node by clients of "
+        "earlier versions. To the client of version 0 it holds what the exchange begins with, "
+        "and refuses that first contact after the sync, before the client's SAVE_CONTACT. To "
+        "the client of version 1 it holds what the exchange has before its JOIN but for the "
+        "group message and the invite received, which come after the sync and before the "
+        "client's SEND; the client's last request is one its version does not define, which a "
+        "client must not send, and the node answers it as it would any other it does not know "
+        "from that client. The three addresses are the public keys of RFC 8032's first three "
+        "Ed25519 test vectors.",
         "generator": "vectors/tools/companion.py",
         "crc_check": {"input": b"123456789".hex(), "crc": crc16(b"123456789")},
+        "made": MADE_SECRET.hex(),
+        "invited": INVITED_SECRET.hex(),
         "frames": frames,
         "extended": extended,
         "rejected": rejected,
         "streams": streams,
+        "group_ids": group_ids,
         "exchange": exchange,
         "older": older,
     }
