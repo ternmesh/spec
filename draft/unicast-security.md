@@ -224,8 +224,8 @@ An implementation conforms to this section if, for every case in
   frame cannot;
 * **collisions:** as a receiver holding every session in `sessions`,
   all new, with their tags in one table, given each frame of
-  `deliveries` in order, it accepts every one, attributed to the
-  session and counter given. The two sessions' tags collide, so this
+  `deliveries` in order, it accepts exactly those whose `accept` is
+  true, attributed to the session and counter given. The two sessions' tags collide, so this
   checks that every matching entry is tried, and, where both frames go
   to one receiver, that accepting one removes only its own entry;
 * **senders:** as both ends of a new session holding `session_secret`,
@@ -248,7 +248,7 @@ tag key, nonce base, nonce, tag and the acknowledgement's `proof`) to
 help find where an implementation goes wrong.
 
 The file's `acknowledgements`, and `acknowledge` and `proof` in its
-`sequences`, are for
+`sequences` and `collisions`, are for
 [Frames that follow routes](forwarding.md#conformance), which defines
 what they check. They are in this file because they need its keys.
 

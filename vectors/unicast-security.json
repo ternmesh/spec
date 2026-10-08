@@ -1,5 +1,5 @@
 {
-  "description": "Secured unicast frames, draft 0 (draft/unicast-security.md), and their acknowledgements (draft/forwarding.md). For each accepted case, an implementation given session_secret, direction, counter, hops, power, next, destination and plaintext MUST produce frame, and given session_secret, direction and frame MUST recover counter and plaintext. Each rejected case MUST be rejected by a receiver holding session_secret and expecting counter in direction. For each sequence, a receiver of a new session given the deliveries in order MUST accept exactly those marked accept, with that counter and plaintext, and MUST acknowledge exactly those marked acknowledge, with the frame's tag and that proof. For each collision case, a receiver holding every listed session, all new, given the deliveries in order MUST accept each, attributed to that session (an index into sessions) and counter, with that plaintext. For each senders case, an implementation acting as both ends of a new session, given each send's direction and plaintext in order and choosing the counter itself, MUST produce that send's frame; counter is given only to help debugging. For each acknowledgements case, the node that sent message counter in direction, holding session_secret, MUST take frame as showing that the message arrived if valid is true, and MUST NOT if it is false. Values are hex; hops, power, next and destination are integers, power signed, laid out as draft/forwarding.md gives, and where a case does not give them they are 32, 14, 0x0A0B0C0D and 0x01020304.",
+  "description": "Secured unicast frames, draft 0 (draft/unicast-security.md), and their acknowledgements (draft/forwarding.md). For each accepted case, an implementation given session_secret, direction, counter, hops, power, next, destination and plaintext MUST produce frame, and given session_secret, direction and frame MUST recover counter and plaintext. Each rejected case MUST be rejected by a receiver holding session_secret and expecting counter in direction. For each sequence, a receiver of a new session given the deliveries in order MUST accept exactly those marked accept, with that counter and plaintext, and MUST acknowledge exactly those marked acknowledge, with the frame's tag and that proof. For each collision case, a receiver holding every listed session, all new, given the deliveries in order MUST accept exactly those marked accept, attributed to that session (an index into sessions) and counter, with that plaintext, and for each delivery MUST send exactly the acknowledgements listed, each with the frame's tag and that proof, to the other end of that session. For each senders case, an implementation acting as both ends of a new session, given each send's direction and plaintext in order and choosing the counter itself, MUST produce that send's frame; counter is given only to help debugging. For each acknowledgements case, the node that sent message counter in direction, holding session_secret, MUST take frame as showing that the message arrived if valid is true, and MUST NOT if it is false. Values are hex; hops, power, next and destination are integers, power signed, laid out as draft/forwarding.md gives, and where a case does not give them they are 32, 14, 0x0A0B0C0D and 0x01020304.",
   "generator": "vectors/tools/unicast.py",
   "accepted": [
     {
@@ -563,7 +563,14 @@
           "accept": true,
           "session": 0,
           "counter": 0,
-          "plaintext": "636f6c6c6973696f6e2030"
+          "plaintext": "636f6c6c6973696f6e2030",
+          "acknowledge": [
+            {
+              "session": 0,
+              "counter": 0,
+              "proof": "a7eb4af5"
+            }
+          ]
         }
       ]
     },
@@ -587,13 +594,20 @@
           "accept": true,
           "session": 1,
           "counter": 29,
-          "plaintext": "636f6c6c6973696f6e2031"
+          "plaintext": "636f6c6c6973696f6e2031",
+          "acknowledge": [
+            {
+              "session": 1,
+              "counter": 29,
+              "proof": "04a92a67"
+            }
+          ]
         }
       ]
     },
     {
       "name": "tag-collision-both",
-      "note": "both colliding frames to one receiver: the second session's entry must survive the first acceptance",
+      "note": "both colliding frames to one receiver: the second session's entry must survive the first acceptance. Then a copy, which is acknowledged for both",
       "sessions": [
         {
           "session_secret": "1f31c8d6fddc18e57117f91e5f1fb032f8ea58ec44bb3a0033b7c8f5f4df6252",
@@ -611,14 +625,47 @@
           "accept": true,
           "session": 0,
           "counter": 0,
-          "plaintext": "636f6c6c6973696f6e2030"
+          "plaintext": "636f6c6c6973696f6e2030",
+          "acknowledge": [
+            {
+              "session": 0,
+              "counter": 0,
+              "proof": "a7eb4af5"
+            }
+          ]
         },
         {
           "frame": "48200e0a0b0c0d01020304785569e6aac3848a81b66ef4a2d3647faff76c29113e20",
           "accept": true,
           "session": 1,
           "counter": 29,
-          "plaintext": "636f6c6c6973696f6e2031"
+          "plaintext": "636f6c6c6973696f6e2031",
+          "acknowledge": [
+            {
+              "session": 1,
+              "counter": 29,
+              "proof": "04a92a67"
+            }
+          ]
+        },
+        {
+          "frame": "48200e0a0b0c0d01020304785569e6f98552973434d951b243371a5497d7abda7148",
+          "accept": false,
+          "session": null,
+          "counter": null,
+          "plaintext": null,
+          "acknowledge": [
+            {
+              "session": 0,
+              "counter": 0,
+              "proof": "a7eb4af5"
+            },
+            {
+              "session": 1,
+              "counter": 29,
+              "proof": "04a92a67"
+            }
+          ]
         }
       ]
     }

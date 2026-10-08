@@ -190,7 +190,17 @@ and whose tag is the destination tag of a message it has accepted, in
 any session it holds, with a counter no more than 31 below that
 direction's `H`. A destination MUST acknowledge a copy as it did the
 message, and MUST NOT accept it, or acknowledge any other frame it does
-not accept. So it keeps the tags of the counters it has accepted for as
+not accept.
+
+Four bytes can be the tag of more than one such message, in two
+sessions or in one, and nothing else in a copy says which it is a copy
+of. So a destination MUST acknowledge every one of them, each with its
+own `proof` and to its own session's other end: one of the
+acknowledgements is the one that was lost, and the others are copies of
+acknowledgements already sent, which their sources ignore or have no
+more use for.
+
+So it keeps the tags of the counters it has accepted for as
 long as they are within 31 of `H`: those of the lower half of its
 window, which it computed to receive them.
 
@@ -284,7 +294,12 @@ which holds the cases that need a session's keys:
 * **sequences:** as that file's receiver, it acknowledges exactly the
   deliveries whose `acknowledge` is true, each with the delivered
   frame's tag and that `proof`. A delivery acknowledged and not
-  accepted is a copy.
+  accepted is a copy;
+* **collisions:** as that file's receiver, for each delivery it sends
+  exactly the acknowledgements in `acknowledge`, in any order: for each,
+  the delivered frame's tag and that `proof`, to the other end of that
+  `session`. A copy whose tag two accepted messages share is
+  acknowledged for both.
 
 When frames go depends on random times and on what is heard, and is
 checked by running implementations against each other and against the

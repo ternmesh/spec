@@ -162,6 +162,15 @@ class Receiver:
         return got and got[1:]
 
 
+def answers(receivers, frame: bytes, got):
+    """What a receiver holding several sessions sends in answer to a frame, `got` being what
+    receive_any() made of it: one acknowledgement for a frame accepted, and for one that is not,
+    one for every accepted message it is a copy of."""
+    owed = [got[:2]] if got else [(i, n) for i, rx in enumerate(receivers) for n in rx.copies(frame)]
+    return [{"session": i, "counter": n, "proof": proof(receivers[i].s, receivers[i].d, n).hex()}
+            for i, n in owed]
+
+
 def receive_any(receivers, frame: bytes):
     """One table over several sessions: try every entry whose tag matches, in table order.
     (index of the receiver, counter, plaintext) if the frame is accepted, else None."""
@@ -360,7 +369,8 @@ def build() -> dict:
         p = f"collision {which}".encode()
         f = seal(sec, 1, n, p)
         assert sum(len(rx.matches(f)) for rx in rxs) == 2
-        assert receive_any(rxs, f) == (which, n, p)
+        got = receive_any(rxs, f)
+        assert got == (which, n, p)
         # Tried the other way round, the wrong session's entry comes first and must fail.
         assert receive_any([Receiver(sb, 1), Receiver(sa, 1)], f) == (1 - which, n, p)
         collisions.append({
@@ -369,7 +379,7 @@ def build() -> dict:
             "sessions": sessions,
             "dtag": dtag(sa, 1, na).hex(),
             "deliveries": [{"frame": f.hex(), "accept": True, "session": which, "counter": n,
-                            "plaintext": p.hex()}],
+                            "plaintext": p.hex(), "acknowledge": answers(rxs, f, got)}],
         })
 
     # Both frames to one receiver, in turn. Accepting the first removes only its own entry, so
@@ -380,13 +390,23 @@ def build() -> dict:
     for which, (sec, n) in enumerate([(sa, na), (sb, nb)]):
         p = f"collision {which}".encode()
         f = seal(sec, 1, n, p)
-        assert receive_any(rxs, f) == (which, n, p)
+        got = receive_any(rxs, f)
+        assert got == (which, n, p)
         deliveries.append({"frame": f.hex(), "accept": True, "session": which, "counter": n,
-                           "plaintext": p.hex()})
+                           "plaintext": p.hex(), "acknowledge": answers(rxs, f, got)})
+    # Then the first frame again. It is a copy, and by its tag a copy of both messages: nothing
+    # says which, so both are acknowledged, each to its own session's other end.
+    f = seal(sa, 1, na, b"collision 0")
+    assert receive_any(rxs, f) is None
+    both = answers(rxs, f, None)
+    assert [(a["session"], a["counter"]) for a in both] == [(0, na), (1, nb)]
+    assert both[0]["proof"] != both[1]["proof"]
+    deliveries.append({"frame": f.hex(), "accept": False, "session": None, "counter": None,
+                       "plaintext": None, "acknowledge": both})
     collisions.append({
         "name": "tag-collision-both",
         "note": "both colliding frames to one receiver: the second session's entry must survive "
-        "the first acceptance",
+        "the first acceptance. Then a copy, which is acknowledged for both",
         "sessions": sessions,
         "dtag": dtag(sa, 1, na).hex(),
         "deliveries": deliveries,
@@ -473,8 +493,10 @@ def build() -> dict:
         "deliveries in order MUST accept exactly those marked accept, with that counter and "
         "plaintext, and MUST acknowledge exactly those marked acknowledge, with the frame's tag "
         "and that proof. For each collision case, a receiver holding every listed session, all "
-        "new, given the deliveries in order MUST accept each, attributed to that session (an "
-        "index into sessions) and counter, with that plaintext. For each senders case, an "
+        "new, given the deliveries in order MUST accept exactly those marked accept, attributed "
+        "to that session (an index into sessions) and counter, with that plaintext, and for each "
+        "delivery MUST send exactly the acknowledgements listed, each with the frame's tag and "
+        "that proof, to the other end of that session. For each senders case, an "
         "implementation acting as both ends of a new session, given each send's direction and "
         "plaintext in order and choosing the counter itself, MUST produce that send's frame; "
         "counter is given only to help debugging. For each acknowledgements case, the node that "
