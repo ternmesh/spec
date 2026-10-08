@@ -22,18 +22,25 @@ produced by [`vectors/tools/sharing.py`](../vectors/tools/sharing.py).
    below fits a version 3 code, 29 modules square, which a 128 by 64
    display draws at two pixels a module (58 of its 64 rows; see
    [Rationale](#rationale) for the margin round it).
-3. **A check two people can do aloud.** Twelve digits that each
+3. **A code a phone's camera does something with.** The link is an
+   ordinary web address, which every camera app offers to open, rather
+   than a scheme only an installed app would claim.
+4. **A check two people can do aloud.** Twelve digits that each
    person's device shows for an address, the same in every
    implementation, which differ for any other address with high
    probability.
-4. **Nothing new on the air.** Every form here is made from the address
+5. **Nothing new on the air.** Every form here is made from the address
    alone, and none of them is sent over LoRa.
 
 ## Notation
 
 `A` is a node's address, 32 bytes. `||` is concatenation; strings in
 double quotes are their ASCII bytes, without a terminator. `X[i..j]` is
-bytes `i` to `j - 1` of `X`.
+bytes `i` to `j - 1` of `X`. **Base32** is RFC 4648, section 6: the
+alphabet `A` to `Z` and `2` to `7`, five bits a character, most
+significant first. Here it is always written upper-case and without the
+`=` padding, so 32 bytes are 52 characters, the last of which carries
+one bit and four zero bits.
 
 ## The text form
 
@@ -48,13 +55,14 @@ digits in either case, and MUST ignore spaces among them.
 
 ## The link
 
-An address as a link is `TERN:` followed by its text form:
+An address as a link is `HTTPS://TERNMESH.ORG/A/` followed by the
+address in base32:
 
 ```
-TERN:D6D15FABBC42CE56174A4363E757437A4A7BAF421B690CAA24676F3F4F17C996
+HTTPS://TERNMESH.ORG/A/23IV7K54ILHFMF2KINR6OV2DPJFHXL2CDNUQZKREM5XT6TYXZGLA
 ```
 
-Sixty-nine characters, all of them in the QR code's alphanumeric set
+Seventy-five characters, all of them in the QR code's alphanumeric set
 (digits, upper-case letters, space and `$%*+-./:`). An implementation
 that shows an address as a QR code MUST encode the link, SHOULD use
 alphanumeric mode, and then needs no larger than version 3 at error
@@ -63,13 +71,33 @@ larger version or a higher level is allowed. It SHOULD leave as wide a
 light margin round the code as its display allows, up to the four
 modules ISO/IEC 18004 asks for.
 
-An implementation that reads a link MUST accept the scheme in any case
-(`TERN:`, `tern:`) and the digits as the text form allows. It MUST also
-accept the text form alone, without the scheme, so that a code made
-before this section, or digits pasted from a screen, can still be read.
-It MUST refuse anything else, including `TERN://` and digits of any
-other count. It MUST check that an address it has read is
-[valid](first-contact.md#addresses) before it keeps it as a contact.
+An implementation that reads a link MUST accept it with `HTTPS`, the
+host `TERNMESH.ORG` and the `A` each in either case, and the base32 in
+either case. Either case means ASCII's: a reader MUST refuse any
+character outside ASCII, even one a Unicode case mapping turns into an
+ASCII letter (`ı` into `I`, `ſ` into `S`). It MUST also accept the [text form](#the-text-form) alone,
+so that digits pasted from a screen can be read. It MUST refuse
+anything else, including another scheme or host, base32 of any other
+length or with any other character, and base32 whose last character's
+four low bits are not zero: each address has exactly one link. It MUST
+check that an address it has read is [valid](first-contact.md#addresses)
+before it keeps it as a contact. Reading a link MUST NOT need the
+network: everything in the address is in the link.
+
+**What is at the link.** A browser that opens it fetches a page from
+`ternmesh.org` that reads the address out of the link and shows it, as
+the text form and with its short code, for the person to copy into
+whatever is to make contact. An app MAY claim the link, as Android's App
+Links and iOS's universal links allow, and then opens it itself, with no
+request made.
+
+**What opening it tells the site.** The address is in the link's path,
+and so is in the request a browser makes for the page: `ternmesh.org`
+learns which address the person who opened it was looking at, and from
+where. The site keeps no request logs and the page sends nothing on, but
+that is a promise about one server, not something the protocol can
+enforce. An implementation that shows a QR code SHOULD say, wherever it
+explains the code, that a phone without a Tern app will open a web page.
 
 ## The short code
 
@@ -96,7 +124,8 @@ An implementation conforms to this section if, for every case in
 
 * **cases:** given `address`, it shows `text` as the text form, encodes
   `link` in any QR code it makes of it, and shows `short_code` as its
-  short code; and it reads `address` from each of `reads`;
+  short code; and it reads `address` from each of `reads`. `base32` is
+  the address in base32, the end of `link`;
 * **refused:** it reads no address from any of `refused`;
 * **not contacts:** it reads each `link` in `not_contacts`, and refuses
   to keep the address as a contact: each is one of
@@ -108,13 +137,37 @@ and every mask decodes to the same link.
 
 ## Rationale
 
-**Hex, and upper-case.** Hex is what every tool already prints for a
-key, and upper-case hex is in the QR code's alphanumeric set, which
-packs 5.5 bits a character against byte mode's 8. The link in byte mode
-would need version 4, 33 modules square, which a 64-pixel screen can
-draw only at one pixel a module. A denser alphabet (base32, base58)
-saves a version but not a size worth having, and is one more thing to
-get right in every implementation.
+**Hex, and upper-case, for the text form.** Hex is what every tool
+already prints for a key, and what a person reads out most reliably, so
+it is the form shown on a screen and printed on a console.
+
+**A web address in the code.** A phone's camera app acts on a QR code
+only when it knows what the text in it is. Draft 0 put `TERN:` and the
+hex in the code, and a phone that scanned it reported no usable data: no
+app had claimed the scheme, so the camera had nothing to offer. A web
+address is something every camera opens. It also lets an app take the
+link over once one exists, through App Links and universal links,
+without any change to the code a node shows.
+
+**Base32, for the link.** The code has to stay a version 3 code, the
+largest a 64-pixel screen draws at two pixels a module; that holds 77
+alphanumeric characters. `HTTPS://TERNMESH.ORG/A/` is 23 of them, which
+leaves 54 for the address: hex needs 64, base32 52. Base32's alphabet is
+inside the QR code's alphanumeric set and safe in a URL's path, and
+RFC 4648 already defines it, so no implementation invents its own. The
+link is upper-case because the alphanumeric set has no lower-case
+letters; schemes and hosts are not case-sensitive, and the site serves
+`/A/` and `/a/` alike.
+
+**In the path, not after a `#`.** A fragment would keep the address on
+the phone: browsers do not send what follows `#`. But `#` is not in the
+alphanumeric set, so it would need a byte-mode segment of its own, and
+the link split that way is 442 bits against version 3's 440. The path
+costs the privacy said above; the next version up does not fit the
+screen.
+
+**One letter of path.** `A` leaves the site's other paths free, and two
+of the 77 characters to spare.
 
 **The margin a small screen leaves.** ISO/IEC 18004 asks for a light
 margin, the quiet zone, four modules wide on every side. A version 3
@@ -128,14 +181,6 @@ Heltec V3 port's tests check against ZXing and OpenCV, but a reader is
 not promised to, and a display with room for the full margin should
 give it. A version 2 code would fit with its margin, but holds 47
 alphanumeric characters, too few for an address.
-
-**A scheme.** A QR code holding bare hex is just text to a phone. With
-a scheme, an app can register for `tern:` links and be opened by them,
-and a reader can tell an address from any other sixty-four digits. The
-colon form (`TERN:`, not `tern://`) is what `mailto:` and `tel:` use for
-something with no host, and the colon is in the alphanumeric set.
-Readers accept bare digits too, so that nothing written before this
-section is lost.
 
 **Twelve digits.** The code has to be short enough to read aloud and
 long enough that nobody can make an address whose code matches
@@ -179,3 +224,6 @@ eighteen million. That bias is of no use to anyone.
 * **Where a phone app gets the address from.** Scanning, a link and
   pasting are covered. Sending a node's address over the companion link
   to another phone is not.
+* **The site's files for App Links and universal links**
+  (`assetlinks.json`, `apple-app-site-association`), which name the apps
+  allowed to claim the link. They come with the apps.
