@@ -55,7 +55,7 @@ One kind of frame is defined:
 
 | `hdr` | Frame | After the head |
 |---|---|---|
-| `0x58` | a **group frame** | [Groups](groups.md#the-frame): at least 24 bytes |
+| `0x60` | a **group frame** | [Groups](groups.md#the-frame): at least 24 bytes |
 
 A receiver MUST discard a group frame shorter than 27 bytes, and MUST
 NOT treat a frame whose `hdr` is none of this table's as flooded.
@@ -82,9 +82,9 @@ at the highest of:
 
 * what a frame for every neighbour goes at
   ([Routes](routing.md#power-for-every-neighbour)); and
-* for every relay the node has a
-  [selected route](routing.md#selecting-a-route) to, the floor of that
-  route's neighbour plus `POWER_MARGIN`, rounded up to a whole dBm.
+* for every relay neighbour that one of the node's
+  [selected routes](routing.md#selecting-a-route) goes through, that
+  neighbour's floor plus `POWER_MARGIN`, rounded up to a whole dBm.
 
 It is kept between the node's lowest power and its full power, and is
 full power if any such neighbour's floor is not known. A neighbour's
@@ -188,8 +188,8 @@ An implementation conforms to this section if, for
   `spreading_factor` and `bandwidth_hz`, it first waits no longer than
   `longest_ns`, and not the same time for every frame;
 * **powers:** with `every` what Routes gives for a frame for every
-  neighbour, `floors_sixteenths` the floors of the neighbours its
-  selected routes to relays go through (`null` for one not known), and
+  neighbour, `floors_sixteenths` the floors of the relay neighbours its
+  selected routes go through (`null` for one not known), and
   `lowest` and `full` its lowest and full power, it sends a flooded
   frame at `power`;
 * **seen:** taking each id of `takes` as seen at its `at_ns`, it finds
@@ -245,8 +245,11 @@ announce does, loud enough for the eight nearest neighbours. With the
 radio at high power those are leaves next door: a relay's copy reached
 no other relay and the flood died in a hop or two, 5,514 deliveries in
 the simulator's region against 85,505 with every link known. Reaching
-every neighbour a route to a relay goes through keeps the relays
-joined for floods as routing sees them joined.
+every relay a route goes through keeps the relays joined for floods as
+routing sees them joined. The simulator reached the neighbours its
+routes *to relays* went through; a node here is not told which far
+nodes are relays, so it reaches every relay it routes through, which is
+those and now and then one more.
 
 **What it costs.** The channel is one. In the simulator's deployed
 region, floods at that power took unicast messages on time from

@@ -20,7 +20,7 @@ import phy  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "flooding.json"
 
-HDR_GROUP = 0x58
+HDR_GROUP = 0x60
 HEAD = 3
 GROUP_MIN = 27
 FLOOD_HOPS = 5
@@ -64,7 +64,7 @@ def longest_wait(sf, bw_hz, length):
 
 def power(every, floors, lowest, full):
     """What a flooded frame goes at: as a frame for every neighbour, and loud enough for every
-    neighbour a selected route to a relay goes through. Floors are in sixteenths of a dBm."""
+    relay neighbour a selected route goes through. Floors are in sixteenths of a dBm."""
     if any(f is None for f in floors):
         return full
     need = max([every] + [-(-(f + 16 * POWER_MARGIN) // 16) for f in floors])
@@ -108,9 +108,9 @@ class Bucket:
 
 
 def self_check():
-    f = head(0x58, 5, -3) + bytes(range(24))
-    assert f[:3].hex() == "5805fd" and flooded(f) and not flooded(f[:-1])
-    assert frame_id(f) == frame_id(head(0x58, 2, 14) + bytes(range(24)))
+    f = head(0x60, 5, -3) + bytes(range(24))
+    assert f[:3].hex() == "6005fd" and flooded(f) and not flooded(f[:-1])
+    assert frame_id(f) == frame_id(head(0x60, 2, 14) + bytes(range(24)))
     # Four relays in a crowd pass a frame on along any path: 5, 4, 3, 2, and the one that hears 1
     # does not.
     assert [passes(True, 9, h) for h in (5, 4, 3, 2, 1, 0)] == [4, 3, 2, 1, None, None]
@@ -133,22 +133,23 @@ def build():
     body = bytes(range(0x30, 0x30 + 24))
     heads = []
     for hdr, hops, pw, rest in [
-        (0x58, 5, 22, body),
-        (0x58, 1, -9, bytes(range(0x80, 0x80 + 40))),
-        (0x58, 0, 0, bytes(252)),
+        (0x60, 5, 22, body),
+        (0x60, 1, -9, bytes(range(0x80, 0x80 + 40))),
+        (0x60, 0, 0, bytes(252)),
     ]:
         f = head(hdr, hops, pw) + rest
         assert flooded(f)
         heads.append({"hdr": hdr, "hops": hops, "power": pw, "rest": rest.hex(),
                       "id": frame_id(f).hex(), "frame": f.hex()})
 
-    good = head(0x58, 5, 14) + body
+    good = head(0x60, 5, 14) + body
     rejected = []
     for name, f in [
         ("short", good[:-1]),
         ("a-message", bytes([0x48]) + good[1:]),
         ("an-acknowledgement", bytes([0x50]) + good[1:]),
         ("an-announce", bytes([0x59]) + good[1:]),
+        ("a-flag-set", bytes([0x61]) + good[1:]),
         ("empty", b""),
     ]:
         assert not flooded(f)
@@ -160,7 +161,7 @@ def build():
     first[3] ^= 0x80
     same = []
     for name, a, b in [
-        ("passed-on", good, head(0x58, 4, -2) + body),
+        ("passed-on", good, head(0x60, 4, -2) + body),
         ("itself", good, good),
         ("last-byte", good, bytes(other)),
         ("first-byte-after-the-head", good, bytes(first)),
@@ -254,7 +255,7 @@ def build():
         "(vectors/phy.json) and longest_ns the longest a relay waits before passing it on. In "
         "powers, every is what Routes gives for a frame for every neighbour, in dBm, and "
         "floors_sixteenths the floors, in sixteenths of a dBm, of the neighbours the node's "
-        "selected routes to relays go through, null for one not known. In seen, ids are names, "
+        "selected routes go through that are relays, null for one not known. In seen, ids are names, "
         "taken as seen at the times given, and each ask is true where the node must still hold "
         "the id as seen; an id never taken is not seen. In allowances, a bucket that fills at "
         "share_ppm millionths of the node's time and holds window_s seconds of that, or one "

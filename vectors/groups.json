@@ -17,10 +17,10 @@
         "tag_key": "c3c54d8483bfc1815fb62f17102fbc54",
         "gtag": "f4be0374",
         "ccm_nonce": "00000000000001020304050607",
-        "associated_data": "580001020304050607f4be0374",
+        "associated_data": "600001020304050607f4be0374",
         "plaintext": "1d2e3f4068656c6c6f"
       },
-      "frame": "58050e0001020304050607f4be03745408b7a32f0c17de0d48a80d48503fe402"
+      "frame": "60050e0001020304050607f4be03745408b7a32f0c17de0d16b4391091e572fb"
     },
     {
       "name": "another-nonce",
@@ -37,10 +37,10 @@
         "tag_key": "c3c54d8483bfc1815fb62f17102fbc54",
         "gtag": "b3d807fb",
         "ccm_nonce": "0000000000f0e1d2c3b4a59687",
-        "associated_data": "58f0e1d2c3b4a59687b3d807fb",
+        "associated_data": "60f0e1d2c3b4a59687b3d807fb",
         "plaintext": "1d2e3f4068656c6c6f"
       },
-      "frame": "58050ef0e1d2c3b4a59687b3d807fbe321008e6b38fc57409a748e15f10c971b"
+      "frame": "60050ef0e1d2c3b4a59687b3d807fbe321008e6b38fc57406792038d484db23a"
     },
     {
       "name": "another-group",
@@ -57,10 +57,10 @@
         "tag_key": "3bbf27eec613b6ac620a2f16cedef8cd",
         "gtag": "d77c24f0",
         "ccm_nonce": "00000000000001020304050607",
-        "associated_data": "580001020304050607d77c24f0",
+        "associated_data": "600001020304050607d77c24f0",
         "plaintext": "1d2e3f4068656c6c6f"
       },
-      "frame": "58050e0001020304050607d77c24f0ca61d1b6f245987864f278e5b1678a12f5"
+      "frame": "60050e0001020304050607d77c24f0ca61d1b6f245987864c30573605422f2dc"
     },
     {
       "name": "passed-on",
@@ -77,10 +77,10 @@
         "tag_key": "c3c54d8483bfc1815fb62f17102fbc54",
         "gtag": "f4be0374",
         "ccm_nonce": "00000000000001020304050607",
-        "associated_data": "580001020304050607f4be0374",
+        "associated_data": "600001020304050607f4be0374",
         "plaintext": "1d2e3f4068656c6c6f"
       },
-      "frame": "5802fc0001020304050607f4be03745408b7a32f0c17de0d48a80d48503fe402"
+      "frame": "6002fc0001020304050607f4be03745408b7a32f0c17de0d16b4391091e572fb"
     },
     {
       "name": "empty",
@@ -97,10 +97,10 @@
         "tag_key": "c3c54d8483bfc1815fb62f17102fbc54",
         "gtag": "951f56c6",
         "ccm_nonce": "00000000001111111111111111",
-        "associated_data": "581111111111111111951f56c6",
+        "associated_data": "601111111111111111951f56c6",
         "plaintext": "1d2e3f40"
       },
-      "frame": "58050e1111111111111111951f56c6781e97eb9903b8d3f2b598d5"
+      "frame": "60050e1111111111111111951f56c6781e97ebbf3bef5fd2a2c199"
     },
     {
       "name": "non-latin",
@@ -117,10 +117,10 @@
         "tag_key": "3bbf27eec613b6ac620a2f16cedef8cd",
         "gtag": "82153384",
         "ccm_nonce": "00000000002222222222222222",
-        "associated_data": "58222222222222222282153384",
+        "associated_data": "60222222222222222282153384",
         "plaintext": "fffffffece9aceb1cebbceb7cebcceadcf81ceb1"
       },
-      "frame": "58050e222222222222222282153384765f2e1c6c2bdae70109dc3678660cbccf4df58fb933f4830c843edd"
+      "frame": "60050e222222222222222282153384765f2e1c6c2bdae70109dc3678660cbccf4df58f3c5fc9b6f050015f"
     },
     {
       "name": "largest",
@@ -137,10 +137,10 @@
         "tag_key": "3bbf27eec613b6ac620a2f16cedef8cd",
         "gtag": "b598656d",
         "ccm_nonce": "00000000003333333333333333",
-        "associated_data": "583333333333333333b598656d",
+        "associated_data": "603333333333333333b598656d",
         "plaintext": "00000001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3"
       },
-      "frame": "58050e3333333333333333b598656d7dda635a11fd1b321fe196a4128fcad771c114133af21dcb0c0e5ec39b5464db18aaa166e78be5c372a383a3e27bfc9c2eaded30e706fb622a727b4127116863afac1dd1c9ec6ee9f7017e75401cce5f86efe8ac68770ef3d92c67fa7743f5f7d29614b77569cb64a4ddb47537b2f394feaeffa46c9e5b0998652dd3a31268d5a6affe2461cf3f148d725354ec8d11661741e2a5f5380c7635830adbea32b1edc5cab08c65fb033fc03ec47ca8b913af85f36562d9edf5eb540971d3167bc5a609dafc94bd15747676752e0b520f591ab5412327f915179fa668fb4be9acb04188fc60593e755115c2d06bc0d0762b17"
+      "frame": "60050e3333333333333333b598656d7dda635a11fd1b321fe196a4128fcad771c114133af21dcb0c0e5ec39b5464db18aaa166e78be5c372a383a3e27bfc9c2eaded30e706fb622a727b4127116863afac1dd1c9ec6ee9f7017e75401cce5f86efe8ac68770ef3d92c67fa7743f5f7d29614b77569cb64a4ddb47537b2f394feaeffa46c9e5b0998652dd3a31268d5a6affe2461cf3f148d725354ec8d11661741e2a5f5380c7635830adbea32b1edc5cab08c65fb033fc03ec47ca8b913af85f36562d9edf5eb540971d3167bc5a609dafc94bd15747676752e0b520f591ab5412327f915179fa668fb4be9acb04188fc60593e755115eeeddebe37b1aced"
     }
   ],
   "rejected": [
@@ -149,91 +149,91 @@
       "note": "last bit of the AEAD tag changed",
       "group_secret": "000102030405060708090a0b0c0d0e0f",
       "self": 168496141,
-      "frame": "58050e0001020304050607f4be03745408b7a32f0c17de0d48a80d48503fe403"
+      "frame": "60050e0001020304050607f4be03745408b7a32f0c17de0d16b4391091e572fa"
     },
     {
       "name": "ciphertext-flipped",
       "note": "first ciphertext bit changed",
       "group_secret": "000102030405060708090a0b0c0d0e0f",
       "self": 168496141,
-      "frame": "58050e0001020304050607f4be0374d408b7a32f0c17de0d48a80d48503fe402"
+      "frame": "60050e0001020304050607f4be0374d408b7a32f0c17de0d16b4391091e572fb"
     },
     {
       "name": "nonce-flipped",
       "note": "a bit of the nonce changed: the tag no longer matches it",
       "group_secret": "000102030405060708090a0b0c0d0e0f",
       "self": 168496141,
-      "frame": "58050e0101020304050607f4be03745408b7a32f0c17de0d48a80d48503fe402"
+      "frame": "60050e0101020304050607f4be03745408b7a32f0c17de0d16b4391091e572fb"
     },
     {
       "name": "nonce-changed",
       "note": "another nonce, with the tag that goes with it: the check fails",
       "group_secret": "000102030405060708090a0b0c0d0e0f",
       "self": 168496141,
-      "frame": "58050e010102030405060734f9865a5408b7a32f0c17de0d48a80d48503fe402"
+      "frame": "60050e010102030405060734f9865a5408b7a32f0c17de0d16b4391091e572fb"
     },
     {
       "name": "tag-flipped",
       "note": "a bit of the group tag changed",
       "group_secret": "000102030405060708090a0b0c0d0e0f",
       "self": 168496141,
-      "frame": "58050e0001020304050607f5be03745408b7a32f0c17de0d48a80d48503fe402"
+      "frame": "60050e0001020304050607f5be03745408b7a32f0c17de0d16b4391091e572fb"
     },
     {
       "name": "header-changed",
-      "note": "another header, 0x59, which is an announce's: the header is authenticated",
+      "note": "a reserved flag set: the header is authenticated",
       "group_secret": "000102030405060708090a0b0c0d0e0f",
       "self": 168496141,
-      "frame": "59050e0001020304050607f4be03745408b7a32f0c17de0d48a80d48503fe402"
+      "frame": "61050e0001020304050607f4be03745408b7a32f0c17de0d16b4391091e572fb"
     },
     {
       "name": "a-message",
       "note": "a unicast message's header on it",
       "group_secret": "000102030405060708090a0b0c0d0e0f",
       "self": 168496141,
-      "frame": "48050e0001020304050607f4be03745408b7a32f0c17de0d48a80d48503fe402"
+      "frame": "48050e0001020304050607f4be03745408b7a32f0c17de0d16b4391091e572fb"
     },
     {
       "name": "truncated",
       "note": "26 bytes: shorter than any frame",
       "group_secret": "000102030405060708090a0b0c0d0e0f",
       "self": 168496141,
-      "frame": "58050e0001020304050607f4be03745408b7a32f0c17de0d48a8"
+      "frame": "60050e0001020304050607f4be03745408b7a32f0c17de0d16b4"
     },
     {
       "name": "another-group",
       "note": "a frame of a group this node does not hold",
       "group_secret": "000102030405060708090a0b0c0d0e0f",
       "self": 168496141,
-      "frame": "58050e0001020304050607d77c24f0ca61d1b6f245987864f278e5b1678a12f5"
+      "frame": "60050e0001020304050607d77c24f0ca61d1b6f245987864c30573605422f2dc"
     },
     {
       "name": "from-nobody",
       "note": "from is 0x00000000: sealed rightly, and refused",
       "group_secret": "000102030405060708090a0b0c0d0e0f",
       "self": 168496141,
-      "frame": "58050e0001020304050607f4be0374492688e32f0c17de0d7307dcc78c5b64f5"
+      "frame": "60050e0001020304050607f4be0374492688e32f0c17de0d1e7b0b900a65b391"
     },
     {
       "name": "from-everyone",
       "note": "from is 0xFFFFFFFF",
       "group_secret": "000102030405060708090a0b0c0d0e0f",
       "self": 168496141,
-      "frame": "58050e0001020304050607f4be0374b6d9771c2f0c17de0d9761d6781c554107"
+      "frame": "60050e0001020304050607f4be0374b6d9771c2f0c17de0d764609d8a0c9d55e"
     },
     {
       "name": "from-itself",
       "note": "from is the receiver's own routing id: another member writing as it",
       "group_secret": "000102030405060708090a0b0c0d0e0f",
       "self": 168496141,
-      "frame": "58050e0001020304050607f4be0374432d84ee2f0c17de0dec4b48da8f16f80b"
+      "frame": "60050e0001020304050607f4be0374432d84ee2f0c17de0d24a860f882b64e30"
     },
     {
       "name": "no-from",
       "note": "three bytes of plaintext, sealed rightly: 26 bytes",
       "group_secret": "000102030405060708090a0b0c0d0e0f",
       "self": 168496141,
-      "frame": "58050e0001020304050607f4be037448248bfc1f57d535d12395"
+      "frame": "60050e0001020304050607f4be037448248b6a97a7470e05727c"
     }
   ],
   "members": [
@@ -247,29 +247,29 @@
       ],
       "deliveries": [
         {
-          "frame": "58050e0001020304050607f4be03745408b7a32f0c17de0d48a80d48503fe402",
+          "frame": "60050e0001020304050607f4be03745408b7a32f0c17de0d16b4391091e572fb",
           "accept": true,
           "group": 0,
           "from": 489570112,
           "content": "68656c6c6f"
         },
         {
-          "frame": "58050e0001020304050607d77c24f0ca61d1b6ee579b0c24b35ffb96b718",
+          "frame": "60050e0001020304050607d77c24f0ca61d1b6ee579b52421d1a54e1eae8",
           "accept": true,
           "group": 1,
           "from": 489570112,
           "content": "74776f"
         },
         {
-          "frame": "58050e0001020304050607b0b08e9bde621e7779d401c4f99e92303f8f2db0d5",
+          "frame": "60050e0001020304050607b0b08e9bde621e7779d401c4f98d2854fb8b5a1e78",
           "accept": false
         },
         {
-          "frame": "58050e0001020304050607f4be03745408b7a32f0c17de0d48a80d48503fe402",
+          "frame": "60050e0001020304050607f4be03745408b7a32f0c17de0d16b4391091e572fb",
           "accept": false
         },
         {
-          "frame": "58050e0001020304050608deb2db8795a90f823e588b408cbdcbc23e4a03614a",
+          "frame": "60050e0001020304050608deb2db8795a90f823e588b408c8c66cc6986b7d9e8",
           "accept": true,
           "group": 0,
           "from": 489570112,
@@ -286,14 +286,14 @@
       ],
       "deliveries": [
         {
-          "frame": "58050e0001020304050607f4be03745408b7a32f0c17de0d48a80d48503fe402",
+          "frame": "60050e0001020304050607f4be03745408b7a32f0c17de0d16b4391091e572fb",
           "accept": true,
           "group": 0,
           "from": 489570112,
           "content": "68656c6c6f"
         },
         {
-          "frame": "5801030001020304050607f4be03745408b7a32f0c17de0d48a80d48503fe402",
+          "frame": "6001030001020304050607f4be03745408b7a32f0c17de0d16b4391091e572fb",
           "accept": false
         }
       ]
@@ -308,14 +308,14 @@
       ],
       "deliveries": [
         {
-          "frame": "58050e0000000000000000910b60ecc0cc202a432b0417687b3313563be2f5a514",
+          "frame": "60050e0000000000000000910b60ecc0cc202a432b0417687bfbc2674a0c7902b5",
           "accept": true,
           "group": 1,
           "from": 489570112,
           "content": "7365636f6e64"
         },
         {
-          "frame": "58050e0000000000000000910b60ece5be38e55cf511dd6339cd92e90338f167",
+          "frame": "60050e0000000000000000910b60ece5be38e55cf511dd636dfe90a9d9a02046",
           "accept": true,
           "group": 0,
           "from": 489570112,
@@ -333,14 +333,14 @@
       ],
       "deliveries": [
         {
-          "frame": "58050e0001020304050607f4be03745408b7a32f0c17de0d48a80d48503fe402",
+          "frame": "60050e0001020304050607f4be03745408b7a32f0c17de0d16b4391091e572fb",
           "accept": true,
           "group": 0,
           "from": 489570112,
           "content": "68656c6c6f"
         },
         {
-          "frame": "58050e0001020304050607d77c24f0ca61d1b6ee579b0c24b35ffb96b718",
+          "frame": "60050e0001020304050607d77c24f0ca61d1b6ee579b52421d1a54e1eae8",
           "accept": true,
           "group": 1,
           "from": 489570112,
@@ -364,22 +364,22 @@
       "again": [
         {
           "nonce": "0000000000000428",
-          "frame": "58050e0000000000000428b7221d65d493a4a13da2a2c92e6bc55c54b6563f2f",
+          "frame": "60050e0000000000000428b7221d65d493a4a13da2a2c92eae8b0c50e075c2c6",
           "accept": false
         },
         {
           "nonce": "00000000000003e9",
-          "frame": "58050e00000000000003e90b3407dbe27ae764ad08d6cef3e6544ffa8a9a19bd",
+          "frame": "60050e00000000000003e90b3407dbe27ae764ad08d6cef3e58b4ed719b4ab50",
           "accept": false
         },
         {
           "nonce": "00000000000003e8",
-          "frame": "58050e00000000000003e88b0e1ef94277a2d4b2bc7773606ae5feda5f157a94",
+          "frame": "60050e00000000000003e88b0e1ef94277a2d4b2bc77736099d714024138919a",
           "accept": true
         },
         {
           "nonce": "00000000000003e9",
-          "frame": "58050e00000000000003e90b3407dbe27ae764ad08d6cef3e6544ffa8a9a19bd",
+          "frame": "60050e00000000000003e90b3407dbe27ae764ad08d6cef3e58b4ed719b4ab50",
           "accept": true
         }
       ]
