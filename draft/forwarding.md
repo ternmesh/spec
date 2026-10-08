@@ -124,8 +124,9 @@ A radio is receiving from when it finds a preamble until the first of:
   node for ever.
 
 A preamble found while the radio waits for a header starts the wait
-again, and a header found with no preamble before it counts as both. A
-node that starts to send is no longer receiving.
+again, and a header found when the radio is not receiving, with no
+preamble before it or one whose wait has run out, counts as both. A node
+that starts to send is no longer receiving.
 
 A node held back MAY send as soon as its radio is no longer receiving.
 It does not owe the channel a further wait: the random waits above
@@ -462,7 +463,7 @@ median time a message took on SF7:
 | and 5 ms from looking to sending | 96.5%, 0.48, 0.9 s | 21.5%, 0.019 |
 | then a random wait up to 3 slots | 96.6%, 0.42, 1.0 s | 19.1%, 0.017 |
 | then up to 15 slots | 96.6%, 0.41, 1.0 s | 15.1%, 0.014 |
-| then up to 63 slots | 96.7%, 0.42, 1.1 s | 9.7%, 0.009 |
+| then up to 63 slots | 96.7%, 0.42, 1.1 s | 9.2%, 0.008 |
 
 A slot is the time to find a frame and send: 7 ms on SF7, 22 ms on the
 slow preset. A node that does not listen delivers nearly as much where

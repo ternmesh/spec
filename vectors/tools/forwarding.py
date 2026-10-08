@@ -92,18 +92,22 @@ def head_wait(sf, bw_hz):
 def receiving(sf, bw_hz, events, at):
     """Whether a radio that reported events, as (time, what) in order, is receiving at a time."""
     found, header = None, False
+
+    def held(header):
+        return phy.airtime_ns(sf, bw_hz, 255) if header else head_wait(sf, bw_hz)
+
     for when, what in events:
         if when > at:
             break
+        if found is not None and when - found >= held(header):
+            found = None  # what it was on ran out before this
         if what == "preamble":
             found, header = when, False
         elif what == "header":
             found, header = (when if found is None else found), True
         else:  # the frame ended, or the node began to send
             found = None
-    if found is None:
-        return False
-    return at - found < (phy.airtime_ns(sf, bw_hz, 255) if header else head_wait(sf, bw_hz))
+    return found is not None and at - found < held(header)
 
 
 def listen_cases(sf, bw_hz):
@@ -123,6 +127,12 @@ def listen_cases(sf, bw_hz):
         ([(found, "preamble"), (found + 9 * sym, "preamble")],
          [found + wait, found + 9 * sym + wait - 1, found + 9 * sym + wait]),
         ([(found, "header")], [found - 1, found, found + longest - 1, found + longest]),
+        # A header that comes after the wait for one ran out is a frame of its own.
+        ([(found, "preamble"), (found + wait + 10 * sym, "header")],
+         [found + wait, found + wait + 10 * sym, found + longest,
+          found + wait + 10 * sym + longest - 1, found + wait + 10 * sym + longest]),
+        ([(found, "preamble"), (found + wait, "header")], [found + longest, found + wait + longest - 1]),
+        ([(found, "preamble"), (found + wait - 1, "header")], [found + longest - 1, found + longest]),
         ([(found, "preamble"), (found + 16 * sym, "header"), (start + frame, "end"),
           (start + frame + 20 * sym, "preamble")],
          [start + frame + 20 * sym - 1, start + frame + 20 * sym, start + frame + 20 * sym + wait]),
@@ -155,6 +165,11 @@ def self_check():
     assert receiving(9, 500_000, bare, 34_695_999) and not receiving(9, 500_000, bare, 34_696_000)
     assert receiving(9, 500_000, whole, 34_696_000) and not receiving(9, 500_000, bare, 4_999_999)
     assert not receiving(9, 500_000, whole + [(60_000_000, "end")], 60_000_000)
+    # A header 40 ms after that preamble comes when its wait has run out, and so is held from
+    # itself: a 255-byte frame is on the air 320.768 ms, which from the preamble ends at 325.768.
+    late = bare + [(45_000_000, "header")]
+    assert phy.airtime_ns(9, 500_000, 255) == 320_768_000
+    assert receiving(9, 500_000, late, 325_768_000) and not receiving(9, 500_000, late, 365_768_000)
 
 
 def build():
