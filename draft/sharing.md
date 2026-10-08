@@ -73,7 +73,9 @@ modules ISO/IEC 18004 asks for.
 
 An implementation that reads a link MUST accept it with `HTTPS`, the
 host `TERNMESH.ORG` and the `A` each in either case, and the base32 in
-either case. It MUST also accept the [text form](#the-text-form) alone,
+either case. Either case means ASCII's: a reader MUST refuse any
+character outside ASCII, even one a Unicode case mapping turns into an
+ASCII letter (`ı` into `I`, `ſ` into `S`). It MUST also accept the [text form](#the-text-form) alone,
 so that digits pasted from a screen can be read. It MUST refuse
 anything else, including another scheme or host, base32 of any other
 length or with any other character, and base32 whose last character's

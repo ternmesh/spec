@@ -93,7 +93,10 @@ def code_text(value: int) -> str:
 def read(s: str):
     """What a reader takes an address from: the link, its scheme, host, path and base32 each in
     either case, or the text form, its digits in either case with spaces anywhere among them.
-    None for anything else."""
+    None for anything else. Only ASCII is looked at: upper-casing other characters can make ASCII
+    of them (dotless i becomes I, long s becomes S), and those are not base32 or the link."""
+    if not s.isascii():
+        return None
     if s[: len(LINK)].upper() == LINK:
         return unb32(s[len(LINK) :])
     digits = s.replace(" ", "")
@@ -173,6 +176,9 @@ def build():
         "HTTPS://TERNMESH.ORG/B/" + b,  # another path
         "HTTPS://TERNMESH.ORG/A/",
         "TERN:" + t,  # draft 0's link, which was never released
+        LINK + b.replace("I", "\u0131", 1),  # a dotless i, which upper-cases to I
+        LINK.replace("S", "\u017f", 1) + b,  # a long s, which upper-cases to S
+        LINK.lower() + b.lower().replace("i", "\u0130", 1),  # a dotted capital I
         t[:-1],  # sixty-three digits
         t + "0",  # sixty-five
         t[:-1] + "G",  # not hex
