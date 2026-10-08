@@ -27,6 +27,8 @@ OUT = Path(__file__).resolve().parent.parent / "unicast-security.json"
 FORMAT_V0 = 0b01
 TYPE_UNICAST = 0b001
 HDR = (FORMAT_V0 << 6) | (TYPE_UNICAST << 3)  # 0x48
+HDR_NODE = HDR | 0x01  # the node flag: the plaintext is for the node, not its user
+HDRS = (HDR, HDR_NODE)
 HDR_ACK = 0x50  # an acknowledgement (draft/forwarding.md)
 TAG_LEN = 8
 EPOCH_SHIFT = 5  # 32 messages per epoch
@@ -93,12 +95,12 @@ def nonce(s: bytes, d: int, n: int) -> bytes:
     return bytes(a ^ b for a, b in zip(iv(s, d), bytes(9) + u32be(n)))
 
 
-def seal(s: bytes, d: int, n: int, plaintext: bytes, route: dict = ROUTE) -> bytes:
-    assert 0 <= n < 2**32 and len(plaintext) <= MAX_FRAME - OVERHEAD
+def seal(s: bytes, d: int, n: int, plaintext: bytes, route: dict = ROUTE, hdr: int = HDR) -> bytes:
+    assert 0 <= n < 2**32 and len(plaintext) <= MAX_FRAME - OVERHEAD and hdr in HDRS
     t = dtag(s, d, n)
-    aad = bytes([HDR]) + t
+    aad = bytes([hdr]) + t
     ct = AESCCM(message_key(s, d, n), tag_length=TAG_LEN).encrypt(nonce(s, d, n), plaintext, aad)
-    return head(HDR, route) + t + ct
+    return head(hdr, route) + t + ct
 
 
 def acknowledgement(s: bytes, d: int, n: int, route: dict = ROUTE) -> bytes:
@@ -118,7 +120,7 @@ def acknowledges(s: bytes, d: int, n: int, frame: bytes) -> bool:
 
 def open_frame(s: bytes, d: int, n: int, frame: bytes):
     """The receiver's check for one candidate counter: the plaintext, or None if it fails."""
-    if len(frame) < OVERHEAD or frame[0] != HDR or frame[DTAG:BODY] != dtag(s, d, n):
+    if len(frame) < OVERHEAD or frame[0] not in HDRS or frame[DTAG:BODY] != dtag(s, d, n):
         return None
     try:
         return AESCCM(message_key(s, d, n), tag_length=TAG_LEN).decrypt(
@@ -146,7 +148,7 @@ class Receiver:
     def copies(self, frame: bytes):
         """The counters already accepted, no more than 31 below H, whose tag a frame carries: the
         messages a copy of which is acknowledged again."""
-        if len(frame) < OVERHEAD or frame[0] != HDR:
+        if len(frame) < OVERHEAD or frame[0] not in HDRS:
             return []
         return [n for n in sorted(self.accepted)
                 if self.high - n <= BEHIND and frame[DTAG:BODY] == dtag(self.s, self.d, n)]
@@ -174,7 +176,7 @@ def answers(receivers, frame: bytes, got):
 def receive_any(receivers, frame: bytes):
     """One table over several sessions: try every entry whose tag matches, in table order.
     (index of the receiver, counter, plaintext) if the frame is accepted, else None."""
-    if len(frame) < OVERHEAD or frame[0] != HDR:
+    if len(frame) < OVERHEAD or frame[0] not in HDRS:
         return None
     for i, rx in enumerate(receivers):
         for n in rx.matches(frame):
@@ -216,8 +218,8 @@ def self_test() -> None:
     )
 
 
-def case(name, note, s, d, n, plaintext, route=ROUTE):
-    frame = seal(s, d, n, plaintext, route)
+def case(name, note, s, d, n, plaintext, route=ROUTE, hdr=HDR):
+    frame = seal(s, d, n, plaintext, route, hdr)
     assert open_frame(s, d, n, frame) == plaintext
     return {
         "name": name,
@@ -225,6 +227,7 @@ def case(name, note, s, d, n, plaintext, route=ROUTE):
         "session_secret": s.hex(),
         "direction": d,
         "counter": n,
+        "hdr": hdr,
         **route,
         "plaintext": plaintext.hex(),
         "intermediate": {
@@ -258,6 +261,9 @@ def build() -> dict:
         case("non-latin", "UTF-8 text outside Latin script", s2, 1, 5, greek),
         case("largest", "232 bytes of plaintext: a 255-byte frame", s2, 2, 2,
              bytes(i & 0xFF for i in range(MAX_FRAME - OVERHEAD))),
+        case("for-the-node", "the node flag set: the plaintext is a group's invite (draft/groups.md), "
+             "and the counter is the session's like any other", s1, 1, 1,
+             bytes([0x01]) + bytes.fromhex("c4" * 16) + b"hut", hdr=HDR_NODE),
     ]
 
     base = accepted[0]
@@ -281,7 +287,9 @@ def build() -> dict:
     flipped = bytearray(frame)
     flipped[BODY] ^= 0x80
     reject("ciphertext-flipped", "first ciphertext bit changed", bytes(flipped))
-    reject("header-changed", "a reserved flag set: the header is authenticated", bytes([HDR | 1]) + frame[1:])
+    reject("header-changed", "the node flag set on a frame sealed without it: the header is authenticated",
+           bytes([HDR_NODE]) + frame[1:])
+    reject("reserved-flag", "a reserved flag set", bytes([HDR | 2]) + frame[1:])
     reject("truncated", "22 bytes: shorter than any frame", frame[: OVERHEAD - 1])
     reject("first-draft-layout", "the tag at offset 4, as this section first had it: 16 bytes",
            frame[:4] + frame[DTAG:])
@@ -502,7 +510,7 @@ def build() -> dict:
         "counter is given only to help debugging. For each acknowledgements case, the node that "
         "sent message counter in direction, holding session_secret, MUST take frame as showing "
         "that the message arrived if valid is true, and MUST NOT if it is false. Values are hex; "
-        "hops, power, next and destination are integers, power signed, laid out as "
+        "hdr is 72 (0x48), or 73 with the node flag set. hops, power, next and destination are integers, power signed, laid out as "
         "draft/forwarding.md gives, and where a case does not give them they are 32, 14, "
         "0x0A0B0C0D and 0x01020304.",
         "generator": "vectors/tools/unicast.py",

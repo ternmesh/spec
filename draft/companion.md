@@ -671,8 +671,9 @@ node they were near, and follow it about.
 
 ## Not yet specified
 
-* **Broadcast and groups**, and their messages: the radio protocol has
-  none yet.
+* **Groups**, their messages and their invites. The radio protocol has
+  them ([Groups](groups.md)); the frames a client holds them with come
+  with this protocol's next version.
 * **The airtime budget**: `reason` 4 names it, and `AIRTIME` gives only
   the region's limit. The budget's fields come with its section.
 * **What a message carries on the air**: its text, its time, whether it
