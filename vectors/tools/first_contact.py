@@ -799,8 +799,8 @@ def build() -> dict:
             "state that handshake leaves it in, MUST reject it: send nothing and derive no "
             "session. Every frame is as its sender makes it for a destination it hears: hops is "
             "32, power 14, and next the destination. Those three are the nodes' on the way to "
-            "set (draft/forwarding.md), and a frame is the one given if it is equal from "
-            "destination, byte 7, on. Routing ids are numbers; other values are hex."
+            "set (draft/forwarding.md), and a frame is the one given if it is equal in hdr, "
+            "byte 0, and from destination, byte 7, on. Routing ids are numbers; other values are hex."
         ),
         "generator": "vectors/tools/first_contact.py",
         "exporter_label": EXPORTER_LABEL,

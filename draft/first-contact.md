@@ -173,6 +173,10 @@ A node acts on a first-contact frame only if the frame is
 [for it](forwarding.md#receiving): its `next` and its `destination` are
 the node's routing id.
 
+Every frame but `message_1` answers one received, and is
+[sent as an answer is](forwarding.md#sending): no quieter than the
+node the frame it answers came from needs, and after a random wait.
+
 ## Initiating
 
 To contact the node with address `A_R`:
@@ -284,10 +288,10 @@ An implementation conforms to this section if, for every case in
   and `x25519_public`;
 * **rejected addresses:** it refuses each `address`, both as an address
   to contact and as the address in a `message_3`;
-* **frames:** two frames are equal, here, if they are equal from
-  `destination` on, byte 7. `hops`, `power` and `next` are the routing
-  layer's, and each frame in the file has them as its sender sets them
-  for a destination it hears;
+* **frames:** two frames are equal, here, if they are equal in `hdr`
+  and from `destination` on, byte 7. `hops`, `power` and `next`, bytes
+  1 to 6, are the routing layer's, and each frame in the file has them
+  as its sender sets them for a destination it hears;
 * **handshakes:** as the initiator, given `initiator_seed`, the address
   of `responder_seed`, and as test hooks `initiator_ephemeral` and
   `c_i`, it sends `frames[0]`, then `frames[2]` on receiving

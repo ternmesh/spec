@@ -99,8 +99,11 @@ the frame is the node's own, and `power` set to what it is sent at.
 `POWER_MARGIN`, as [Routes](routing.md#power-for-every-neighbour) has
 it, plus the neighbour's **boost** (below), rounded up and kept between
 the node's lowest power and its full power. A frame sent in answer to
-one received — one passed on, or an acknowledgement — MUST go no
-quieter than the node it came from needs: that node listens for it. What
+one received — one passed on, an acknowledgement, or a first-contact
+frame that answers another — MUST go no
+quieter than the node it came from needs: that node listens for it, or
+for a first-contact frame is most often the node the answer goes to
+next, which no table knows better than the frame just heard. What
 it needs is reckoned from the one frame received, as a floor's first
 sample is: `power - (snr - SNR_FLOOR) + POWER_MARGIN`.
 
