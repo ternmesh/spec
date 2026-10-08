@@ -31,6 +31,7 @@ HOP_MAX = 32
 POWER_MARGIN = 10
 STEP = 3
 RETRY_JITTER = 4
+HEAD_WAIT = 13
 
 
 def head(h):
@@ -79,6 +80,63 @@ def longest_wait(sf, bw_hz, length):
     return RETRY_JITTER * phy.airtime_ns(sf, bw_hz, length)
 
 
+def symbol_ns(sf, bw_hz):
+    return (1 << sf) * 1_000_000_000 // bw_hz
+
+
+def head_wait(sf, bw_hz):
+    """How long a preamble with no header after it holds a node, in nanoseconds."""
+    return (phy.PREAMBLE + HEAD_WAIT) * symbol_ns(sf, bw_hz)
+
+
+def receiving(sf, bw_hz, events, at):
+    """Whether a radio that reported events, as (time, what) in order, is receiving at a time."""
+    found, header = None, False
+    for when, what in events:
+        if when > at:
+            break
+        if what == "preamble":
+            found, header = when, False
+        elif what == "header":
+            found, header = (when if found is None else found), True
+        else:  # the frame ended, or the node began to send
+            found = None
+    if found is None:
+        return False
+    return at - found < (phy.airtime_ns(sf, bw_hz, 255) if header else head_wait(sf, bw_hz))
+
+
+def listen_cases(sf, bw_hz):
+    """Each way a reception can go, asked just inside and just outside each bound."""
+    sym, wait, longest = symbol_ns(sf, bw_hz), head_wait(sf, bw_hz), phy.airtime_ns(sf, bw_hz, 255)
+    start, frame = 1_000_000, phy.airtime_ns(sf, bw_hz, 40)
+    found = start + 5 * sym
+    lines = [
+        ([], [0, start]),
+        ([(found, "preamble")], [found - 1, found, found + wait - 1, found + wait]),
+        ([(found, "preamble"), (found + 16 * sym, "header")],
+         [found + wait, found + longest - 1, found + longest]),
+        ([(found, "preamble"), (found + 16 * sym, "header"), (start + frame, "end")],
+         [found + 16 * sym, start + frame - 1, start + frame]),
+        ([(found, "preamble"), (found + 18 * sym, "end")], [found + 18 * sym - 1, found + 18 * sym]),
+        ([(found, "preamble"), (found + 3 * sym, "sent")], [found + 3 * sym - 1, found + 3 * sym]),
+        ([(found, "preamble"), (found + 9 * sym, "preamble")],
+         [found + wait, found + 9 * sym + wait - 1, found + 9 * sym + wait]),
+        ([(found, "header")], [found - 1, found, found + longest - 1, found + longest]),
+        ([(found, "preamble"), (found + 16 * sym, "header"), (start + frame, "end"),
+          (start + frame + 20 * sym, "preamble")],
+         [start + frame + 20 * sym - 1, start + frame + 20 * sym, start + frame + 20 * sym + wait]),
+    ]
+    return [
+        {
+            "spreading_factor": sf, "bandwidth_hz": bw_hz,
+            "events": [{"at_ns": when, "radio": what} for when, what in events],
+            "asks": [{"at_ns": at, "receiving": receiving(sf, bw_hz, events, at)} for at in asks],
+        }
+        for events, asks in lines
+    ]
+
+
 def self_check():
     # A 35-byte frame at SF9 and 500 kHz is on the air for 69.888 ms by phy.py, which checks its
     # own arithmetic against values worked by hand; four of them is the longest wait.
@@ -90,6 +148,13 @@ def self_check():
     # louder than it needed to be: its sender is reached at -22 dBm, and with the margin at -12.
     assert needs(2, 46, 9, -9, 22) == -9 and needs(2, 46, 9, -20, 22) == -12
     assert power(5, None, 2, 22) == 11 and power(5, 9, 0, 22) == 9 and power(20, None, 1, 22) == 22
+    # At SF9 and 500 kHz a symbol is 1.024 ms, so a preamble of 16 and 13 more is 29.696 ms: a
+    # bare preamble found at 5 ms holds a node until 34.696 ms, and a header for a 255-byte frame.
+    assert head_wait(9, 500_000) == 29_696_000
+    bare, whole = [(5_000_000, "preamble")], [(5_000_000, "preamble"), (9_000_000, "header")]
+    assert receiving(9, 500_000, bare, 34_695_999) and not receiving(9, 500_000, bare, 34_696_000)
+    assert receiving(9, 500_000, whole, 34_696_000) and not receiving(9, 500_000, bare, 4_999_999)
+    assert not receiving(9, 500_000, whole + [(60_000_000, "end")], 60_000_000)
 
 
 def build():
@@ -185,6 +250,8 @@ def build():
         for n in lengths
     ]
 
+    listens = [c for sf, bw in [(9, 500_000), (7, 125_000), (12, 125_000)] for c in listen_cases(sf, bw)]
+
     return {
         "description": "Frames that follow routes, draft 0 (draft/forwarding.md). Routing ids "
         "are numbers; frames and tags are hex. In hops, sent is the frame the node sent and "
@@ -196,7 +263,11 @@ def build():
         "agains, a frame of length bytes is sent again at that spreading factor and bandwidth, "
         "with the profiles' preamble and coding rate (vectors/phy.json), by a hop that heard "
         "nothing of it (hop) or by its source with no acknowledgement (source): airtime_ns is "
-        "its time on the air and longest_ns the longest it may wait first.",
+        "its time on the air and longest_ns the longest it may wait first. In listens, a radio at "
+        "that spreading factor and bandwidth finds a preamble or a header, says a frame has ended "
+        "(end), or is given a frame to send (sent) at the times in events, and receiving is "
+        "whether a node may not start to send at each time in asks, every event at or before "
+        "that time having happened.",
         "generator": "vectors/tools/forwarding.py",
         "heads": heads,
         "rejected": rejected,
@@ -204,6 +275,7 @@ def build():
         "backs": backs,
         "powers": powers,
         "agains": agains,
+        "listens": listens,
     }
 
 

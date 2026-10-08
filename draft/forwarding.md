@@ -105,6 +105,40 @@ radio. The nodes that heard the same frame would otherwise answer at
 the same instant. A node with several frames ready sends
 acknowledgements first, then frames it is passing on, then its own.
 
+## Listening first
+
+A node MUST NOT start to send a frame while its radio is **receiving**
+one. This holds for every frame a node sends, those of
+[Routes](routing.md) and of [first contact](first-contact.md) as well
+as these.
+
+A radio is receiving from when it finds a preamble until the first of:
+
+* the radio says the frame has ended, whether it arrived whole or not;
+* the profile's preamble and `HEAD_WAIT` symbols after the preamble was
+  found, if the radio has found no header by then. A preamble with no
+  header after it is noise, or a frame with another network's sync
+  word;
+* the airtime of the longest frame, 255 bytes, after the preamble was
+  found: a radio that never says a frame has ended does not hold its
+  node for ever.
+
+A preamble found while the radio waits for a header starts the wait
+again, and a header found with no preamble before it counts as both. A
+node that starts to send is no longer receiving.
+
+A node held back MAY send as soon as its radio is no longer receiving.
+It does not owe the channel a further wait: the random waits above
+already keep apart the frames that would otherwise go together.
+
+A node asks its radio as late as it can. Between asking and the first
+symbol of the frame it SHOULD let no more than `LOOK` pass.
+
+This is not a promise that the channel is clear. A radio does not find
+a frame too weak for it to receive, or one that began while it was
+sending, and it takes several symbols to find any. Frames still meet,
+and the rest of this section is what recovers them.
+
 ## Receiving
 
 A node that receives a frame first checks whether it
@@ -271,6 +305,8 @@ on, counts that as a hop given up.
 | `ACK_WAIT` | 5 s | |
 | `ACK_FACTOR` | 4 | |
 | `RETRIES` | 3 | so a message is tried four times |
+| `HEAD_WAIT` | 13 | symbols: the 4.25 that end a preamble and the 8 that hold a header, rounded up |
+| `LOOK` | 5 ms | |
 
 ## Conformance
 
@@ -295,7 +331,13 @@ An implementation conforms to this section if, for
   `spreading_factor` and `bandwidth_hz`, as a hop that heard nothing of
   it (`hop`) or as its source with no acknowledgement (`source`), it
   first waits no longer than `longest_ns`, and not the same time at
-  every try.
+  every try;
+* **listens:** with a radio at `spreading_factor` and `bandwidth_hz`
+  that finds a preamble (`preamble`) or a header (`header`), says a
+  frame has ended (`end`), or is given a frame to send (`sent`) at
+  each of the times in `events`, it finds at each time in `asks`, every
+  event at or before that time having happened, that it may not start
+  to send, or may, as `receiving` says.
 
 and, for
 [`vectors/unicast-security.json`](../vectors/unicast-security.json),
@@ -353,11 +395,14 @@ the air, all nodes together (three seeds):
 |---|---|---|
 | Meshtastic | 19.0%, 0.013 | 1.1%, 0.001 |
 | MeshCore | 30.3%, 0.026 | 5.7%, 0.004 |
-| This, 255 neighbours kept | 96.7%, 0.44 | 14.4%, 0.013 |
-| This, 64 neighbours kept | 95.2%, 0.32 | 11.6%, 0.010 |
+| This, 255 neighbours kept | 96.6%, 0.47 | 22.0%, 0.019 |
+| This, 64 neighbours kept | 95.2%, 0.34 | 20.2%, 0.017 |
 
 And in a town of 200 nodes at SF9, every node a relay: 100.0% with 255
 neighbours kept and 99.9% with 64, against 21.0% for Meshtastic.
+
+The nodes of this specification [listen first](#listening-first) as a
+radio can; how that is modelled, and what it is worth, is below.
 
 There is no broadcast in these runs, since this specification has none
 yet, and the incumbents are built around it. The radio model's capture
@@ -367,8 +412,8 @@ and isolation figures are from the literature, not a bench.
 let a message's first hop run out its retries, and another way, before
 the message was tried again. A message that could not arrive then
 stayed on the air for two minutes, and on the slow preset, where the
-channel is full, 4.2% arrived in time; with the wait fixed, as above,
-14.4%.
+channel is full, 4.2% arrived in time; with the wait fixed, 14.4%, as
+those runs then stood.
 
 **Why a frame sent again waits a random time.** Two boards a foot
 apart, each told to send the other a message at the same moment, sent
@@ -393,9 +438,52 @@ meet this way, 4, 8 and 16 delivered what 0 did to within the seeds'
 spread (96.7%, 96.7% and 96.6% against 96.7% on SF7), and the slowest
 twentieth of messages took 11.5 s, 11.5 s and 13.1 s against 11.1 s.
 
-A node that listens before it sends avoids most of this, and the
-simulator's nodes do. It does not avoid two nodes that start within the
-time it takes a radio to notice a frame, which is what the boards did.
+The boards did not listen first then, and nor do the nodes of that
+table. [Listening first](#listening-first) does not keep apart two
+nodes that start within the time a radio takes to find a frame, so 0
+still delivers nothing; but a node that listens holds its second try
+for the other's, and with both listening 1 delivered every message, in
+2.3 frames, and 4 in 2.2. Four is kept for the frames a radio does not
+find.
+
+**Why listen first, and why no longer than the frame.** On the
+1000-node runs above, with the radio modelled as one is: a node knows
+of a frame once its radio has been on it for five symbols and a
+millisecond, and what it then sends is on the air a millisecond after
+it looked. Messages in time, and for each second on the air, and the
+median time a message took on SF7:
+
+| | All on SF7, 125 kHz | Each on its own preset |
+|---|---|---|
+| Not listening | 95.9%, 0.36, 5.0 s | 12.7%, 0.013 |
+| Listening | 96.6%, 0.47, 0.9 s | 22.0%, 0.019 |
+| and a radio that finds a frame at once | 96.7%, 0.45, 0.9 s | 22.3%, 0.020 |
+| and one that takes 12 symbols and 2 ms | 96.6%, 0.43, 1.0 s | 21.5%, 0.019 |
+| and 5 ms from looking to sending | 96.5%, 0.48, 0.9 s | 21.5%, 0.019 |
+| then a random wait up to 3 slots | 96.6%, 0.42, 1.0 s | 19.1%, 0.017 |
+| then up to 15 slots | 96.6%, 0.41, 1.0 s | 15.1%, 0.014 |
+| then up to 63 slots | 96.7%, 0.42, 1.1 s | 9.7%, 0.009 |
+
+A slot is the time to find a frame and send: 7 ms on SF7, 22 ms on the
+slow preset. A node that does not listen delivers nearly as much where
+the channel has room, with a third more frames and five times the
+wait, and little over half as much where it has none. How fast the
+radio finds a frame matters little, within what a radio does. A random
+wait after the frame, which a protocol whose nodes all answer the same
+frame would need, costs time here and buys nothing: where the channel
+is full, the wait is the minute a message has. With twenty nodes in one
+room and a message from each every 15 s, a wait of up to 63 slots saved
+a tenth of the frames and nothing else changed; every 5 s, which is
+more than the channel holds, 46.6% arrived against 42.9%.
+
+On two boards a foot apart, one given a message 10 to 60 ms after the
+other, when the other's frame was on the air, 16 times: not listening,
+the 16 messages each way took 43 and 42 frames, every pair having met;
+listening, 19 and 19, and the boards waited 10 and 15 times.
+
+An earlier draft's figures were from nodes that knew of a frame the
+instant it began, as no radio does, and then waited 120 to 360 ms
+before they looked again: 96.7% and 15.2% on these runs.
 
 **Why listen, and not acknowledge each hop.** The next node sends the
 frame anyway. Hearing it costs nothing, and an acknowledgement for each
@@ -416,10 +504,12 @@ dead found sooner.
 ## Not yet measured
 
 * **Any of the parameters, on radios**, but that `RETRY_JITTER` 0 fails
-  on two.
+  on two, and that two which listen first keep their frames apart.
 * **How often a node hears its neighbour pass a frame on**, on real
   links: the next hop may be heard and its own next hop not.
 * **Memory**: each frame in hand is a whole frame and some thirty bytes.
+* **How long a radio takes to find a frame**, and how often it finds a
+  preamble where there is none.
 
 ## Not yet specified
 
@@ -430,9 +520,7 @@ dead found sooner.
 * **A flood when the routes are stale.** The simulator floods a message
   given up at a leaf that has moved, through relays, a few hops. It
   needs broadcast, which is not specified.
-* **When a node may start to send.** The simulator's nodes listen
-  first, and wait if the channel is busy; the numbers above depend on
-  it. Nothing here requires it yet.
+* **A share of the air** for each node, where the channel is full.
 * **Broadcast**, and messages to groups.
 * **Fragments**: a message is one frame.
-* **Priority** between messages, and a share of the air for each node.
+* **Priority** between messages.
