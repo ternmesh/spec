@@ -146,6 +146,13 @@ frame went on the air. Without either, it sends the frame again, up to
 `HOP_RETRIES` times, each `STEP` louder than the last and never louder
 than its full power. After the last it **gives the hop up**.
 
+**Again, but not at once.** A frame sent again, here or
+[from its source](#messages), first waits a random time, uniform up to
+`RETRY_JITTER` airtimes of itself. What lost it may have been another
+node's frame, sent at the same moment: that node waits as long as this
+one, and without the random time the two would meet again at every
+try.
+
 The last hop of an acknowledgement, to the node it is for, has nothing
 to hear, and is sent once.
 
@@ -236,7 +243,7 @@ source MUST NOT take any other as showing that a message arrived.
 Without a valid acknowledgement
 by then it starts the message again — the same frame, with `hops` at
 `HOP_MAX`, on whatever route it has now, whatever had become of the
-copy before — up to `RETRIES` times. After the last wait it gives the
+copy before, and [not at once](#hops) — up to `RETRIES` times. After the last wait it gives the
 message up and tells the application.
 
 A source with no route asks for one, as a relay does, and counts that
@@ -260,6 +267,7 @@ on, counts that as a hop given up.
 | `DEAD_HOPS` | 24 | |
 | `SALVAGE` | 1 | |
 | `JITTER` | 2 | airtimes, as in Routes |
+| `RETRY_JITTER` | 4 | airtimes |
 | `ACK_WAIT` | 5 s | |
 | `ACK_FACTOR` | 4 | |
 | `RETRIES` | 3 | so a message is tried four times |
@@ -282,7 +290,12 @@ An implementation conforms to this section if, for
   neighbour, its boost included, `back` what the node the frame came
   from needs (`null` for a frame that answers none), and `full` its
   full power, it sends the frame for the `try`-th time, from 0, at
-  `power`.
+  `power`;
+* **agains:** sending a frame of `length` bytes again at
+  `spreading_factor` and `bandwidth_hz`, as a hop that heard nothing of
+  it (`hop`) or as its source with no acknowledgement (`source`), it
+  first waits no longer than `longest_ns`, and not the same time at
+  every try.
 
 and, for
 [`vectors/unicast-security.json`](../vectors/unicast-security.json),
@@ -301,9 +314,10 @@ which holds the cases that need a session's keys:
   `session`. A copy whose tag two accepted messages share is
   acknowledged for both.
 
-When frames go depends on random times and on what is heard, and is
-checked by running implementations against each other and against the
-simulator.
+When frames go depends on random times and on what is heard. A case
+can hold a random time's bound, as `agains` does, and not that it is
+uniform; the rest is checked by running implementations against each
+other and against the simulator.
 
 ## What an observer learns
 
@@ -356,6 +370,33 @@ stayed on the air for two minutes, and on the slow preset, where the
 channel is full, 4.2% arrived in time; with the wait fixed, as above,
 14.4%.
 
+**Why a frame sent again waits a random time.** Two boards a foot
+apart, each told to send the other a message at the same moment, sent
+eight frames each and delivered neither: every wait in this section was
+fixed, so both sent again together each time. The simulator does the
+same with two nodes that send as soon as they have a frame, and frames
+of one length. Messages delivered, of 400, and frames sent for each,
+by `RETRY_JITTER`:
+
+| `RETRY_JITTER` | SF9, 500 kHz | SF11, 250 kHz |
+|---|---|---|
+| 0 | 0%, 8.0 | 0%, 8.0 |
+| 1 | 49%, 7.0 | 51%, 7.0 |
+| 2 | 94%, 4.5 | 96%, 4.7 |
+| 4 | 100%, 3.0 | 100%, 3.0 |
+| 8 | 100%, 2.4 | 100%, 2.3 |
+| 16 | 100%, 2.2 | 100%, 2.2 |
+
+Four is the least that delivered every message. More costs fewer
+frames and more time: on the 1000-node runs above, where few frames
+meet this way, 4, 8 and 16 delivered what 0 did to within the seeds'
+spread (96.7%, 96.7% and 96.6% against 96.7% on SF7), and the slowest
+twentieth of messages took 11.5 s, 11.5 s and 13.1 s against 11.1 s.
+
+A node that listens before it sends avoids most of this, and the
+simulator's nodes do. It does not avoid two nodes that start within the
+time it takes a radio to notice a frame, which is what the boards did.
+
 **Why listen, and not acknowledge each hop.** The next node sends the
 frame anyway. Hearing it costs nothing, and an acknowledgement for each
 hop would double the frames.
@@ -374,7 +415,8 @@ dead found sooner.
 
 ## Not yet measured
 
-* **Any of the parameters, on radios.**
+* **Any of the parameters, on radios**, but that `RETRY_JITTER` 0 fails
+  on two.
 * **How often a node hears its neighbour pass a frame on**, on real
   links: the next hop may be heard and its own next hop not.
 * **Memory**: each frame in hand is a whole frame and some thirty bytes.
@@ -388,6 +430,9 @@ dead found sooner.
 * **A flood when the routes are stale.** The simulator floods a message
   given up at a leaf that has moved, through relays, a few hops. It
   needs broadcast, which is not specified.
+* **When a node may start to send.** The simulator's nodes listen
+  first, and wait if the channel is busy; the numbers above depend on
+  it. Nothing here requires it yet.
 * **Broadcast**, and messages to groups.
 * **Fragments**: a message is one frame.
 * **Priority** between messages, and a share of the air for each node.

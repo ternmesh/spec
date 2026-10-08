@@ -4,7 +4,8 @@
     python3 vectors/tools/forwarding.py generate   # rewrite vectors/forwarding.json
     python3 vectors/tools/forwarding.py check      # fail if the file differs from what this computes
 
-Needs nothing outside the standard library. Floors come from routing.py, beside this file.
+Needs nothing outside the standard library. Floors come from routing.py and airtimes from phy.py,
+beside this file.
 
 Like everything under vectors/, this file is dedicated to the public domain (CC0-1.0).
 """
@@ -15,6 +16,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import phy  # noqa: E402
 import routing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "forwarding.json"
@@ -28,6 +30,7 @@ AT_DEST = 7
 HOP_MAX = 32
 POWER_MARGIN = 10
 STEP = 3
+RETRY_JITTER = 4
 
 
 def head(h):
@@ -71,7 +74,15 @@ def power(neighbour, back, tries, full):
     return min(full, max(neighbour, back if back is not None else neighbour) + STEP * tries)
 
 
+def longest_wait(sf, bw_hz, length):
+    """The longest a frame sent again waits first, in nanoseconds: RETRY_JITTER of its airtimes."""
+    return RETRY_JITTER * phy.airtime_ns(sf, bw_hz, length)
+
+
 def self_check():
+    # A 35-byte frame at SF9 and 500 kHz is on the air for 69.888 ms by phy.py, which checks its
+    # own arithmetic against values worked by hand; four of them is the longest wait.
+    assert phy.airtime_ns(9, 500_000, 35) == 69_888_000 and longest_wait(9, 500_000, 35) == 279_552_000
     f = head({"hdr": 0x48, "hops": 31, "power": -4, "next": 0x01020304, "destination": 0xA0B0C0D0})
     assert f.hex() == "481ffc01020304a0b0c0d0"
     assert accepted(f + bytes(12)) and not accepted(f + bytes(3))
@@ -161,6 +172,19 @@ def build():
         ]
     ]
 
+    # A frame sent again waits a random time, so a case can give only its bound: the least and
+    # the largest frames, and one between, on each profile and on the slowest setting, for a hop
+    # sent again and for a message started again by its source.
+    agains = [
+        {
+            "again": which, "spreading_factor": sf, "bandwidth_hz": bw, "length": n,
+            "airtime_ns": phy.airtime_ns(sf, bw, n), "longest_ns": longest_wait(sf, bw, n),
+        }
+        for sf, bw in [(9, 500_000), (7, 125_000), (12, 125_000)]
+        for which, lengths in [("hop", (ACK_LEN, MESSAGE_MIN, 35, 255)), ("source", (MESSAGE_MIN, 35, 255))]
+        for n in lengths
+    ]
+
     return {
         "description": "Frames that follow routes, draft 0 (draft/forwarding.md). Routing ids "
         "are numbers; frames and tags are hex. In hops, sent is the frame the node sent and "
@@ -168,13 +192,18 @@ def build():
         "snr_quarter_db what it was heard at, and needs is what an answer must go at for its "
         "sender to hear it, between the node's lowest and full power. In powers, neighbour is "
         "what Routes gives for the neighbour, its boost included, back is what the node the "
-        "frame came from needs or null for a frame that answers none, and try counts from 0.",
+        "frame came from needs or null for a frame that answers none, and try counts from 0. In "
+        "agains, a frame of length bytes is sent again at that spreading factor and bandwidth, "
+        "with the profiles' preamble and coding rate (vectors/phy.json), by a hop that heard "
+        "nothing of it (hop) or by its source with no acknowledgement (source): airtime_ns is "
+        "its time on the air and longest_ns the longest it may wait first.",
         "generator": "vectors/tools/forwarding.py",
         "heads": heads,
         "rejected": rejected,
         "hops": hops,
         "backs": backs,
         "powers": powers,
+        "agains": agains,
     }
 
 
