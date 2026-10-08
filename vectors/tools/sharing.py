@@ -12,6 +12,7 @@ appendix B.
 Like everything under vectors/, this file is dedicated to the public domain (CC0-1.0).
 """
 
+import base64
 import hashlib
 import json
 import sys
@@ -21,7 +22,8 @@ VECTORS = Path(__file__).resolve().parent.parent
 OUT = VECTORS / "sharing.json"
 
 SHORT_CODE_LABEL = b"tern short code"
-SCHEME = "TERN:"
+LINK = "HTTPS://TERNMESH.ORG/A/"
+BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 DIGITS = 12
 
 
@@ -35,6 +37,10 @@ def self_check():
         hashlib.sha256(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq").hexdigest()
         == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
     )
+    # Base32 against RFC 4648's own examples (section 10), padding dropped as this section does.
+    for data, want in [(b"f", "MY"), (b"fo", "MZXQ"), (b"foo", "MZXW6"), (b"foob", "MZXW6YQ"),
+                       (b"fooba", "MZXW6YTB"), (b"foobar", "MZXW6YTBOI")]:
+        assert b32(data) == want, (data, b32(data))
 
 
 def text(address: bytes) -> str:
@@ -42,9 +48,35 @@ def text(address: bytes) -> str:
     return address.hex().upper()
 
 
+def b32(data: bytes) -> str:
+    """RFC 4648 base32, upper-case, without padding: five bits a character, most significant
+    first, the last character's spare bits zero. Written out, and checked against the standard
+    library's in build(), rather than taken from it."""
+    n, bits, out = 0, 0, []
+    for byte in data:
+        n, bits = n << 8 | byte, bits + 8
+        while bits >= 5:
+            bits -= 5
+            out.append(BASE32[n >> bits & 31])
+    if bits:
+        out.append(BASE32[n << (5 - bits) & 31])
+    return "".join(out)
+
+
+def unb32(s: str):
+    """The bytes of canonical base32 for 32 bytes, either case; None for anything else."""
+    s = s.upper()
+    if len(s) != 52 or any(ch not in BASE32 for ch in s) or BASE32.index(s[-1]) & 0x0F:
+        return None
+    n = 0
+    for ch in s:
+        n = n << 5 | BASE32.index(ch)
+    return (n >> 4).to_bytes(32, "big")
+
+
 def link(address: bytes) -> str:
     """An address as a link, and as a QR code holds it."""
-    return SCHEME + text(address)
+    return LINK + b32(address)
 
 
 def code_value(address: bytes) -> int:
@@ -59,10 +91,11 @@ def code_text(value: int) -> str:
 
 
 def read(s: str):
-    """What a reader takes an address from: the link, in any case, or the bare digits, in any
-    case, with spaces anywhere among them. None for anything else."""
-    if s[: len(SCHEME)].upper() == SCHEME:
-        s = s[len(SCHEME) :]
+    """What a reader takes an address from: the link, its scheme, host, path and base32 each in
+    either case, or the text form, its digits in either case with spaces anywhere among them.
+    None for anything else."""
+    if s[: len(LINK)].upper() == LINK:
+        return unb32(s[len(LINK) :])
     digits = s.replace(" ", "")
     if len(digits) != 64 or any(c not in "0123456789abcdefABCDEF" for c in digits):
         return None
@@ -98,13 +131,24 @@ def build():
     for a in addresses():
         t = text(a)
         grouped = " ".join(t[i : i + 8] for i in range(0, 64, 8))
-        reads = [link(a), t, t.lower(), "tern:" + t.lower(), "Tern:" + grouped, grouped]
+        b = b32(a)
+        assert b == base64.b32encode(a).decode().rstrip("=")
+        reads = [
+            link(a),
+            link(a).lower(),
+            "https://ternmesh.org/A/" + b,
+            "HTTPS://TernMesh.org/a/" + b.lower(),
+            t,
+            t.lower(),
+            grouped,
+        ]
         for r in reads:
             assert read(r) == a
         cases.append(
             {
                 "address": a.hex(),
                 "text": t,
+                "base32": b,
                 "link": link(a),
                 "short_code": code_text(code_value(a)),
                 "reads": reads,
@@ -113,16 +157,27 @@ def build():
 
     a = addresses()[0]
     t = text(a)
+    b = b32(a)
+    assert BASE32.index(b[-1]) & 0x0F == 0
+    off = BASE32[BASE32.index(b[-1]) | 1]  # the same bits, and one more where there are none
     refused = [
+        LINK + b[:-1],  # fifty-one characters of base32
+        LINK + b + "A",  # fifty-three
+        LINK + b + "====",  # padded
+        LINK + b[:-1] + off,  # a spare bit set: not the one link this address has
+        LINK + "0" + b[1:],  # not base32
+        LINK + b[:26] + " " + b[26:],  # a space in it
+        LINK + t,  # hex after the path
+        "HTTP://TERNMESH.ORG/A/" + b,  # another scheme
+        "HTTPS://WWW.TERNMESH.ORG/A/" + b,  # another host
+        "HTTPS://TERNMESH.ORG/B/" + b,  # another path
+        "HTTPS://TERNMESH.ORG/A/",
+        "TERN:" + t,  # draft 0's link, which was never released
         t[:-1],  # sixty-three digits
         t + "0",  # sixty-five
         t[:-1] + "G",  # not hex
-        "TERN:" + t[:-1],
-        "TERN://" + t,  # not the form a link takes
-        "TERM:" + t,
         "0x" + t,
         "",
-        "TERN:",
     ]
     for r in refused:
         assert read(r) is None
@@ -143,7 +198,7 @@ def build():
 
     return {
         "description": "Sharing an address off the air (draft/sharing.md): an address written "
-        "down, as a link and in a QR code, and the short code two people compare. Addresses are "
+        "down, as the web link a QR code holds, and the short code two people compare. Addresses are "
         "first-contact.json's. Hex strings are bytes; text fields are exact.",
         "generator": "vectors/tools/sharing.py",
         "short_code_label": SHORT_CODE_LABEL.decode(),
