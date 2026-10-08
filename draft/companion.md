@@ -105,6 +105,7 @@ its field allows, or if a `str` is not valid UTF-8.
 | `0x11` | `READ` | `through` `u32` | `OK` |
 | `0x18` | `SAVE_CONTACT` | `address` `addr`, `name` `str` up to 31 | `OK` |
 | `0x19` | `REMOVE_CONTACT` | `address` `addr` | `OK` |
+| `0x1A` | `END_SESSION` | `address` `addr` | `OK` |
 
 Any request may instead be answered by `ERROR`.
 
@@ -151,11 +152,14 @@ a refusal.
 | `0x86` | `NEIGHBOUR_GONE` | `routing_id` `u32` |
 | `0x87` | `AIRTIME` | `period` `u32`, `allowed` `u32`, `used` `u32`, `wait` `u32` |
 | `0x88` | `POWER` | `millivolts` `u16`, `percent` `u8`, `flags` `u8` |
+| `0x89` | `ASKED` | `address` `addr`, `why` `u8` |
 
-Each news frame but `STATE` and the two `_GONE`s is a **record**: the whole of one
-thing as the node holds it now. A record replaces any the client holds
-for the same thing. `STATE` replaces those fields of the `MESSAGE` with
-its `id`.
+Each news frame but `STATE`, the two `_GONE`s and `ASKED` is a
+**record**: the whole of one thing as the node holds it now. A record
+replaces any the client holds for the same thing. `STATE` replaces
+those fields of the `MESSAGE` with its `id`. `ASKED` is something that
+happened, and the node does not hold it: a [sync](#syncing) does not
+send it again.
 
 **The node's count.** A node keeps a count of the news it has sent on
 each connection. It sets it to 0 when it answers a `HELLO`. Each news
@@ -237,6 +241,36 @@ node cannot measure it. `percent` is the node's estimate of the charge
 left, 255 if it has none. `flags` bit 0: the battery is charging. Bit
 1: the node is running from external power. The other bits are 0.
 
+### Who may make first contact
+
+A session starts with [first contact](first-contact.md), which either
+end may begin. A node begins it when it has a message for an address it
+shares no session with. When another node begins it, this node learns
+which address is asking only from the handshake's third message, which
+proves it, and decides then.
+
+A node MUST take first contact from an address that is a contact, if
+it has room for another session or shares one with that address
+already. Whether it takes first contact from any other address is its
+own choice: a node with no client to ask, such as a relay on a mast,
+may have to take anyone.
+
+A node that refuses first contact from an address that has proved
+itself MUST send `ASKED` with that address, and with `why`:
+
+| `why` | The node refused because |
+|---|---|
+| 1 | the address is not a contact |
+| 2 | it has no room for another session |
+
+Other values are reserved, and a client treats one it does not know as
+a refusal it cannot name. A node MAY send `ASKED` for one address no
+more often than once every `QUIET` seconds.
+
+So a client lets a node in by saving it as a contact, and makes room
+by [ending a session](#the-requests). Neither tells the node that
+asked: it is taken the next time it makes first contact.
+
 ### When news is sent
 
 A node with a client that has said `HELLO` MUST send that client:
@@ -247,7 +281,8 @@ A node with a client that has said `HELLO` MUST send that client:
 * `CONTACT` and `CONTACT_GONE` when a contact is saved, renamed,
   removed, or gains or loses a session;
 * `SELF` when anything in it but `time` changes;
-* `NEIGHBOUR_GONE` when the node forgets a neighbour.
+* `NEIGHBOUR_GONE` when the node forgets a neighbour;
+* `ASKED` when it refuses [first contact](#who-may-make-first-contact).
 
 It SHOULD send `NEIGHBOUR`, `AIRTIME` and `POWER` when they change,
 and MAY send each no more often than once every `QUIET` seconds, so
@@ -268,7 +303,8 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 0. Later versions only add types, settings, error codes and
+version 1. Version 0 is the same without `END_SESSION` and `ASKED`.
+Later versions only add types, settings, error codes and
 fields at the end of a frame, so any two versions can talk. A change
 that cannot be made that way is a new protocol, with its own magic and
 its own Bluetooth service.
@@ -277,8 +313,8 @@ A client then, typically, sets the node's clock and syncs:
 
 ```
 client                         node
-HELLO       seq 1, version 0  ─▶
-                              ◀─  INFO        seq 1, version 0
+HELLO       seq 1, version 1  ─▶
+                              ◀─  INFO        seq 1, version 1
 SET_TIME    seq 2             ─▶
                               ◀─  OK          seq 2
 SYNC        seq 3, after 0    ─▶
@@ -394,6 +430,19 @@ nothing else: messages to and from the address are kept, and so is any
 session with it. A node answers `OK` for an address that is not a
 contact.
 
+**`END_SESSION`** ends the session the node shares with `address`: the
+node forgets the session's keys, and can neither send to that address
+nor read what it sends until first contact is made again. The contact,
+if it is one, is kept, and so are the messages; a message to the
+address that is still waiting becomes not delivered. A node answers
+`OK` for an address it shares no session with, and `ERROR` 8 if it
+cannot forget the session now.
+
+Nothing goes on the air, so the other node is not told and keeps its
+half. What it sends is not read, and is not acknowledged. The session
+starts again when this node makes first contact, by a `SEND` to the
+address, or when the other node does, after its own session is ended.
+
 ## Byte streams
 
 On USB serial and TCP, each frame is sent as:
@@ -499,7 +548,11 @@ An implementation conforms to this section if, for
 * **exchange:** as a node holding what the exchange shows, given the
   client's frames in order, it sends the node's, in order. This checks
   that an answer carries its request's `seq`, and that news is counted
-  from 0 after `HELLO`, through a sync and after it.
+  from 0 after `HELLO`, through a sync and after it. The `ASKED` in it
+  is the node refusing first contact from the address it names;
+* **older:** as a node, given the frames of a client of version 0, it
+  sends the node's, in order: the same node refusing the same first
+  contact sends that client no `ASKED`.
 
 What a node holds, and so which news it sends and when, depends on the
 rest of the node, and is checked by running a client against it. The
@@ -582,6 +635,21 @@ pings, so one lost to a busy port does not end a connection. Both are
 counted from an answer, not a request: a client may not ask again
 while a request is unanswered, and a long sync is one request.
 
+**Why saving a contact lets a node in, and not a request to accept.**
+A node cannot hold a handshake open while a person decides: its frames
+are sent again only for seconds. So the answer has to be there before
+the node asks again, and it has to name the node, or whoever asked
+next would be let in instead. A saved contact is both, it is already
+what a user does with an address they mean to talk to, and it holds
+after a restart. `ASKED` comes only after the handshake's third
+message, so the address in it is one the asking node has proved, not
+one it claimed.
+
+**Why the other node is not told a session ended.** Telling it needs a
+frame on the air that only the session's two ends can make, and the
+radio protocol has none yet. Until it does, ending a session is what a
+node does with its own keys.
+
 **Why the passkey, and not "just works" pairing.** A node may relay
 for its neighbours on a hill, and anyone who can drive it can read its
 messages and change its region. Passkey entry stops someone in range
@@ -604,8 +672,10 @@ node they were near, and follow it about.
   of 128 bytes is provisional until that is said.
 * **A short code to compare addresses**, which the firmware's interface
   draft asks for, the same in every implementation.
-* **Whether a node takes first contact from an address that is not a
-  contact**, and how a client is asked.
+* **Sessions with addresses that are not contacts**: `CONTACT` says
+  whether a contact has a session, and nothing lists the others.
+* **Telling the other node** that a session has ended, so that it need
+  not find out by having no answer.
 * **Authentication over TCP.** The framing above serves TCP, but
   nothing yet says who may drive a node over a network. Until something
   does, a node SHOULD NOT offer this protocol on a network socket.
