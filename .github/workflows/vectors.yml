@@ -28,6 +28,7 @@ jobs:
       - run: python3 vectors/tools/flooding.py check
       - run: python3 vectors/tools/groups.py check
       - run: python3 vectors/tools/companion.py check
+      - run: python3 vectors/tools/sharing.py check
       # Analyses whose tables are generated: fails if a table no longer matches its script. Each
       # script also checks itself against published values first.
       - run: python3 analysis/first_contact_fit.py check

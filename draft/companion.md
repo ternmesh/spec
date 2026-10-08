@@ -679,8 +679,9 @@ node they were near, and follow it about.
 * **What a message carries on the air**: its text, its time, whether it
   is UTF-8. This section's `text` is what the user wrote, and the limit
   of 128 bytes is provisional until that is said.
-* **A short code to compare addresses**, which the firmware's interface
-  draft asks for, the same in every implementation.
+* **A short code to compare addresses**, the same in every
+  implementation: proposed, with how an address is written in a link
+  and a QR code, in [sharing.md](sharing.md).
 * **Sessions with addresses that are not contacts**: `CONTACT` says
   whether a contact has a session, and nothing lists the others.
 * **Telling the other node** that a session has ended, so that it need
