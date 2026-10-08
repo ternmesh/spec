@@ -25,7 +25,8 @@ produced by
 2. **The same bytes however far it goes.** What a frame carries for the
    nodes on its way does not grow with their number.
 3. **No sender on the air.** A frame names the node it is for and the
-   neighbour it is for now. It does not name where it came from.
+   neighbour it is for now. It does not name where it came from, but
+   for the first frame of a handshake, which has to.
 4. **Lost frames are found by listening.** A node that has sent a frame
    hears its neighbour send it on. No acknowledgement is sent hop by
    hop.
@@ -57,18 +58,21 @@ Every frame that follows a route starts with eleven bytes:
 `hops`, `power` and `next` change at every node. Nothing after them
 does.
 
-Two types are defined:
+Three kinds of frame are defined:
 
 | `hdr` | Frame | After the head |
 |---|---|---|
 | `0x48` | a **message**: a secured unicast frame | `tag` is its destination tag; then its ciphertext and check |
 | `0x50` | an **acknowledgement** | `tag` is that of the message it answers; then 4 bytes, `proof` |
+| `0x51` to `0x54` | a **first-contact frame**, one of a handshake's four | `tag` is its contact tag; then, for `0x51`, the 4-byte routing id it came from; then the handshake's message |
 
 A message is at least 23 bytes: the head, the tag and the 8-byte check
-of an empty message. An acknowledgement is exactly 19 bytes. A receiver
-MUST discard a message shorter than 23 bytes, an acknowledgement of any
-other length, and a frame whose `next` or `destination` is a reserved
-id.
+of an empty message. An acknowledgement is exactly 19 bytes. A
+first-contact frame is exactly 56, 60, 80 or 24 bytes, for `0x51` to
+`0x54` ([First contact](first-contact.md#the-frame)). A receiver
+MUST discard a message shorter than 23 bytes, an acknowledgement or a
+first-contact frame of any other length, and a frame whose `next` or
+`destination` is a reserved id.
 
 **The same frame.** Four bytes of tag do not tell every message from
 every other: two in the air at once share one now and then. So two
@@ -78,8 +82,9 @@ ciphertext and check. `tag` is only where an acknowledgement is matched
 to its message, since an acknowledgement carries nothing else of it.
 
 Bytes 1 to 10 are what the
-[secured unicast frame](unicast-security.md#the-frame) calls `route`,
-and leaves to this section. That frame's `hdr` and destination tag are
+[secured unicast frame](unicast-security.md#the-frame) and the
+[first-contact frame](first-contact.md#the-frame) call `route`,
+and leave to this section. That frame's `hdr` and destination tag are
 authenticated end to end; `hops`, `power`, `next` and `destination` are
 not.
 
@@ -148,7 +153,8 @@ A node that receives a frame first checks whether it
 1. An acknowledgement whose `destination` is the node's own id is for
    it, whatever its `next`: see [Messages](#messages).
 2. A frame whose `next` is not the node's id is otherwise ignored.
-3. A message whose `destination` is the node's id is for it.
+3. A message or a first-contact frame whose `destination` is the
+   node's id is for it.
 4. Anything else is to be passed on. A leaf MUST NOT pass a frame on.
    A relay MUST NOT pass on a frame whose `hops` is 0 or 1. A relay
    that already holds [the same frame](#the-head) and has not finished
@@ -188,8 +194,9 @@ node's frame, sent at the same moment: that node waits as long as this
 one, and without the random time the two would meet again at every
 try.
 
-The last hop of an acknowledgement, to the node it is for, has nothing
-to hear, and is sent once.
+The last hop of an acknowledgement or of a first-contact frame, to the
+node it is for, has nothing to hear, and is sent once: a node listens
+for every frame it sends but those.
 
 A node that still holds a frame it has sent, when it hears that the hop
 succeeded, MUST NOT send it again. A copy not yet on the air SHOULD be
@@ -211,7 +218,8 @@ is gone: the node MUST forget it, and every route through it. Fewer are
 no evidence. Frames are lost to a busy channel far more often than to a
 dead neighbour.
 
-**Another way.** A message whose hop is given up is not yet lost. If
+**Another way.** A message or a first-contact frame whose hop is given
+up is not yet lost. If
 the node holds another route to its destination that is
 [feasible](routing.md#selecting-a-route), through a neighbour it may
 use and has not given this frame up at, it sends the frame there, with
@@ -291,6 +299,14 @@ A source that has sent a message to the same neighbour more than
 `HOP_RETRIES` times, over however many tries, and never heard it passed
 on, counts that as a hop given up.
 
+**First contact.** The node that begins a handshake keeps each of its
+two frames as a source keeps a message, with the next frame of the
+handshake in the acknowledgement's place:
+[First contact](first-contact.md#sending-again) has the rules. One
+thing differs. A first-contact frame sent to the node it is for is not
+listened for, so however often it goes unanswered, that is not a hop
+given up: a node may choose not to answer.
+
 ## Parameters
 
 | Name | Value | |
@@ -319,6 +335,9 @@ An implementation conforms to this section if, for
 * **rejected:** it discards each `frame`;
 * **hops:** having sent the frame `sent`, it finds that receiving the
   frame `heard` ends the hop, or not, as `ends` says;
+* **waits:** having sent the frame `sent`, it listens for the hop to
+  succeed and sends the frame again if it does not, or sends it once,
+  as `listens` says;
 * **backs:** having received a frame sent at `power` and heard at
   `snr_quarter_db`, at `spreading_factor`, with `lowest` and `full` its
   own lowest and full power, it finds that its answer must go at
@@ -370,6 +389,10 @@ an address, so anyone who knows an address knows when that node is
 being written to. The observer does not learn who wrote. But an
 acknowledgement goes back to the writer by the same rules, with the
 same `tag`, so an observer who hears both has both ends.
+
+A [first-contact frame](first-contact.md#what-an-observer-learns)
+gives both ends in one frame: the first names the routing id it came
+from, since nothing else tells the other end where to answer.
 
 Announces already give every node's routing id and its neighbours'. So
 does every frame here. What would hide them is routing ids that change,
@@ -490,6 +513,15 @@ before they looked again: 96.7% and 15.2% on these runs.
 frame anyway. Hearing it costs nothing, and an acknowledgement for each
 hop would double the frames.
 
+**Why first contact's last hop is sent once.** A message's last hop is
+ended by its acknowledgement, which the node before hears. The answer
+to a first-contact frame carries another tag, which only the two ends
+can compute, so the node before cannot know it for the answer; and
+there may be no answer, from a node that refuses. Sending the last hop
+three times for nothing would cost more than the frames it saved: the
+node that began the handshake sends again anyway. An acknowledgement
+for each hop was set aside for the reason above.
+
 **Why `power` is in the head.** A node passing a frame on must be heard
 by the node before it, which has turned its own power down to reach
 only its neighbour. With no sender in the frame, the power it was sent
@@ -511,13 +543,12 @@ dead found sooner.
 * **Memory**: each frame in hand is a whole frame and some thirty bytes.
 * **How long a radio takes to find a frame**, and how often it finds a
   preamble where there is none.
+* **First contact across a relay**, in the simulator or on radios: how
+  often a handshake completes, with its last hops sent once.
 
 ## Not yet specified
 
 * **Routing ids that change** ([above](#what-an-observer-learns)).
-* **First contact along a route.** A session is made by
-  [first contact](first-contact.md), whose frames do not carry this
-  head, so two nodes can make one only while each hears the other.
 * **A flood when the routes are stale.** The simulator floods a message
   given up at a leaf that has moved, through relays, a few hops. It
   needs broadcast, which is not specified.

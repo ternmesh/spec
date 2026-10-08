@@ -21,35 +21,37 @@ at US915 DR0 (400 ms), and 36, 99 and 197 bytes at CN470 DR1 to DR3 (1 s).
 
 ## Findings
 
-1. **Every message fits one LoRa frame**, in every case below. The largest is 155 bytes, against
+1. **Every message fits one LoRa frame**, in every case below. The largest is 162 bytes, against
    255. EDHOC needs no fragmentation in Tern.
 2. **Where there is no dwell limit, every message fits at the slowest setting** (EU868, EU433,
    RU864, IN865, and the US on 500 kHz channels). There the cost is airtime, not fit. In the EU's 1% sub-band at
-   SF12, one handshake takes 12 to 21% of each side's hourly allowance, and the same in RU864.
+   SF12, one handshake takes 13 to 23% of each side's hourly allowance, and the same in RU864.
    That is affordable once, but it is a reason to run first contact faster than SF12, or in a 10%
    band (EU868 at 869.4-869.65 MHz, or EU433), where it costs 1 to 2%.
 3. **Under a 400 ms dwell limit, nothing fits at the slowest legal setting.** That setting is
    SF10/125 kHz (US915 hopping channels, and AS923 and AU915 where dwell applies), and it carries
-   a frame of at most 19 bytes with a 16-symbol preamble, or 24 with 8. Even `message_1`, 45
-   bytes in its frame, does not fit. First contact fits at SF9 between nodes that already know
-   each other's keys, SF8 for real first contact, and SF7 if both sides send signatures and
-   keys. The preamble makes no difference to which SF.
+   a frame of at most 19 bytes with a 16-symbol preamble, or 24 with 8. Even `message_4`, 24
+   bytes in its frame, fits only with the shorter preamble, and `message_1`, 56 bytes, does not
+   fit. First contact fits at SF8 for real first contact, and for nodes that already know each
+   other's keys too unless the preamble is 8 symbols, when SF9 will do; and at SF7 with
+   signatures, or SF8 if only the initiator sends its key and the preamble is 8 symbols.
 4. **This is a region-profile problem more than an EDHOC one.** A secured unicast frame carries
    23 bytes of overhead, so at SF10/125 kHz under 400 ms even an empty one does not fit. Tern's
    profile for dwell-limited regions will have to use SF9 or faster at 125 kHz, or the US 500 kHz
    channels, whatever first contact does. SF9 is not enough for first contact, though: under
    400 ms its longest frame is 57 bytes (16-symbol preamble), and first contact's `message_3` is
-   73. SF8 carries 130 bytes, enough for every case except `sig-value`, and SF7 carries 250.
+   80. SF8 carries 130 bytes, enough for the static Diffie-Hellman cases and not for
+   signatures, and SF7 carries 250.
 5. **Static Diffie-Hellman keys (EDHOC method 3) are much smaller than signatures (method 0).**
-   For first contact the frames are 45, 53 and 73 bytes against 45, 110 and 130, which saves
-   about 3.6 s of airtime per handshake at SF12/125 kHz (8.5 s against 12.1 s, both sides
+   For first contact the frames are 56, 60 and 80 bytes against 56, 117 and 137, which saves
+   about 3.9 s of airtime per handshake at SF12/125 kHz (9.3 s against 13.3 s, both sides
    together, without `message_4`). Method 3 needs X25519 identity keys,
    so this turns on what a Tern address is, which is not yet decided. If addresses must also sign
    (broadcasts and announces, for instance), there is a cost either way: signature-based first
    contact, or one key used for both signing and key agreement, which needs a cryptographer's
    review.
 6. **KR920 allows up to 4 s per frame.** First contact with static DH (`dh-kid` and `dh-first`)
-   fits at SF12. `dh-value` and the signature cases need SF11, with a 16-symbol preamble.
+   fits at SF12. `dh-value` and the signature cases need SF11.
 7. **CN470 allows up to 1 s per frame**, too little for anything at SF12 (RP002 calls that rate
    N/A). First contact with static DH (`dh-kid` and `dh-first`) fits at SF10; `dh-value` and
    the signature cases need SF9.
@@ -58,12 +60,13 @@ CN779 is left out: RP002 deprecates it, and no new devices may be installed ther
 
 ## Assumptions
 
-* **The frame.** First-contact frames are not designed yet. This assumes the 8 bytes a secured
-  unicast frame carries before its ciphertext: `hdr`, `hop`, `label` and a 4-byte field the
-  receiver matches on, and no Tern AEAD tag, because EDHOC protects its own messages. The frame
-  type tells a receiver that a frame is `message_1`, so it is not prefixed with `true` (RFC 9528,
-  3.4.1). If the 4-byte field cannot also correlate the later messages, prefixing each with the
-  peer's connection identifier costs 1 byte more.
+* **The frame.** As [first contact](../draft/first-contact.md#the-frame) has it: the 11-byte
+  head every [frame that follows a route](../draft/forwarding.md#the-head) starts with, a 4-byte
+  tag the two ends match on, and no Tern AEAD tag, because EDHOC protects its own messages. That
+  is 15 bytes, and `message_1`'s frame carries the initiator's 4-byte routing id as well. The
+  frame type tells a receiver that a frame is `message_1`, so it is not prefixed with `true`
+  (RFC 9528, 3.4.1). An earlier draft's frame had 8 bytes before the message and was heard only
+  by the node it was for; the figures here were 7 and 11 bytes smaller then.
 * **Credentials.** By reference, a one-byte `kid`, as in RFC 9529's second trace. By value, a
   `kccs` header (RFC 9528, 10.6) holding a CWT Claims Set with just the raw public key, with no
   subject or other claims, because a Tern address is the key. That is 46 bytes.
@@ -98,15 +101,15 @@ the tables count it separately where it matters.
 
 ### Message sizes
 
-Bytes of each EDHOC message, and in brackets the frame that carries it, with the 8-byte prefix. `message_4` is optional (see below).
+Bytes of each EDHOC message, and in brackets the frame that carries it, with the 15-byte prefix. `message_4` is optional (see below).
 
 | Case | `message_1` | `message_2` | `message_3` | `message_4` |
 |---|---|---|---|---|
-| `dh-kid`: Static DH, both known: each names the other's key by `kid` | 37 (45) | 45 (53) | 19 (27) | 9 (17) |
-| `dh-first`: Static DH, first contact: the initiator knows the responder's address and sends its own key | 37 (45) | 45 (53) | 65 (73) | 9 (17) |
-| `dh-value`: Static DH, both send their keys | 37 (45) | 90 (98) | 65 (73) | 9 (17) |
-| `sig-first`: Signatures, first contact: as `dh-first`, with Ed25519 signatures | 37 (45) | 102 (110) | 122 (130) | 9 (17) |
-| `sig-value`: Signatures, both send their keys | 37 (45) | 147 (155) | 122 (130) | 9 (17) |
+| `dh-kid`: Static DH, both known: each names the other's key by `kid` | 37 (56) | 45 (60) | 19 (34) | 9 (24) |
+| `dh-first`: Static DH, first contact: the initiator knows the responder's address and sends its own key | 37 (56) | 45 (60) | 65 (80) | 9 (24) |
+| `dh-value`: Static DH, both send their keys | 37 (56) | 90 (105) | 65 (80) | 9 (24) |
+| `sig-first`: Signatures, first contact: as `dh-first`, with Ed25519 signatures | 37 (56) | 102 (117) | 122 (137) | 9 (24) |
+| `sig-value`: Signatures, both send their keys | 37 (56) | 147 (162) | 122 (137) | 9 (24) |
 
 ### Regions with a dwell limit
 
@@ -114,10 +117,10 @@ The longest frame each region's slowest setting can carry, and the slowest sprea
 
 | Region | Slowest | Longest frame | `dh-kid` | `dh-first` | `dh-value` | `sig-first` | `sig-value` |
 |---|---|---|---|---|---|---|---|
-| US915, 125 kHz, hopping | SF10/125 | 19 B / 24 B | SF9 / SF9 | SF8 / SF8 | SF8 / SF8 | SF8 / SF8 | SF7 / SF7 |
-| AS923 and AU915, where dwell applies | SF10/125 | 19 B / 24 B | SF9 / SF9 | SF8 / SF8 | SF8 / SF8 | SF8 / SF8 | SF7 / SF7 |
-| KR920 | SF12/125 | 90 B / 100 B | SF12 / SF12 | SF12 / SF12 | SF11 / SF12 | SF11 / SF11 | SF11 / SF11 |
-| CN470 | SF12/125 | 0 B / 10 B | SF10 / SF10 | SF10 / SF10 | SF9 / SF10 | SF9 / SF9 | SF9 / SF9 |
+| US915, 125 kHz, hopping | SF10/125 | 19 B / 24 B | SF8 / SF9 | SF8 / SF8 | SF8 / SF8 | SF7 / SF8 | SF7 / SF7 |
+| AS923 and AU915, where dwell applies | SF10/125 | 19 B / 24 B | SF8 / SF9 | SF8 / SF8 | SF8 / SF8 | SF7 / SF8 | SF7 / SF7 |
+| KR920 | SF12/125 | 90 B / 100 B | SF12 / SF12 | SF12 / SF12 | SF11 / SF11 | SF11 / SF11 | SF11 / SF11 |
+| CN470 | SF12/125 | 0 B / 10 B | SF10 / SF10 | SF10 / SF10 | SF9 / SF9 | SF9 / SF9 | SF9 / SF9 |
 
 ### Regions without one
 
@@ -125,36 +128,36 @@ Every frame fits at the slowest setting, so what matters is time on air: millise
 
 | Region | Slowest | Case | Initiator, ms | Responder, ms (+ `message_4`) | Share of the hour |
 |---|---|---|---|---|---|
-| EU868, 868.0-868.6 MHz | SF12/125 | `dh-kid` | 4,309 | 2,728 (+1,581) | 12.0% / 12.0% |
-| EU868, 868.0-868.6 MHz | SF12/125 | `dh-first` | 5,784 | 2,728 (+1,581) | 16.1% / 12.0% |
-| EU868, 868.0-868.6 MHz | SF12/125 | `dh-value` | 5,784 | 4,202 (+1,581) | 16.1% / 16.1% |
-| EU868, 868.0-868.6 MHz | SF12/125 | `sig-first` | 7,586 | 4,530 (+1,581) | 21.1% / 17.0% |
-| EU868, 868.0-868.6 MHz | SF12/125 | `sig-value` | 7,586 | 6,005 (+1,581) | 21.1% / 21.1% |
-| EU868, 869.4-869.65 MHz | SF12/125 | `dh-kid` | 4,309 | 2,728 (+1,581) | 1.2% / 1.2% |
-| EU868, 869.4-869.65 MHz | SF12/125 | `dh-first` | 5,784 | 2,728 (+1,581) | 1.6% / 1.2% |
-| EU868, 869.4-869.65 MHz | SF12/125 | `dh-value` | 5,784 | 4,202 (+1,581) | 1.6% / 1.6% |
-| EU868, 869.4-869.65 MHz | SF12/125 | `sig-first` | 7,586 | 4,530 (+1,581) | 2.1% / 1.7% |
-| EU868, 869.4-869.65 MHz | SF12/125 | `sig-value` | 7,586 | 6,005 (+1,581) | 2.1% / 2.1% |
-| US915, 500 kHz | SF12/500 | `dh-kid` | 995 | 600 (+354) | - |
-| US915, 500 kHz | SF12/500 | `dh-first` | 1,323 | 600 (+354) | - |
-| US915, 500 kHz | SF12/500 | `dh-value` | 1,323 | 928 (+354) | - |
-| US915, 500 kHz | SF12/500 | `sig-first` | 1,692 | 1,010 (+354) | - |
-| US915, 500 kHz | SF12/500 | `sig-value` | 1,692 | 1,296 (+354) | - |
-| IN865 | SF12/125 | `dh-kid` | 4,309 | 2,728 (+1,581) | - |
-| IN865 | SF12/125 | `dh-first` | 5,784 | 2,728 (+1,581) | - |
-| IN865 | SF12/125 | `dh-value` | 5,784 | 4,202 (+1,581) | - |
-| IN865 | SF12/125 | `sig-first` | 7,586 | 4,530 (+1,581) | - |
-| IN865 | SF12/125 | `sig-value` | 7,586 | 6,005 (+1,581) | - |
-| RU864 | SF12/125 | `dh-kid` | 4,309 | 2,728 (+1,581) | 12.0% / 12.0% |
-| RU864 | SF12/125 | `dh-first` | 5,784 | 2,728 (+1,581) | 16.1% / 12.0% |
-| RU864 | SF12/125 | `dh-value` | 5,784 | 4,202 (+1,581) | 16.1% / 16.1% |
-| RU864 | SF12/125 | `sig-first` | 7,586 | 4,530 (+1,581) | 21.1% / 17.0% |
-| RU864 | SF12/125 | `sig-value` | 7,586 | 6,005 (+1,581) | 21.1% / 21.1% |
-| EU433 | SF12/125 | `dh-kid` | 4,309 | 2,728 (+1,581) | 1.2% / 1.2% |
-| EU433 | SF12/125 | `dh-first` | 5,784 | 2,728 (+1,581) | 1.6% / 1.2% |
-| EU433 | SF12/125 | `dh-value` | 5,784 | 4,202 (+1,581) | 1.6% / 1.6% |
-| EU433 | SF12/125 | `sig-first` | 7,586 | 4,530 (+1,581) | 2.1% / 1.7% |
-| EU433 | SF12/125 | `sig-value` | 7,586 | 6,005 (+1,581) | 2.1% / 2.1% |
+| EU868, 868.0-868.6 MHz | SF12/125 | `dh-kid` | 4,964 | 2,892 (+1,745) | 13.8% / 12.9% |
+| EU868, 868.0-868.6 MHz | SF12/125 | `dh-first` | 6,439 | 2,892 (+1,745) | 17.9% / 12.9% |
+| EU868, 868.0-868.6 MHz | SF12/125 | `dh-value` | 6,439 | 4,366 (+1,745) | 17.9% / 17.0% |
+| EU868, 868.0-868.6 MHz | SF12/125 | `sig-first` | 8,405 | 4,858 (+1,745) | 23.3% / 18.3% |
+| EU868, 868.0-868.6 MHz | SF12/125 | `sig-value` | 8,405 | 6,332 (+1,745) | 23.3% / 22.4% |
+| EU868, 869.4-869.65 MHz | SF12/125 | `dh-kid` | 4,964 | 2,892 (+1,745) | 1.4% / 1.3% |
+| EU868, 869.4-869.65 MHz | SF12/125 | `dh-first` | 6,439 | 2,892 (+1,745) | 1.8% / 1.3% |
+| EU868, 869.4-869.65 MHz | SF12/125 | `dh-value` | 6,439 | 4,366 (+1,745) | 1.8% / 1.7% |
+| EU868, 869.4-869.65 MHz | SF12/125 | `sig-first` | 8,405 | 4,858 (+1,745) | 2.3% / 1.8% |
+| EU868, 869.4-869.65 MHz | SF12/125 | `sig-value` | 8,405 | 6,332 (+1,745) | 2.3% / 2.2% |
+| US915, 500 kHz | SF12/500 | `dh-kid` | 1,118 | 641 (+395) | - |
+| US915, 500 kHz | SF12/500 | `dh-first` | 1,446 | 641 (+395) | - |
+| US915, 500 kHz | SF12/500 | `dh-value` | 1,446 | 969 (+395) | - |
+| US915, 500 kHz | SF12/500 | `sig-first` | 1,815 | 1,051 (+395) | - |
+| US915, 500 kHz | SF12/500 | `sig-value` | 1,815 | 1,337 (+395) | - |
+| IN865 | SF12/125 | `dh-kid` | 4,964 | 2,892 (+1,745) | - |
+| IN865 | SF12/125 | `dh-first` | 6,439 | 2,892 (+1,745) | - |
+| IN865 | SF12/125 | `dh-value` | 6,439 | 4,366 (+1,745) | - |
+| IN865 | SF12/125 | `sig-first` | 8,405 | 4,858 (+1,745) | - |
+| IN865 | SF12/125 | `sig-value` | 8,405 | 6,332 (+1,745) | - |
+| RU864 | SF12/125 | `dh-kid` | 4,964 | 2,892 (+1,745) | 13.8% / 12.9% |
+| RU864 | SF12/125 | `dh-first` | 6,439 | 2,892 (+1,745) | 17.9% / 12.9% |
+| RU864 | SF12/125 | `dh-value` | 6,439 | 4,366 (+1,745) | 17.9% / 17.0% |
+| RU864 | SF12/125 | `sig-first` | 8,405 | 4,858 (+1,745) | 23.3% / 18.3% |
+| RU864 | SF12/125 | `sig-value` | 8,405 | 6,332 (+1,745) | 23.3% / 22.4% |
+| EU433 | SF12/125 | `dh-kid` | 4,964 | 2,892 (+1,745) | 1.4% / 1.3% |
+| EU433 | SF12/125 | `dh-first` | 6,439 | 2,892 (+1,745) | 1.8% / 1.3% |
+| EU433 | SF12/125 | `dh-value` | 6,439 | 4,366 (+1,745) | 1.8% / 1.7% |
+| EU433 | SF12/125 | `sig-first` | 8,405 | 4,858 (+1,745) | 2.3% / 1.8% |
+| EU433 | SF12/125 | `sig-value` | 8,405 | 6,332 (+1,745) | 2.3% / 2.2% |
 
 ### Sources for each region
 

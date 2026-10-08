@@ -156,11 +156,11 @@ def ccs(crv: int) -> dict:
 
 X25519, ED25519 = 4, 6
 
-# The first-contact frame. Nothing about it is decided; this assumes the 8 bytes a secured unicast
-# frame carries before its ciphertext (hdr, hop, label and a 4-byte field the receiver matches on),
-# and no Tern AEAD tag, because EDHOC protects its own messages. That field, or a prepended
-# connection identifier, is what correlates the messages (RFC 9528, 3.4.1).
-FRAME_PREFIX = 8
+# The first-contact frame (draft/first-contact.md): the 11-byte head every frame that follows a
+# route starts with, a 4-byte tag the two ends match on, and no Tern AEAD tag, because EDHOC
+# protects its own messages. message_1's frame also carries the initiator's 4-byte routing id.
+FRAME_PREFIX = 15
+SOURCE = 4
 MAX_FRAME = 255
 
 C_I, C_R = b"\x0a", b"\x0b"  # one-byte connection identifiers, sent as integers
@@ -196,7 +196,7 @@ def frames(method, id_cred_i, id_cred_r):
         message_3(method, id_cred_i),
         message_4(),
     )
-    return [FRAME_PREFIX + len(m) for m in msgs], [len(m) for m in msgs]
+    return [FRAME_PREFIX + (SOURCE if i == 0 else 0) + len(m) for i, m in enumerate(msgs)], [len(m) for m in msgs]
 
 
 # ---------------------------------------------------------------------------------------------
