@@ -424,7 +424,8 @@ rest.
 A client that holds messages already gives the greatest `id` it holds
 as `after`. One that has [missed news](#news) gives one less than the
 least `id` of any message it holds that is still waiting or sent,
-since those are the ones whose state may have changed unseen. `after`
+since those are the ones whose state may have changed unseen. A group
+message that is sent is not one of them: it stays sent. `after`
 of 0 asks for every message.
 
 A client that speaks a later version to a node than it did when it
