@@ -251,12 +251,18 @@ proves it, and decides then.
 
 A node MUST take first contact from an address that is a contact, if
 it has room for another session or shares one with that address
-already. Whether it takes first contact from any other address is its
+already. A node holds at most one session with an address: first
+contact with an address it shares a session with puts the new session
+in the old one's place, once the handshake is complete, and needs no
+more room. That is how two nodes recover when only one of them still
+holds their session. Whether it takes first contact from any other address is its
 own choice: a node with no client to ask, such as a relay on a mast,
 may have to take anyone.
 
 A node that refuses first contact from an address that has proved
-itself MUST send `ASKED` with that address, and with `why`:
+itself MUST send `ASKED` with that address, unless it has sent one for
+that address in the last `QUIET` seconds, when it MAY leave it out: a
+node that is refused asks again within seconds. `why` is:
 
 | `why` | The node refused because |
 |---|---|
@@ -264,8 +270,7 @@ itself MUST send `ASKED` with that address, and with `why`:
 | 2 | it has no room for another session |
 
 Other values are reserved, and a client treats one it does not know as
-a refusal it cannot name. A node MAY send `ASKED` for one address no
-more often than once every `QUIET` seconds.
+a refusal it cannot name.
 
 So a client lets a node in by saving it as a contact, and makes room
 by [ending a session](#the-requests). Neither tells the node that
@@ -282,7 +287,8 @@ A node with a client that has said `HELLO` MUST send that client:
   removed, or gains or loses a session;
 * `SELF` when anything in it but `time` changes;
 * `NEIGHBOUR_GONE` when the node forgets a neighbour;
-* `ASKED` when it refuses [first contact](#who-may-make-first-contact).
+* `ASKED` when it refuses [first contact](#who-may-make-first-contact),
+  as that section says.
 
 It SHOULD send `NEIGHBOUR`, `AIRTIME` and `POWER` when they change,
 and MAY send each no more often than once every `QUIET` seconds, so
@@ -433,8 +439,10 @@ contact.
 **`END_SESSION`** ends the session the node shares with `address`: the
 node forgets the session's keys, and can neither send to that address
 nor read what it sends until first contact is made again. The contact,
-if it is one, is kept, and so are the messages; a message to the
-address that is still waiting becomes not delivered. A node answers
+if it is one, is kept, and so are the messages. A message to the
+address that is waiting or sent becomes not delivered, whether or not
+it has been on the air: the node sends no frame of it again, and an
+acknowledgement that comes for it later changes nothing. A node answers
 `OK` for an address it shares no session with, and `ERROR` 8 if it
 cannot forget the session now.
 
