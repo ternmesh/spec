@@ -3,9 +3,11 @@
 **Status:** strawman, draft 0. Not frozen. Open for review under the
 seven-day rule in [GOVERNANCE.md](../GOVERNANCE.md). The flood is how
 the simulator ([ternmesh/sim](https://github.com/ternmesh/sim),
-candidate 3) carries a broadcast, written down; the
-[allowance](#the-allowance) is not from the simulator, and has not been
-measured at all. Every number here is **provisional**.
+candidate 3) carries a broadcast, written down, and has since been run
+there through the firmware's own code. The
+[allowance](#the-allowance) is not from the simulator's candidate; what
+it does and does not do there is [below](#what-was-measured). Every
+number here is **provisional**.
 
 [Frames that follow routes](forwarding.md) carries a frame to one node.
 This section carries a frame to every node within a few relays of where
@@ -265,21 +267,78 @@ airtime. The second bucket bounds what that costs each relay, and
 keeping it apart from the first means a relay spent on others' floods
 can still send its own.
 
+**What the allowance is not.** It does not keep a mesh's broadcasts
+within what the channel holds. Each node is far inside its own bucket
+when the mesh as a whole is past it: see
+[What was measured](#what-was-measured). What would is a share of the
+air divided between nodes, which is
+[not yet specified](forwarding.md#not-yet-specified), or floods that do
+not go everywhere.
+
 **An id from the bytes.** A flood's id could be a field its writer
 fills. A node that heard a frame could then send rubbish under the same
 id and have relays take the real one as a copy. A hash of the frame
 cannot be made to match.
 
+## What was measured
+
+The firmware's flood (ternmesh/firmware, `tern/flood.h`), run in the
+simulator in place of candidate 3's: a thousand nodes, three seeds, a
+message from every node every 30 minutes, a quarter of them
+broadcasts. Broadcast destinations reached within a minute, at −5, 0,
+5, 10 and 20 dBm, which stand for how many nodes each one hears, from
+5 to 284:
+
+| | Candidate 3 | The firmware |
+|---|---|---|
+| SF7, 200 relays | 39.9, 66.9, 77.5, 87.1, 90.2% | 39.1, 65.8, 78.0, 83.2, 84.8% |
+| SF8 at 62.5 kHz, 200 relays, the channel full | 20.8, 23.3, 26.3, 22.5, 5.7% | 20.2, 27.5, 32.1, 31.7, 17.9% |
+| SF9, every node a relay | 27.2, 31.8, 35.2, 34.5, 25.7% | 27.3, 33.6, 38.4, 42.5, 45.3% |
+
+The two differ in more than the flood: the firmware listens before it
+sends, and candidate 3 ran over another MAC. Given candidate 3's, the
+firmware's flood reaches 88.4% and 89.5% in the first row at 10 and
+20 dBm, which is candidate 3's to within a seed's spread. So the flood
+here is the one that was measured before it was written down.
+
+**The parameters, each changed alone**, in the first row at 10 and
+20 dBm, where the defaults reach 83.2% and 84.8%:
+
+| | Reached | Deliveries per second of airtime, against 56.7 and 50.0 |
+|---|---|---|
+| `FLOOD_COPIES` never | 78.8, 79.7% | 33.6, 31.4 |
+| `FLOOD_COPIES` 3 | 81.0, 80.9% | 40.1, 35.1 |
+| `FLOOD_WAIT` 3 | 75.0, 78.0% | 45.0, 40.0 |
+| `FLOOD_HOPS` 8 | 84.7, 85.1% | 48.6, 43.7 |
+| `FLOOD_SPARSE` 16 | 85.6, 85.6% | 52.3, 45.1 |
+
+A relay that stays silent on one more copy reaches more nodes than one
+that always sends, on three fifths of the airtime.
+
+**The allowance.** At that traffic it does nothing: without it, the
+first row is the same to the digit. With a message from every node
+every 5 minutes, three quarters of them broadcasts, the relays' bucket
+binds only where relays are few. At 0 dBm in the first row, unicast
+messages on time are 28.0% with it and 16.6% without, and broadcast
+14.2% against 16.5%; at 10 and 20 dBm, and with the channel full,
+there is nothing in it either way.
+
+That load is more than the channel holds, allowance or none: unicast
+on time falls from 92.0, 98.0 and 96.1% to 28.0, 23.6 and 39.2%. No
+node is near its own bucket. A thousand of them, each allowed 0.5% of
+its time, are together allowed five channels.
+
 ## Not yet measured
 
-* **The allowance.** Its four numbers are not from the simulator. They
-  are set so that a node may write about two dozen messages of 40
-  bytes at once and one every 25 seconds after, and a relay passes on
-  six times what one node may write.
-* **This section's flood through the firmware's own code**, in the
-  simulator: every figure above is candidate 3's.
+* **Why listening first costs a flood reach** where the channel is
+  quiet and nodes are many: 4 to 5 points in the first row at 10 and
+  20 dBm.
+* **The allowance's numbers against each other.** One load was run
+  with them and without. Whether 3% is the right share for a relay,
+  or 0.5% for a writer, was not asked.
 * **A workload with groups in it**, drawn from what meshes carry in the
-  field.
+  field: here every broadcast is for every node.
+* **Any of it on radios**, past one hop between two boards.
 
 ## Not yet specified
 
