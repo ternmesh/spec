@@ -290,7 +290,12 @@ An implementation conforms to this section if, for
   neighbour, its boost included, `back` what the node the frame came
   from needs (`null` for a frame that answers none), and `full` its
   full power, it sends the frame for the `try`-th time, from 0, at
-  `power`.
+  `power`;
+* **agains:** sending a frame of `length` bytes again at
+  `spreading_factor` and `bandwidth_hz`, as a hop that heard nothing of
+  it (`hop`) or as its source with no acknowledgement (`source`), it
+  first waits no longer than `longest_ns`, and not the same time at
+  every try.
 
 and, for
 [`vectors/unicast-security.json`](../vectors/unicast-security.json),
@@ -309,9 +314,10 @@ which holds the cases that need a session's keys:
   `session`. A copy whose tag two accepted messages share is
   acknowledged for both.
 
-When frames go depends on random times and on what is heard, and is
-checked by running implementations against each other and against the
-simulator.
+When frames go depends on random times and on what is heard. A case
+can hold a random time's bound, as `agains` does, and not that it is
+uniform; the rest is checked by running implementations against each
+other and against the simulator.
 
 ## What an observer learns
 
