@@ -15,13 +15,18 @@ produced by [`vectors/tools/unicast.py`](../vectors/tools/unicast.py).
 ## Goals
 
 1. **Little overhead.** Every byte is airtime, and airtime is the
-   metered resource. The frame carries 16 bytes of overhead, against 28
-   for a Meshtastic direct message. For a 40-byte text at SF11/250 kHz
-   (CR 4/5, 16-symbol preamble) that is 682 ms on the air instead of
-   764 ms.
-2. **Nothing in clear that names either end.** An observer sees no
-   sender, no recipient and no message counter, only values that look
-   random and change with every message.
+   metered resource. The frame carries 23 bytes of overhead, against 28
+   for a Meshtastic direct message: 13 of its own, and the 10 that
+   [carry it along a route](forwarding.md#the-head). For a 40-byte text
+   at SF11/250 kHz (CR 4/5, 16-symbol preamble) that is 723 ms on the
+   air instead of 764 ms.
+2. **Nothing of its own in clear that names either end.** What this
+   section puts in a frame shows an observer no sender, no recipient
+   and no message counter, only values that look random and change with
+   every message. The routing layer's ten bytes do name the node the
+   frame is for, by its routing id: see
+   [What an observer learns](forwarding.md#what-an-observer-learns).
+   They do not name the sender.
 3. **No time sync needed.** A node can receive a unicast message without
    knowing the time.
 4. **Forward secrecy, in steps.** A node that is captured later gives
@@ -103,14 +108,13 @@ is what gives forward secrecy, and only if `S` is deleted too, because
 | Offset | Bytes | Field | Authenticated |
 |---|---|---|---|
 | 0 | 1 | `hdr`: format, type and flags | yes |
-| 1 | 1 | `hop`: for the routing layer | no |
-| 2 | 2 | `label`: for the routing layer | no |
-| 4 | 4 | `dtag`: the destination tag | yes |
-| 8 | `p` | ciphertext | yes (encrypted) |
-| 8 + `p` | 8 | AEAD tag | |
+| 1 | 10 | `route`: for the routing layer | no |
+| 11 | 4 | `dtag`: the destination tag | yes |
+| 15 | `p` | ciphertext | yes (encrypted) |
+| 15 + `p` | 8 | AEAD tag | |
 
-The frame is `16 + p` bytes. A LoRa frame carries at most 255 bytes, so
-`p` is at most 239.
+The frame is `23 + p` bytes. A LoRa frame carries at most 255 bytes, so
+`p` is at most 232.
 
 `hdr` is laid out as:
 
@@ -122,15 +126,18 @@ The frame is `16 + p` bytes. A LoRa frame carries at most 255 bytes, so
 
 So `hdr` is `0x48`. Other formats, types and flags are reserved.
 
-`hop` and `label` belong to the routing layer. Relays may change them
-on every hop, so they are not authenticated end to end.
+`route` belongs to the routing layer, which defines it in
+[Frames that follow routes](forwarding.md#the-head): `hops`, `power`,
+`next` and `destination`. With `hdr` before it, it is the head every
+frame that follows a route starts with, and `dtag` is what that section
+calls the frame's `tag`. Relays change part of `route` on every hop, so
+none of it is authenticated end to end: a frame whose `destination` has
+been changed goes astray, as one that is dropped does, and the node it
+reaches holds no tag for it.
 
-**To be changed.** The routing layer is now drafted, and needs more
-than these three bytes: [Frames that follow routes](forwarding.md#the-head)
-puts ten bytes where `hop` and `label` are, which moves the destination
-tag to offset 11 and makes the overhead 23 bytes. Nothing else here
-changes. This section and its vectors still give the layout above, and
-are to be brought into line.
+As first drafted, this frame held three bytes for the routing layer,
+`hop` and `label`, with the destination tag at offset 4 and 16 bytes of
+overhead. No frame of that layout is a frame of this section.
 
 ## Sending
 
@@ -146,8 +153,8 @@ To send plaintext `P` as message `n` in direction `d`:
 3. The sender computes `dtag_d(n)`, and sets
    `A = hdr || dtag_d(n)`.
 4. The frame is
-   `hdr || hop || label || dtag_d(n) || CCM(MK_d(n), N_d(n), A, P)`,
-   with `label` big-endian.
+   `hdr || route || dtag_d(n) || CCM(MK_d(n), N_d(n), A, P)`, with
+   `route` as the routing layer sets it.
 5. Once a sender has sent every message it will send in epoch `e`, it
    MUST derive and keep `EK_d(e+1)` (unless `e` is the last epoch), and
    then MUST erase `EK_d(e)` and every message key derived from it.
@@ -168,9 +175,9 @@ matched with one lookup however many contacts the node has.
 
 To receive a frame:
 
-1. A receiver MUST discard a frame shorter than 16 bytes, or whose
+1. A receiver MUST discard a frame shorter than 23 bytes, or whose
    `hdr` is not one it implements.
-2. It looks up bytes 4 to 7 in its table. If there is no match, the
+2. It looks up bytes 11 to 14 in its table. If there is no match, the
    frame is not for this node, and the receiver MUST NOT treat it as an
    error.
 3. For each match, in any order, it computes `A = hdr || dtag`, and
@@ -187,18 +194,24 @@ To receive a frame:
    (unless `e` is the last epoch), and then MUST erase `EK_d(e)` and
    every message key derived from it.
 
-`hop` and `label` play no part in the check: a frame is accepted
-whatever they hold.
+`route` plays no part in the check: a frame is accepted whatever it
+holds. Whether a frame is this node's to open at all is the routing
+layer's to say, from `destination`, before any of this.
+
+A frame that is not accepted may still be a copy of one that was, sent
+again because its acknowledgement was lost.
+[Frames that follow routes](forwarding.md#messages) says which copies a
+receiver answers, and with what.
 
 ## Conformance
 
 An implementation conforms to this section if, for every case in
 [`vectors/unicast-security.json`](../vectors/unicast-security.json):
 
-* **accepted:** given `session_secret`, `direction`, `counter`, `hop`,
-  `label` and `plaintext` (setting the counter is a test hook; in use, a
-  sender chooses it, as `senders` checks), it produces exactly `frame`,
-  and, as a
+* **accepted:** given `session_secret`, `direction`, `counter`, `hops`,
+  `power`, `next`, `destination` and `plaintext` (setting the counter is
+  a test hook; in use, a sender chooses it, as `senders` checks), it
+  produces exactly `frame`, and, as a
   receiver holding `session_secret` and expecting `counter`, it accepts
   `frame` and recovers `plaintext`;
 * **rejected:** as a receiver holding `session_secret` and expecting
@@ -211,13 +224,14 @@ An implementation conforms to this section if, for every case in
   frame cannot;
 * **collisions:** as a receiver holding every session in `sessions`,
   all new, with their tags in one table, given each frame of
-  `deliveries` in order, it accepts every one, attributed to the
-  session and counter given. The two sessions' tags collide, so this
+  `deliveries` in order, it accepts exactly those whose `accept` is
+  true, attributed to the session and counter given. The two sessions' tags collide, so this
   checks that every matching entry is tried, and, where both frames go
   to one receiver, that accepting one removes only its own entry;
 * **senders:** as both ends of a new session holding `session_secret`,
   given each send of `sends` in order (`direction` and `plaintext`, with
-  `hop` and `label` 0), choosing every counter itself, it produces
+  `route` as the file's description gives it), choosing every counter
+  itself, it produces
   exactly that send's `frame`. These check that a sender starts at 0,
   adds one each time and never repeats a counter, and that the two
   directions count separately, which a case that is handed its counter
@@ -230,8 +244,13 @@ forward secrecy this section claims does not exist; they are checked by
 reviewing an implementation, not by the suite.
 
 Each case also gives the intermediate values (epoch key, message key,
-tag key, nonce base, nonce and tag) to help find where an implementation
-goes wrong.
+tag key, nonce base, nonce, tag and the acknowledgement's `proof`) to
+help find where an implementation goes wrong.
+
+The file's `acknowledgements`, and `acknowledge` and `proof` in its
+`sequences` and `collisions`, are for
+[Frames that follow routes](forwarding.md#conformance), which defines
+what they check. They are in this file because they need its keys.
 
 ## Rationale
 
@@ -252,10 +271,12 @@ billion years. LoRaWAN uses a 4-byte tag for the same reason. Saving 8
 bytes per frame matters more here.
 
 **A blinded tag instead of addresses.** Meshtastic sends sender,
-recipient and packet id in clear. Here the only clear field a receiver
-needs is four bytes that only the two ends of the session can compute,
-and that change with every message. The receiver works out the sender
-and the counter from which tag matched, so neither travels.
+recipient and packet id in clear. Here what tells a receiver that a
+frame is one it can open is four bytes that only the two ends of the
+session can compute, and that change with every message. The receiver
+works out the sender and the counter from which tag matched, so neither
+travels. The recipient's routing id does travel, in `route`, for the
+nodes that pass the frame along.
 
 **Tags from the counter, not from time.** The tag depends only on the
 counter, so a receiver needs no clock to know which tags to expect.
@@ -299,8 +320,6 @@ deliberately left out of this draft:
 * **Length.** The ciphertext is as long as the plaintext, so an
   observer learns the message's length. Padding costs airtime, and the
   trade-off is undecided.
-* **Groups, broadcast, announces and acknowledgements**, each a
-  different frame type.
-* **`hop` and `label`**, which the routing layer defines.
+* **Groups, broadcast and announces**, each a different frame type.
 * **Measured cost on the nRF52840:** tag lookups at 50, 100 and 500
   contacts, AES and HKDF timings, and RAM per session.

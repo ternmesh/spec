@@ -77,12 +77,11 @@ byte from `destination` on is equal, which for a message takes in its
 ciphertext and check. `tag` is only where an acknowledgement is matched
 to its message, since an acknowledgement carries nothing else of it.
 
-In the [secured unicast frame](unicast-security.md) as first drafted,
-`hop` and `label` held three bytes for this layer. Bytes 1 to 10 here
-take their place, so that frame's overhead is 23 bytes, not 16, and its
-destination tag is at offset 11. Its `hdr` and destination tag are
-authenticated as before; `hops`, `power`, `next` and `destination` are
-not. That section and its vectors are still to be changed to match.
+Bytes 1 to 10 are what the
+[secured unicast frame](unicast-security.md#the-frame) calls `route`,
+and leaves to this section. That frame's `hdr` and destination tag are
+authenticated end to end; `hops`, `power`, `next` and `destination` are
+not.
 
 ## Sending
 
@@ -185,9 +184,31 @@ another way.
 answers with an acknowledgement to the node it came from, which it
 knows from the session the tag belongs to. It answers every copy it
 receives: an acknowledgement is one frame, and as easily lost as any.
-So a destination MUST keep, for the messages it accepted most recently,
-what it needs to acknowledge them again, since a copy of a message
-already accepted is in no window.
+
+**A copy** is a message frame that the destination does not accept,
+and whose tag is the destination tag of a message it has accepted, in
+any session it holds, with a counter no more than 31 below that
+direction's `H`. A destination MUST acknowledge a copy as it did the
+message, and MUST NOT accept it, or acknowledge any other frame it does
+not accept.
+
+Four bytes can be the tag of more than one such message, in two
+sessions or in one, and nothing else in a copy says which it is a copy
+of. So a destination MUST acknowledge every one of them, each with its
+own `proof` and to its own session's other end: one of the
+acknowledgements is the one that was lost, and the others are copies of
+acknowledgements already sent, which their sources ignore or have no
+more use for.
+
+So it keeps the tags of the counters it has accepted for as
+long as they are within 31 of `H`: those of the lower half of its
+window, which it computed to receive them.
+
+A copy is known by its tag alone, with nothing checked: the key that
+would check it may be erased by then, as the secured unicast frame
+requires. That gives away nothing. `proof` goes out only for a message
+that was accepted, says only that it was, and has been sent in clear
+once already.
 
 `proof` shows that the destination, and no node on the way, sent the
 acknowledgement. For message `n` in direction `d`:
@@ -208,7 +229,11 @@ ACK_WAIT + ACK_FACTOR × the route's metric, in milliseconds
 ```
 
 from when the message first goes on the air: the metric is airtime, so
-this is a few journeys there and back. Without a valid acknowledgement
+this is a few journeys there and back. An acknowledgement is **valid**
+for a message if its `tag` is the message's destination tag and its
+`proof` is the one above for the message's direction and counter; a
+source MUST NOT take any other as showing that a message arrived.
+Without a valid acknowledgement
 by then it starts the message again — the same frame, with `hops` at
 `HOP_MAX`, on whatever route it has now, whatever had become of the
 copy before — up to `RETRIES` times. After the last wait it gives the
@@ -259,10 +284,26 @@ An implementation conforms to this section if, for
   full power, it sends the frame for the `try`-th time, from 0, at
   `power`.
 
-`proof` has no vector yet: it comes with the secured unicast frame's
-change to this head. When frames go depends on random times and on what
-is heard, and is checked by running implementations against each other
-and against the simulator.
+and, for
+[`vectors/unicast-security.json`](../vectors/unicast-security.json),
+which holds the cases that need a session's keys:
+
+* **acknowledgements:** as the node that sent message `counter` in
+  `direction` of the session `session_secret`, it takes `frame` as
+  showing that the message arrived, or not, as `valid` says;
+* **sequences:** as that file's receiver, it acknowledges exactly the
+  deliveries whose `acknowledge` is true, each with the delivered
+  frame's tag and that `proof`. A delivery acknowledged and not
+  accepted is a copy;
+* **collisions:** as that file's receiver, for each delivery it sends
+  exactly the acknowledgements in `acknowledge`, in any order: for each,
+  the delivered frame's tag and that `proof`, to the other end of that
+  `session`. A copy whose tag two accepted messages share is
+  acknowledged for both.
+
+When frames go depends on random times and on what is heard, and is
+checked by running implementations against each other and against the
+simulator.
 
 ## What an observer learns
 
@@ -340,11 +381,10 @@ dead found sooner.
 
 ## Not yet specified
 
-* **The secured unicast frame with this head**: its section and vectors
-  still give the three bytes first drafted.
 * **Routing ids that change** ([above](#what-an-observer-learns)).
-* **Which messages a destination keeps to acknowledge again**, and for
-  how long.
+* **First contact along a route.** A session is made by
+  [first contact](first-contact.md), whose frames do not carry this
+  head, so two nodes can make one only while each hears the other.
 * **A flood when the routes are stale.** The simulator floods a message
   given up at a leaf that has moved, through relays, a few hops. It
   needs broadcast, which is not specified.

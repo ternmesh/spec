@@ -35,7 +35,7 @@ at US915 DR0 (400 ms), and 36, 99 and 197 bytes at CN470 DR1 to DR3 (1 s).
    each other's keys, SF8 for real first contact, and SF7 if both sides send signatures and
    keys. The preamble makes no difference to which SF.
 4. **This is a region-profile problem more than an EDHOC one.** A secured unicast frame carries
-   16 bytes of overhead, so at SF10/125 kHz under 400 ms it can carry 3 bytes of text. Tern's
+   23 bytes of overhead, so at SF10/125 kHz under 400 ms even an empty one does not fit. Tern's
    profile for dwell-limited regions will have to use SF9 or faster at 125 kHz, or the US 500 kHz
    channels, whatever first contact does. SF9 is not enough for first contact, though: under
    400 ms its longest frame is 57 bytes (16-symbol preamble), and first contact's `message_3` is
