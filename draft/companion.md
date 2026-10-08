@@ -427,6 +427,11 @@ least `id` of any message it holds that is still waiting or sent,
 since those are the ones whose state may have changed unseen. `after`
 of 0 asks for every message.
 
+A client that speaks a later version to a node than it did when it
+last synced with it gives `after` of 0, once. The node may hold
+records of kinds the client was not sent then, with `id`s below ones
+it was.
+
 A node keeps only so many messages, and MAY forget the oldest without
 news. A client that wants them keeps its own copy.
 
@@ -499,9 +504,12 @@ address, with `ERROR` 4, and empty `text` with `ERROR` 3. It sends to
 an address whether or not it is a contact, making first contact if it
 has no session.
 
-**`READ`** marks every received message whose `id` is `through` or
-less as read. It is how a client tells the node, and every other
-client, that the user has seen them.
+**`READ`** marks as read every received message whose `id` is
+`through` or less, and every received group message and invite
+likewise, if the client's version defines them. A client of an earlier
+version was never sent those, so its user has not seen them, and its
+`READ` leaves them unread. It is how a client tells the node, and
+every other client, that the user has seen them.
 
 **`SAVE_CONTACT`** saves `address` as a contact with `name`, or
 renames it if it is one already. An empty name is a name. A node MUST
