@@ -4,7 +4,8 @@
     python3 vectors/tools/companion.py generate   # rewrite vectors/companion.json
     python3 vectors/tools/companion.py check      # fail if the file differs from what this computes
 
-Needs nothing outside the standard library; routing ids come from routing.py, beside this file.
+Needs nothing outside the standard library; routing ids come from routing.py, and base32 from
+sharing.py, beside this file.
 Before computing anything it checks its CRC against the published check value for CRC-16/IBM-3740,
 its HKDF-Expand against RFC 5869, and its encoder against frames worked by hand.
 
@@ -20,10 +21,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import routing  # noqa: E402
+import sharing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 6
+VERSION = 7
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -31,6 +33,7 @@ STREAM_TAIL = 2  # the CRC
 
 NAME_MAX, TEXT_MAX, FIRMWARE_MAX, REGION_MAX = 31, 128, 31, 15
 BOARD_MAX, RELEASE_MAX = 31, 31
+LINK_MAX = 102  # the longest join code (draft/groups.md#join-codes)
 UPDATE_CHUNK = 172
 
 # Each field is (name, kind, and for a string or bytes its longest). Kinds: u8, i8, u16, i16, u32,
@@ -59,6 +62,8 @@ FRAMES = {
     0x23: ("SEND_GROUP", [("ref", U32), ("group", GID), ("text", STR, TEXT_MAX)]),
     0x24: ("SEND_INVITE", [("group", GID), ("to", ADDR)]),
     0x25: ("JOIN", [("id", U32)]),
+    0x26: ("GROUP_LINK", [("group", GID)]),
+    0x27: ("JOIN_LINK", [("link", STR, LINK_MAX)]),
     0x30: ("UPDATE_BEGIN", [("size", U32), ("digest", DIGEST)]),
     0x31: ("UPDATE_DATA", [("offset", U32), ("data", RAW, UPDATE_CHUNK)]),
     0x32: ("UPDATE_END", []),
@@ -77,6 +82,7 @@ FRAMES = {
     0x44: ("QUEUED", [("id", U32)]),
     0x45: ("MADE", [("group", GID)]),
     0x46: ("UPDATING", [("offset", U32)]),
+    0x47: ("LINK", [("link", STR, LINK_MAX)]),
     # News, node to client.
     0x80: ("SELF", [("address", ADDR), ("role", U8), ("region", STR, REGION_MAX), ("power", I8),
                     ("time", U32), ("cards", U8), ("card_name", STR, NAME_MAX)]),
@@ -126,6 +132,7 @@ TYPE_SINCE = {
     **{t: 4 for t in (0x30, 0x31, 0x32, 0x46)},  # updates
     **{t: 5 for t in (0x33, 0x34, 0x35, 0x8E, 0x8F, 0x90, 0x91)},  # positions
     **{t: 6 for t in (0x92, 0x93)},  # cards
+    **{t: 7 for t in (0x26, 0x27, 0x47)},  # join codes
 }
 
 
@@ -166,6 +173,14 @@ def group_id(secret):
     """A group's id: HKDF-Expand (RFC 5869) with SHA-256, keyed with the group's secret, for
     eight bytes, which is the first block's first eight."""
     return expand(secret, b"tern v0 group id", 8)
+
+
+def join_link(secret, name):
+    """A group's join code (draft/groups.md#join-codes): its secret, a check and its name, in
+    base32 after the link's #."""
+    raw = name.encode("utf-8")
+    check = hashlib.sha256(b"tern group code" + secret + raw).digest()[:2]
+    return "HTTPS://TERNMESH.ORG/G#" + sharing.b32(secret + check + raw)
 
 
 def expand(prk, info, length):
@@ -351,6 +366,9 @@ TRAIL = "Trail crew · ask me"  # the name Dave's cards carry, as one of cards.j
 MADE_SECRET = bytes(range(16))
 INVITED_SECRET = bytes.fromhex("c4" * 16)
 HUT, RIDGE = group_id(MADE_SECRET), group_id(INVITED_SECRET)
+# The first group's join code with one letter of the secret typed wrong: its check fails.
+_hut = join_link(MADE_SECRET, "Hut")
+MISTYPED = _hut[:23] + ("B" if _hut[23] != "B" else "C") + _hut[24:]
 
 # The image an update sends: 400 bytes, so two whole chunks and a short one. A node in the
 # vectors runs any image whose digest is right; a real one also checks that it is an image for
@@ -375,6 +393,7 @@ def build():
     self_check()
 
     examples = [
+        ("HELLO", 1, {"version": 7}),
         ("HELLO", 1, {"version": 6}),
         ("HELLO", 1, {"version": 5}),
         ("HELLO", 1, {"version": 4}),
@@ -419,6 +438,9 @@ def build():
         ("SET", 33, {"setting": 5, "value": 0}),
         ("SET", 34, {"setting": 6, "value": "Ada · hut warden"}),
         ("SET", 35, {"setting": 6, "value": ""}),
+        ("GROUP_LINK", 36, {"group": RIDGE}),
+        ("JOIN_LINK", 37, {"link": join_link(MADE_SECRET, "Hut")}),
+        ("JOIN_LINK", 38, {"link": join_link(INVITED_SECRET, "x" * NAME_MAX)}),
         ("OK", 4, {}),
         ("ERROR", 15, {"code": 4}),
         ("INFO", 1, {"version": 4, **FIRMWARE}),
@@ -432,6 +454,7 @@ def build():
         ("ERROR", 24, {"code": 10}),
         ("ERROR", 26, {"code": 11}),
         ("ERROR", 29, {"code": 12}),
+        ("LINK", 36, {"link": join_link(INVITED_SECRET, "Ridge walkers")}),
         ("SELF", 0, {"address": ALICE, "role": 1, "region": "EU868", "power": 14,
                      "time": 1_790_000_000, "cards": 1, "card_name": "Ada · hut warden"}),
         ("SELF", 1, {"address": ALICE, "role": 0, "region": "US915", "power": -9, "time": 0,
@@ -547,6 +570,9 @@ def build():
         encode("CARD", 29, address=DAVE, heard=1260, name="")[:-1],
         encode("CARD", 29, address=DAVE, heard=1260, name="")[:-1] + b"\x02\xc3\x28",
         encode("CARD_GONE", 31, address=DAVE)[:-1],
+        encode("GROUP_LINK", 36, group=RIDGE)[:-1],
+        encode("JOIN_LINK", 37, link="")[:-1] + bytes([LINK_MAX + 1]) + b"A" * (LINK_MAX + 1),
+        encode("LINK", 36, link=join_link(INVITED_SECRET, "Ridge walkers"))[:-1],
     ]:
         why = decode(frame)
         assert isinstance(why, str), frame.hex()
@@ -703,6 +729,15 @@ def build():
         ("node", encode("OK", 23)),
         ("node", encode("SELF", 34, **{**self_, "card_name": "Ada · hut warden"})),
         ("node", encode("CARD_GONE", 35, address=DAVE)),
+        # The user asks for the second group's join code, to show it; joins the group it left,
+        # from that group's code; and types a code with a letter wrong, which is refused.
+        ("client", encode("GROUP_LINK", 24, group=RIDGE)),
+        ("node", encode("LINK", 24, link=join_link(INVITED_SECRET, "Ridge walkers"))),
+        ("client", encode("JOIN_LINK", 25, link=join_link(MADE_SECRET, "Hut"))),
+        ("node", encode("MADE", 25, group=HUT)),
+        ("node", encode("GROUP", 36, group=HUT, name="Hut")),
+        ("client", encode("JOIN_LINK", 26, link=MISTYPED)),
+        ("node", encode("ERROR", 26, code=3)),
     ])
 
     counted = [f["seq"] for f in exchange if f["type"] in NEWS_NAMES]
@@ -801,6 +836,24 @@ def build():
         ("node", encode("ERROR", 3, code=1)),
     ], 5)})
 
+    # A client of version 6, to the node as the exchange begins: the same sync as the exchange's,
+    # and its last request is one its version does not define.
+    older.append({"version": 6, "frames": connection([
+        ("client", encode("HELLO", 1, version=6)),
+        ("node", info(6)),
+        ("client", encode("SYNC", 2, after=0)),
+        ("node", encode("SELF", 0, speak=6, **self_)),
+        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("MESSAGE", 2, flags=0, **where)),
+        ("node", encode("NEIGHBOUR", 3, **neighbour)),
+        ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
+        ("node", encode("AIRTIME", 5, **airtime)),
+        ("node", encode("POWER", 6, **power)),
+        ("node", encode("SYNCED", 2, news=7, speak=6)),
+        ("client", encode("JOIN_LINK", 3, link=join_link(MADE_SECRET, "Hut"))),
+        ("node", encode("ERROR", 3, code=1)),
+    ], 6)})
+
     # Frames a later version defines, as a receiver of an earlier version reads them: a type it
     # does not know. A node answers such a request with ERROR 1; a client ignores such news.
     unknown_to_older = []
@@ -823,6 +876,9 @@ def build():
         ("SET", 5, {"setting": 6, "value": TRAIL}),
         ("CARD", 5, {"address": DAVE, "heard": 1260, "name": TRAIL}),
         ("CARD_GONE", 5, {"address": DAVE}),
+        ("GROUP_LINK", 6, {"group": RIDGE}),
+        ("JOIN_LINK", 6, {"link": join_link(MADE_SECRET, "Hut")}),
+        ("LINK", 6, {"link": join_link(INVITED_SECRET, "Ridge walkers")}),
     ]:
         frame = encode(name, 5, **values)
         assert isinstance(decode(frame), dict)
@@ -908,7 +964,7 @@ def build():
                  for g in (MADE_SECRET, INVITED_SECRET, bytes(16), bytes([0xFF] * 16))]
 
     return {
-        "description": "The companion protocol, version 6 (draft/companion.md). Frames, streams, "
+        "description": "The companion protocol, version 7 (draft/companion.md). Frames, streams, "
         "addresses and group ids are hex; numbers are numbers; strings are text. In frames, "
         "frame is the frame alone, as one BLE write or notification carries it, and stream is "
         "the same frame as it goes on a byte stream. In extended, frame carries bytes past the "
@@ -928,7 +984,9 @@ def build():
         "from the second address, just before its POSITION. It holds a card from the fourth "
         "address from the start, received 1260 seconds before the sync; after the CONTACT that "
         "follows END_SESSION it accepts a newer card from that address, with the same name, "
-        "just before the CARD that says so, and forgets it just before the CARD_GONE. Older "
+        "just before the CARD that says so, and forgets it just before the CARD_GONE. Its last "
+        "JOIN_LINK carries the first group's join code with one character of the secret typed "
+        "wrong. Older "
         "holds connections to the same node by clients of "
         "earlier versions. To the client of version 0 it holds what the exchange begins with, "
         "and refuses that first contact after the sync, before the client's SAVE_CONTACT. To "
@@ -942,7 +1000,9 @@ def build():
         "with that address: the sync sends neither, and the node refuses the request each "
         "client's version does not define, which it must not send. To the client of version 5 "
         "it holds what the exchange begins with, and the sync sends no card; the client's last "
-        "request names a setting its version does not define. Positions are in units of "
+        "request names a setting its version does not define. To the client of version 6 it holds "
+        "what the exchange begins with, and the client's last request is one its version does not "
+        "define. Positions are in units of "
         "10^-7 degree. Each connection's frames are read by the "
         "version its client speaks, and each client of an earlier version is sent an INFO "
         "without board and release. Update is one update of image, whose SHA-256 is "

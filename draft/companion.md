@@ -115,6 +115,8 @@ its field allows, or if a `str` is not valid UTF-8.
 | `0x23` | `SEND_GROUP` | `ref` `u32`, `group` `gid`, `text` `str` up to 128 | `QUEUED` |
 | `0x24` | `SEND_INVITE` | `group` `gid`, `to` `addr` | `QUEUED` |
 | `0x25` | `JOIN` | `id` `u32` | `OK` |
+| `0x26` | `GROUP_LINK` | `group` `gid` | `LINK` |
+| `0x27` | `JOIN_LINK` | `link` `str` up to 102 | `MADE` |
 | `0x30` | `UPDATE_BEGIN` | `size` `u32`, `digest` `digest` | `UPDATING` |
 | `0x31` | `UPDATE_DATA` | `offset` `u32`, `data` `bytes` up to 172 | `OK` |
 | `0x32` | `UPDATE_END` | | `OK` |
@@ -135,6 +137,7 @@ Any request may instead be answered by `ERROR`.
 | `0x44` | `QUEUED` | `id` `u32` |
 | `0x45` | `MADE` | `group` `gid` |
 | `0x46` | `UPDATING` | `offset` `u32` |
+| `0x47` | `LINK` | `link` `str` up to 102 |
 
 `firmware` names the node's software, for a person to read. A client
 MUST NOT decide what the node supports from it: that is what `version`
@@ -301,7 +304,9 @@ The id is the same on every node that holds the group, and gives
 nothing of the secret away. Like the name, it is for the node and its
 clients: a node MUST NOT send either on the air, but for the name in an
 [invite](groups.md#invites). No frame of this protocol carries a
-group's secret, in either direction.
+group's secret, but for a [join code](groups.md#join-codes), which
+carries it on purpose, and only when the user asks: in `LINK`, when
+the user asks to show one, and in `JOIN_LINK`, when they join from one.
 
 **Group messages** (`GROUP_MESSAGE`). A message written to a group, or
 received from one. Its `id` is from the same count as a `MESSAGE`'s,
@@ -332,6 +337,18 @@ invite has been [read](#reading).
 A node holds the secret a received invite carried for as long as it
 holds the invite, so that the user can [`JOIN`](#the-requests) later.
 It MUST NOT hold the group itself until then.
+
+**Join codes.** A client shows a group's [join
+code](groups.md#join-codes) by asking the node for it with
+`GROUP_LINK`, and joins a group from one by handing the node the code
+with `JOIN_LINK`. Either way the code passes through the client as the
+link, text the client shows or was given, and the client need not read
+the secret out of it. A client MUST NOT send `GROUP_LINK` unless its
+user asked to see or share that group's code, and MUST NOT send
+`JOIN_LINK` unless its user asked to join from that code. It MUST NOT
+keep a link it was given by `LINK`, nor one it sent with `JOIN_LINK`,
+once it has shown or sent it: a client that does not keep the secret
+has none to lose.
 
 ### Positions
 
@@ -478,7 +495,9 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 6. Version 5 is the same without [cards](#cards): the settings
+version 7. Version 6 is the same without
+[join codes](groups.md#join-codes): the requests `0x26` and `0x27`,
+and `LINK`. Version 5 is version 6 without [cards](#cards): the settings
 5 and 6, `SELF`'s `cards` and `card_name`, and the news `CARD` and
 `CARD_GONE`. Version 4 is version 5 without [positions](#positions):
 the requests `0x33` to `0x35`, error 12, and the news `POSITION`,
@@ -517,8 +536,8 @@ A client then, typically, sets the node's clock and syncs:
 
 ```
 client                         node
-HELLO       seq 1, version 6  ─▶
-                              ◀─  INFO        seq 1, version 6
+HELLO       seq 1, version 7  ─▶
+                              ◀─  INFO        seq 1, version 7
 SET_TIME    seq 2             ─▶
                               ◀─  OK          seq 2
 SYNC        seq 3, after 0    ─▶
@@ -584,7 +603,8 @@ it.
 
 A request given up on may have been acted on. Every request but
 `SEND`, `SEND_GROUP`, `SEND_INVITE`, `MAKE_GROUP` and `UPDATE_END` can
-be sent again without harm. `SEND_GROUP` carries a `ref` as `SEND` does, under the
+be sent again without harm: a `JOIN_LINK` sent twice joins one group,
+since the second finds it held. `SEND_GROUP` carries a `ref` as `SEND` does, under the
 same rule, with `group` in the place of `to`. An invite sent twice is
 two invites to one group, and a group made twice is two groups, one of
 which the user leaves: neither is worth a number to prevent. `SEND` carries `ref`, the client's own
@@ -717,6 +737,22 @@ the name the invite gave. A node MUST answer `ERROR` 9 if it holds no
 such invite, or the invite is one it sent, and `ERROR` 5 if it has no
 room for another group. It answers `OK` for a group it holds already,
 and changes nothing.
+
+**`GROUP_LINK`** asks for the [join code](groups.md#join-codes) of a
+group the node holds, with the name the node holds it under, and
+`LINK` answers it with the code's link, as that section writes it. A
+node MUST refuse a group it does not hold with `ERROR` 9. Nothing goes
+on the air, and nothing changes: the same group's link is the same
+until it is renamed.
+
+**`JOIN_LINK`** takes the group a join code is for, under the name the
+code gives, and `MADE` answers it with the group's id. A node MUST read
+`link` as [Groups](groups.md#join-codes) says a reader does, and
+refuse one it reads no group from with `ERROR` 3. It answers `ERROR` 5
+if it has no room for another group, and, for a group it holds
+already, `MADE` with its id, changing nothing. Nothing goes on the
+air: the node is a member from then on, and the others learn of it only
+when it writes.
 
 **`SET_POSITION`** gives the node the client's position: `lat` and
 `lon` in 10⁻⁷ degree, WGS 84, north and east positive; `altitude` in
@@ -934,7 +970,8 @@ An implementation conforms to this section if, for
   group it makes has the secret `made`, which in use the node draws;
   the `INVITE` it receives is to the group whose secret is `invited`;
   and the `GROUP_MESSAGE`, `POSITION` and second `CARD` it receives,
-  and the card it forgets, come when the file says;
+  and the card it forgets, come when the file says. Its last
+  `JOIN_LINK` is a join code whose `check` fails;
 * **older:** for each of its connections, as the same node, given the
   frames of a client of the `version` given, it sends the node's, in
   order. The node refuses the same first contact and sends a client of
@@ -947,7 +984,8 @@ An implementation conforms to this section if, for
   a client of version 4 or earlier no position or sharing, and refuses
   a client of version 4 `SHARE`; and it sends a client of version 5 or
   earlier no card, and a `SELF` without `cards` and `card_name`, and
-  refuses a client of version 5 `SET` 5;
+  refuses a client of version 5 `SET` 5; and refuses a client of
+  version 6 `JOIN_LINK`;
 * **update:** as a client, given the `image` to send and the node's
   frames in order, it sends the client's frames of each of the two
   connections in `update`, in order, going on in the second from the
@@ -982,6 +1020,19 @@ the group. The id is derived from the secret one way, so it is the
 same on each of a user's nodes, and a client that kept a group's
 history under it finds the group again after joining it afresh. Eight
 bytes are enough to tell a node's few groups apart.
+
+**Why a join code passes through the client anyway.** A join code is
+the secret, and the person joining has it on a phone: scanned, or sent
+to them. A node has no camera, so the code reaches it through a client
+or not at all, and the client of the person sharing it shows it on a
+screen the node does not have. What the rule above protects against is
+the secret on every request and in every client's storage, and that
+is kept: the code crosses the link once, when the user asks, as text
+the client shows or hands on, and is not kept. It is the link and not
+the secret that goes in the frame so that a client has nothing to
+build or read: one that shows a QR code of the text, or passes on what
+the camera read, is right without knowing what is in it, and the node,
+which reads an address's link already, reads this one too.
 
 **Why group messages and invites are records of their own.** A
 `MESSAGE` with a group's id and a writer added would have been one
@@ -1162,9 +1213,6 @@ and a node needs a way to say it cannot be updated at all.
 
 ## Not yet specified
 
-* **A group's secret as a code**, to hand to someone with no session,
-  as an address is [shared](sharing.md). No frame carries a secret, so
-  for now a group is joined by invite alone.
 * **Who is in a group.** A node does not know, and nor does a client:
   it sees the routing ids that have written.
 * **The airtime budget**: `reason` 4 names it, and `AIRTIME` gives only

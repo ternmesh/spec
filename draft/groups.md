@@ -6,9 +6,9 @@ reviewed by a cryptographer, and it must be before it is frozen.
 
 A **group** is a set of nodes that share a secret. This section defines
 the frame one of them writes for all the others, the keys it is sealed
-with, what a member does with one it receives, and how a node is handed
-a group's secret. The frame reaches the others as
-[a flood](flooding.md).
+with, what a member does with one it receives, and the two ways a node
+is handed a group's secret: an invite over a session, and a join code
+off the air. The frame reaches the others as [a flood](flooding.md).
 
 Test vectors: [`vectors/groups.json`](../vectors/groups.json), produced
 by [`vectors/tools/groups.py`](../vectors/tools/groups.py).
@@ -226,6 +226,74 @@ A node **leaves** a group by erasing `G`, `GK`, `GT` and the writers.
 The others are not told, and their frames still reach it as frames it
 cannot open.
 
+## Join codes
+
+A **join code** hands a group to someone off the air: a link, shown as
+a QR code or sent as text, that holds the group secret and a name for
+the group. Whoever has the code can join the group, with no session and
+nothing on the air, and can read every frame of it they hear from then
+on, and every one they recorded before. A join code is the group, for
+as long as the group lasts: it cannot be taken back, and it does not
+run out. [Rationale](#rationale) says why a group has one anyway.
+
+The code's **payload** is:
+
+| Offset | Bytes | Field | |
+|---|---|---|---|
+| 0 | 16 | `G` | the group secret |
+| 16 | 2 | `check` | below |
+| 18 | 0 to 31 | `name` | what whoever made the code calls the group, UTF-8 |
+
+```
+check = SHA-256("tern group code" || G || name)[0..2]
+```
+
+The link is `HTTPS://TERNMESH.ORG/G#` followed by the payload in
+base32, as [Sharing an address](sharing.md#notation) writes it:
+upper-case, no padding, the last character's spare bits zero.
+
+```
+HTTPS://TERNMESH.ORG/G#YTCMJRGEYTCMJRGEYTCMJRGEYRS2WUTJMRTWKIDXMFWGWZLSOM
+```
+
+That one is a group called `Ridge walkers`. A link is 52 characters
+for a group with no name, and 102 for one whose name is 31 bytes.
+Everything after the `#` is in the QR code's alphanumeric set, and so
+is everything before it.
+
+* An implementation that shows a join code as a QR code MUST encode the
+  link, and SHOULD encode it in three segments: alphanumeric up to the
+  `G`, byte for the `#`, and alphanumeric after it. Then a version 4
+  code at error correction level L holds any join code, and a version 3
+  code one whose name is 12 bytes or fewer.
+* An implementation MUST NOT show or send a join code unless its user
+  asked for that group's, and SHOULD say, wherever it shows one, that
+  anyone who sees it can read the group.
+* An implementation that reads a join code MUST accept it with
+  `HTTPS`, the host `TERNMESH.ORG` and the `G` each in either case, and
+  the base32 in either case, where either case means ASCII's, as for
+  [an address's link](sharing.md#the-link). It MUST refuse anything
+  else: another scheme, host or path, no `#`, base32 with any other
+  character or that is not canonical, a payload shorter than 18 bytes
+  or longer than 49, a `check` that is not the one above, and a `name`
+  that is not valid UTF-8. Reading a join code MUST NOT need the
+  network.
+* A node MUST NOT take a group from a join code on its own: as for an
+  [invite](#invites), its user says so. It holds the group under
+  `name`, which is a suggestion, and which the user may change. A node
+  that holds the group already holds it as it was.
+
+**What is at the link.** A browser that opens it fetches a page from
+`ternmesh.org`, which reads the payload from the link in the browser
+and offers to join the group from there. A browser does not send what
+follows a `#`, neither in its request for the page nor in a `Referer`,
+so the site learns that a join code was opened, and not which group.
+The page's own code sees the secret, as any app that reads the code
+does. An app MAY claim the link, as for an address's.
+
+A join code goes nowhere on the air: a node MUST NOT send one, or any
+part of one, and tells no other node that it joined from one.
+
 ## Parameters
 
 | Name | Value | |
@@ -264,11 +332,16 @@ An implementation conforms to this section if, for
   forgotten when there are more than `WRITERS`;
 * **invites:** it builds `plaintext` from `group_secret` and `name`,
   and reads them from it;
-* **bad_invites:** it ignores each `plaintext`.
+* **bad_invites:** it ignores each `plaintext`;
+* **join_codes:** from `group_secret` and `name` it builds `payload`
+  and shows `link`, and it reads `group_secret` and `name` from `link`
+  and from each of `reads`;
+* **bad_join_codes:** it reads no group from any `link`.
 
 That a nonce is random, that a writer's `count` never goes back, and
-that an invite waits for the user, cannot be checked by vectors. They
-are requirements nonetheless, checked by reviewing an implementation.
+that an invite or a join code waits for the user, cannot be checked by
+vectors. They are requirements nonetheless, checked by reviewing an
+implementation.
 
 Each `accepted` case also gives the intermediate values (the two keys,
 the CCM nonce, the tag and the plaintext) to help find where an
@@ -392,14 +465,62 @@ which frames are not words, for a byte on every frame: see
 flag drops a frame with it set, as [the flood](flooding.md#the-head)
 of before did, and misses positions and no words.
 
-**Invites over sessions.** A secret typed in, or shown as a code, would
-need no session, and the companion link may yet offer both. An invite
-over a session needs nothing new on the air but one flag, comes from a
-node the user has already chosen to talk to, and is as private as
-anything else the two say.
+**Invites over sessions.** An invite needs nothing new on the air but
+one flag, comes from a node the user has already chosen to talk to,
+and is as private as anything else the two say. It is the way to hand
+a group to one person who is far away.
+
+**Join codes too.** An invite takes a contact, then a session, which
+is first contact's four frames over whatever route there is, and then
+the invite: before anyone can join, everyone has to be added and
+reached. A group that forms where its people stand together, at a
+trailhead, a hut or a meeting, wants one code on one screen that each
+of them scans. Meshtastic hands over a channel that way, and it is the
+way people expect a group to begin. A join code costs nothing on the
+air and needs no route. Its price is the one this section already
+states for the secret: whoever holds it reads the group. A code makes
+that easier to give away, in a photograph or a forwarded message, so
+it is shown only when asked for, and says so.
+
+**The secret in the code, not a ticket.** A code could hold a member's
+address and a token instead, for the joiner's node to present over a
+session to that member's node, which would then send an invite. That
+would let a member's node refuse a token once used, or after a while.
+It would also need that member's node on and reachable when each
+person joins, cost first contact and an invite for each of them, and
+need a new message on the air. The group would be no safer once
+joined: every member still holds the secret, and can give it away by
+other means. The gain, a code that stops working, is worth less than
+a code that works with nobody's node on the air.
+
+**After a `#`.** An address's link puts the address in its path, and
+the site learns which address was looked at. For a group that would
+hand the site the secret, so the payload goes where a browser keeps it
+to itself. The `#` is not in the QR code's alphanumeric set, which
+costs a byte segment of its own, 20 bits; [Sharing an
+address](sharing.md#rationale) could not afford that in a version 3
+code, and a join code, which a phone or a computer shows and not a
+node's 64-pixel screen, can. `G` in the path leaves `A` for addresses.
+
+**A name in the code.** An invite carries what the inviter calls the
+group, so the person joining sees what they are joining before they
+say yes. A code does the same. It is shown on a phone's or a
+computer's screen, not a node's, so the name needs no tighter limit
+than an invite's.
+
+**Two bytes of check.** A code may be typed, on a device with no
+camera. A wrong letter in `G` would make a different group, which
+nobody else is in: the user would join, write, and hear nothing. A
+check catches all but one in 65,536 such mistakes, and costs about
+three characters. It covers `name` too, so a code is read as it was made or
+not at all. Its label keeps it apart from the [group's
+id](companion.md#groups), which is also a function of `G`.
 
 ## Not yet specified
 
+* **A code that runs out**, or that a member's node can refuse once
+  used, for groups that want to hand themselves out more carefully than
+  a join code allows: see [Rationale](#rationale).
 * **An old frame a member never read.** A frame recorded and flooded
   again is accepted, as new words, by a member that did not receive it
   and has accepted nothing later from its writer: one that was out of

@@ -10,6 +10,7 @@ them against RFC 5869 and RFC 3610 before anything is computed.
 Like everything under vectors/, this file is dedicated to the public domain (CC0-1.0).
 """
 
+import base64
 import hashlib
 import json
 import struct
@@ -20,6 +21,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESCCM
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import sharing  # noqa: E402
 import unicast  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "groups.json"
@@ -132,6 +134,56 @@ def read_invite(p):
         return None
     try:
         return p[1:17], p[17:].decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+JOIN_LINK = "HTTPS://TERNMESH.ORG/G#"
+JOIN_LABEL = b"tern group code"
+PAYLOAD_MIN, PAYLOAD_MAX = 18, 18 + NAME_MAX
+
+
+def join_payload(g, name):
+    """A join code's payload: the secret, its check, and the name."""
+    assert len(g) == 16 and len(name.encode()) <= NAME_MAX
+    raw = name.encode()
+    return g + hashlib.sha256(JOIN_LABEL + g + raw).digest()[:2] + raw
+
+
+def join_link(g, name):
+    return JOIN_LINK + sharing.b32(join_payload(g, name))
+
+
+def unb32_any(s):
+    """Canonical base32 of any length, either case, as bytes; None for anything else."""
+    s = s.upper()
+    if not s or any(ch not in sharing.BASE32 for ch in s):
+        return None
+    bits = 5 * len(s)
+    whole, spare = divmod(bits, 8)
+    if spare >= 5:  # a character that carries no bit of any byte
+        return None
+    n = 0
+    for ch in s:
+        n = n << 5 | sharing.BASE32.index(ch)
+    if n & ((1 << spare) - 1):
+        return None
+    return (n >> spare).to_bytes(whole, "big")
+
+
+def read_join(s):
+    """(secret, name) from a join code, or None. Only ASCII is looked at, and the scheme, host and
+    path are taken in either case, as an address's link is."""
+    if not s.isascii() or s[: len(JOIN_LINK)].upper() != JOIN_LINK:
+        return None
+    p = unb32_any(s[len(JOIN_LINK) :])
+    if p is None or not PAYLOAD_MIN <= len(p) <= PAYLOAD_MAX:
+        return None
+    g, check, raw = p[:16], p[16:18], p[18:]
+    if hashlib.sha256(JOIN_LABEL + g + raw).digest()[:2] != check:
+        return None
+    try:
+        return g, raw.decode("utf-8")
     except UnicodeDecodeError:
         return None
 
@@ -352,6 +404,7 @@ def build():
             [1] * WRITERS + [0, 1, 1, 0, 1, 0, 1, 1])
 
     invites, bad = [], []
+    joins, bad_joins = [], []
     for name in ("", "hut", "Καλημέρα", "x" * NAME_MAX):
         p = invite(g2, name)
         assert read_invite(p) == (g2, name)
@@ -367,6 +420,43 @@ def build():
         assert read_invite(p) is None
         bad.append({"name": name, "plaintext": p.hex()})
 
+    # Join codes: for a group with no name, a short one, one in another script, and the longest.
+    for name in ("", "Ridge walkers", "Καλημέρα", "x" * NAME_MAX):
+        link = join_link(g2, name)
+        assert sharing.b32(join_payload(g2, name)) == (
+            base64.b32encode(join_payload(g2, name)).decode().rstrip("="))
+        assert len(link) <= len(JOIN_LINK) + -(-8 * PAYLOAD_MAX // 5) == 102
+        tail = link[len(JOIN_LINK) :]
+        reads = [link.lower(), "https://ternmesh.org/g#" + tail, "Https://TernMesh.org/G#" + tail.lower()]
+        for r in [link, *reads]:
+            assert read_join(r) == (g2, name), r
+        joins.append({"group_secret": g2.hex(), "name": name,
+                      "payload": join_payload(g2, name).hex(), "link": link, "reads": reads})
+    good = join_link(g2, "Hut")
+    tail = good[len(JOIN_LINK) :]
+    p = join_payload(g2, "Hut")
+    for why, link in [
+        ("another scheme", "HTTP://TERNMESH.ORG/G#" + tail),
+        ("another host", "HTTPS://TERNMESH.NET/G#" + tail),
+        ("an address's path", "HTTPS://TERNMESH.ORG/A#" + tail),
+        ("in the path, not after a #", "HTTPS://TERNMESH.ORG/G/" + tail),
+        ("a character that is not base32", good[:-1] + "1"),
+        ("a last character whose spare bits are not zero", JOIN_LINK + tail[:-1]
+         + sharing.BASE32[sharing.BASE32.index(tail[-1]) | 1]),
+        ("a character too many", good + "A"),
+        ("a payload too short", JOIN_LINK + sharing.b32(p[:17])),
+        ("a payload too long", JOIN_LINK + sharing.b32(join_payload(g2, "x" * NAME_MAX) + b"x")),
+        ("a check that is wrong", JOIN_LINK + sharing.b32(p[:16] + bytes([p[16] ^ 1]) + p[17:])),
+        ("a secret with a letter wrong", JOIN_LINK + sharing.b32(bytes([p[0] ^ 0x10]) + p[1:])),
+        ("a name that is not UTF-8", JOIN_LINK + sharing.b32(
+            g2 + hashlib.sha256(JOIN_LABEL + g2 + b"\xff").digest()[:2] + b"\xff")),
+        ("a dotless i, which upper-cases to an I", "HTTPS://TERNMESH.ORG/G#" + tail.replace(
+            "I", "\u0131", 1) if "I" in tail else "HTTPS://TERNMESH.ORG/G#\u0131" + tail[1:]),
+        ("empty after the #", JOIN_LINK),
+    ]:
+        assert read_join(link) is None, why
+        bad_joins.append({"why": why, "link": link})
+
     return {
         "description": "Groups, draft 0 (draft/groups.md). Secrets, nonces, frames and content are "
         "hex; routing ids (from, self) and hops are numbers, and power is signed. hops and power "
@@ -377,7 +467,9 @@ def build():
         "from its from, with its count, sealed under group_secret with hops and power, and with a "
         "nonce of its place in deliveries, from 0, as eight bytes most significant first; frame "
         "gives it. In invites and bad_invites, plaintext is that of a "
-        "unicast message whose hdr has the node flag set (draft/unicast-security.md).",
+        "unicast message whose hdr has the node flag set (draft/unicast-security.md). In "
+        "join_codes, payload is the code's, link is how it is shown, and reads are other ways it "
+        "is written that read as the same code; each of bad_join_codes reads as none.",
         "generator": "vectors/tools/groups.py",
         "accepted": accepted,
         "rejected": rejected,
@@ -385,6 +477,8 @@ def build():
         "counts": counts,
         "invites": invites,
         "bad_invites": bad,
+        "join_codes": joins,
+        "bad_join_codes": bad_joins,
     }
 
 
