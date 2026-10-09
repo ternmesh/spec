@@ -28,9 +28,11 @@ by [`vectors/tools/groups.py`](../vectors/tools/groups.py).
    secret and nothing else: no counter shared between writers, no
    clock, no list of members. A writer counts its own frames, and asks
    nobody.
-5. **A frame is read once.** A frame recorded and sent again is not
-   read again by a member that read it, nor by one that has since read
-   later frames from the same writer.
+5. **A frame is read once**, by a member that still holds its writer.
+   A frame recorded and sent again is not read again by a member that
+   read it, nor by one that has since read later frames from the same
+   writer, for as long as the member [holds that writer](#receiving):
+   until it forgets it for another, or restarts without keeping it.
 6. **Standard primitives only**, and the ones a node already has:
    HKDF-SHA-256, AES-128 and AES-128-CCM.
 
@@ -139,8 +141,8 @@ learn who received it.
 
 A node meets rule 3 most simply with one count for every group it
 writes to, kept for as long as it keeps its address; a member then
-learns from `count` how many frames the writer sent to its other groups
-in between. A node that counts for each group apart tells them nothing,
+learns from `count` at most how many frames the writer sent to its
+other groups in between. A node that counts for each group apart tells them nothing,
 and has to keep a group's count after it leaves the group, or begin the
 next group it takes above every count it has used.
 
@@ -288,9 +290,10 @@ each other are likely one conversation, whatever they carry.
 
 A member learns what the frame says: the content, a routing id the
 writer chose to give, and `count`. Two counts from one writer tell it
-how many frames the writer sent between them that it did not receive,
-and, if the writer keeps one count for all its groups, how many of
-those went to groups it is not in.
+at most how many frames the writer sent between them that it did not
+receive, and, if the writer keeps one count for all its groups, at most
+how many of those went to groups it is not in. It is the number itself
+only if the writer never skips, and one that restarts does.
 
 ## Rationale
 
