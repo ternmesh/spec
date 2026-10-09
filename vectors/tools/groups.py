@@ -33,9 +33,11 @@ NONCE = HEAD  # where the nonce is
 GTAG = NONCE + 8
 BODY = GTAG + 4
 TAG_LEN = 8
-MIN_FRAME = BODY + 4 + TAG_LEN  # 27
+INSIDE = 8  # from and count, before the content
+MIN_FRAME = BODY + INSIDE + TAG_LEN  # 31
 MAX_FRAME = 255
-RECENT = 64
+WRITERS = 16
+WINDOW = 32
 RESERVED = (0, 0xFFFFFFFF)
 KIND_INVITE = 0x01
 NAME_MAX = 31
@@ -43,7 +45,7 @@ FLOOD = {"hops": 5, "power": 14}
 
 
 def group_key(g):
-    return unicast.expand(g, b"tern v0 group key", 16)
+    return unicast.expand(g, b"tern v0 group frame", 16)
 
 
 def tag_key(g):
@@ -55,10 +57,10 @@ def gtag(g, n):
     return (enc.update(bytes(8) + n) + enc.finalize())[:4]
 
 
-def seal(g, n, sender, content, flood=FLOOD, hdr=HDR):
+def seal(g, n, sender, count, content, flood=FLOOD, hdr=HDR):
     assert len(g) == 16 and len(n) == 8 and len(content) <= MAX_FRAME - MIN_FRAME and hdr in HDRS
     t = gtag(g, n)
-    plaintext = struct.pack(">I", sender) + content
+    plaintext = struct.pack(">II", sender, count) + content
     ct = AESCCM(group_key(g), tag_length=TAG_LEN).encrypt(bytes(5) + n, plaintext, bytes([hdr]) + n + t)
     return struct.pack(">BBb", hdr, flood["hops"], flood["power"]) + n + t + ct
 
@@ -69,8 +71,8 @@ def matches(g, frame):
 
 
 def open_frame(g, me, frame):
-    """A member's check, but for the nonces it holds: (from, content), or None. Whether content
-    is for the node is frame[0] & 1."""
+    """A member's check, but for the writers it holds: (from, count, content), or None. Whether
+    content is for the node is frame[0] & 1."""
     if not matches(g, frame):
         return None
     n = frame[NONCE:GTAG]
@@ -79,10 +81,10 @@ def open_frame(g, me, frame):
             bytes(5) + n, frame[BODY:], frame[0:1] + n + frame[GTAG:BODY])
     except Exception:
         return None
-    sender = struct.unpack(">I", p[:4])[0]
+    sender, count = struct.unpack(">II", p[:INSIDE])
     if sender in RESERVED or sender == me:
         return None
-    return sender, p[4:]
+    return sender, count, p[INSIDE:]
 
 
 class Member:
@@ -90,16 +92,32 @@ class Member:
 
     def __init__(self, me, secrets):
         self.me, self.secrets = me, secrets
-        self.recent = [[] for _ in secrets]
+        # For each group, its writers: a routing id to the highest count accepted, every count
+        # accepted in the window, and when a frame was last accepted from it.
+        self.writers = [{} for _ in secrets]
+        self.accepted = 0
+
+    def fresh(self, i, sender, count):
+        """Whether a frame of group i with this from and count is accepted, keeping it if so."""
+        held = self.writers[i]
+        top, had = count, set()
+        if sender in held:
+            top, had, _ = held[sender]
+            if count <= top - WINDOW or count in had:
+                return False
+            top = max(top, count)
+        self.accepted += 1
+        held[sender] = (top, {c for c in had | {count} if c > top - WINDOW}, self.accepted)
+        if len(held) > WRITERS:
+            del held[min(held, key=lambda w: held[w][2])]
+        return True
 
     def receive(self, frame):
-        """(index of the group, from, content) if the frame is accepted, else None."""
+        """(index of the group, from, count, content) if the frame is accepted, else None."""
         for i, g in enumerate(self.secrets):
             got = open_frame(g, self.me, frame)
-            if got is None or frame[NONCE:GTAG] in self.recent[i]:
-                continue
-            self.recent[i] = (self.recent[i] + [frame[NONCE:GTAG]])[-RECENT:]
-            return (i, *got)
+            if got is not None and self.fresh(i, got[0], got[1]):
+                return (i, *got)
         return None
 
 
@@ -138,9 +156,9 @@ def colliding():
 COLLIDE = (48640, 56128)
 
 
-def case(name, note, g, n, sender, content, flood=FLOOD, me=0x0A0B0C0D, hdr=HDR):
-    frame = seal(g, n, sender, content, flood, hdr)
-    assert open_frame(g, me, frame) == (sender, content)
+def case(name, note, g, n, sender, count, content, flood=FLOOD, me=0x0A0B0C0D, hdr=HDR):
+    frame = seal(g, n, sender, count, content, flood, hdr)
+    assert open_frame(g, me, frame) == (sender, count, content)
     return {
         "name": name,
         "note": note,
@@ -149,6 +167,7 @@ def case(name, note, g, n, sender, content, flood=FLOOD, me=0x0A0B0C0D, hdr=HDR)
         "group_secret": g.hex(),
         "nonce": n.hex(),
         "from": sender,
+        "count": count,
         "content": content.hex(),
         **flood,
         "self": me,
@@ -158,7 +177,7 @@ def case(name, note, g, n, sender, content, flood=FLOOD, me=0x0A0B0C0D, hdr=HDR)
             "gtag": gtag(g, n).hex(),
             "ccm_nonce": (bytes(5) + n).hex(),
             "associated_data": (bytes([hdr]) + n + gtag(g, n)).hex(),
-            "plaintext": (struct.pack(">I", sender) + content).hex(),
+            "plaintext": (struct.pack(">II", sender, count) + content).hex(),
         },
         "frame": frame.hex(),
     }
@@ -172,24 +191,25 @@ def build():
     alice, me = 0x1D2E3F40, 0x0A0B0C0D
     hello = "hello".encode()
     accepted = [
-        case("first", "a short message", g1, n1, alice, hello),
-        case("another-nonce", "the same words again: nothing in the frame is as before", g1,
-             bytes.fromhex("f0e1d2c3b4a59687"), alice, hello),
-        case("another-group", "the same nonce under another secret", g2, n1, alice, hello),
-        case("passed-on", "hops and power as a relay left them; not authenticated", g1, n1, alice,
+        case("first", "a short message, the writer's first", g1, n1, alice, 0, hello),
+        case("another-nonce", "the same words again, as the writer's next frame: nothing in the "
+             "frame is as before", g1, bytes.fromhex("f0e1d2c3b4a59687"), alice, 1, hello),
+        case("another-group", "the same nonce and count under another secret", g2, n1, alice, 0, hello),
+        case("passed-on", "hops and power as a relay left them; not authenticated", g1, n1, alice, 0,
              hello, {"hops": 2, "power": -4}),
-        case("empty", "no content: the 27-byte minimum frame", g1, bytes.fromhex("1111111111111111"),
-             alice, b""),
+        case("empty", "no content: the 31-byte minimum frame", g1, bytes.fromhex("1111111111111111"),
+             alice, 0x01020304, b""),
         case("non-latin", "UTF-8 text outside Latin script", g2, bytes.fromhex("2222222222222222"),
-             0xFFFFFFFE, "Καλημέρα".encode()),
-        case("largest", "228 bytes of content: a 255-byte frame", g2, bytes.fromhex("3333333333333333"),
-             1, bytes(i & 0xFF for i in range(MAX_FRAME - MIN_FRAME))),
+             0xFFFFFFFE, 70000, "Καλημέρα".encode()),
+        case("largest", "224 bytes of content: a 255-byte frame, with the last count there is", g2,
+             bytes.fromhex("3333333333333333"), 1, 0xFFFFFFFF,
+             bytes(i & 0xFF for i in range(MAX_FRAME - MIN_FRAME))),
         case("for-the-node", "the node flag set: content is for the node, here a position "
-             "(draft/positions.md) of a town", g1, bytes.fromhex("4444444444444444"), alice,
+             "(draft/positions.md) of a town", g1, bytes.fromhex("4444444444444444"), alice, 2,
              bytes.fromhex("0260" "8a6b80"), hdr=HDR_NODE),
         case("for-the-node-unknown-kind", "the node flag set and a kind no section defines: "
              "accepted, and nothing more done with it", g1, bytes.fromhex("5555555555555555"),
-             alice, b"\x7f", hdr=HDR_NODE),
+             alice, 3, b"\x7f", hdr=HDR_NODE),
     ]
 
     frame = bytes.fromhex(accepted[0]["frame"])
@@ -205,8 +225,15 @@ def build():
         f[at] ^= bit
         return bytes(f)
 
+    def sealed_with(key, plaintext, hdr=HDR):
+        """A frame whose plaintext or key is not what seal() would give it."""
+        ct = AESCCM(key, tag_length=TAG_LEN).encrypt(bytes(5) + n1, plaintext,
+                                                    bytes([hdr]) + n1 + gtag(g1, n1))
+        return struct.pack(">BBb", hdr, 5, 14) + n1 + gtag(g1, n1) + ct
+
     reject("check-flipped", "last bit of the AEAD tag changed", flip(-1))
     reject("ciphertext-flipped", "first ciphertext bit changed", flip(BODY, 0x80))
+    reject("count-flipped", "a bit of the sealed count changed", flip(BODY + 7))
     reject("nonce-flipped", "a bit of the nonce changed: the tag no longer matches it", flip(NONCE))
     other = bytearray(flip(NONCE))
     other[GTAG:BODY] = gtag(g1, bytes(other[NONCE:GTAG]))
@@ -218,23 +245,25 @@ def build():
     reject("node-flag-cleared", "the node flag cleared on a frame sealed with it",
            bytes([HDR]) + node_frame[1:])
     reject("reserved-flag", "a reserved flag set", bytes([HDR | 2]) + frame[1:])
-    odd = HDR | 4
-    sealed = AESCCM(group_key(g1), tag_length=TAG_LEN).encrypt(
-        bytes(5) + n1, struct.pack(">I", alice) + hello, bytes([odd]) + n1 + gtag(g1, n1))
     reject("reserved-flag-sealed", "a reserved flag set, and sealed with it rightly: not a group "
-           "frame of this draft", struct.pack(">BBb", odd, 5, 14) + n1 + gtag(g1, n1) + sealed)
+           "frame of this draft",
+           sealed_with(group_key(g1), struct.pack(">II", alice, 0) + hello, HDR | 4))
     reject("a-message", "a unicast message's header on it", bytes([0x48]) + frame[1:])
-    reject("truncated", "26 bytes: shorter than any frame", frame[:MIN_FRAME - 1])
+    reject("truncated", "30 bytes: shorter than any frame", frame[:MIN_FRAME - 1])
     reject("another-group", "a frame of a group this node does not hold",
            bytes.fromhex(accepted[2]["frame"]))
-    reject("from-nobody", "from is 0x00000000: sealed rightly, and refused", seal(g1, n1, 0, hello))
-    reject("from-everyone", "from is 0xFFFFFFFF", seal(g1, n1, 0xFFFFFFFF, hello))
+    reject("from-nobody", "from is 0x00000000: sealed rightly, and refused", seal(g1, n1, 0, 0, hello))
+    reject("from-everyone", "from is 0xFFFFFFFF", seal(g1, n1, 0xFFFFFFFF, 0, hello))
     reject("from-itself", "from is the receiver's own routing id: another member writing as it",
-           seal(g1, n1, me, hello))
-    short = AESCCM(group_key(g1), tag_length=TAG_LEN).encrypt(
-        bytes(5) + n1, b"\x01\x02\x03", bytes([HDR]) + n1 + gtag(g1, n1))
+           seal(g1, n1, me, 0, hello))
     reject("no-from", "three bytes of plaintext, sealed rightly: 26 bytes",
-           struct.pack(">BBb", HDR, 5, 14) + n1 + gtag(g1, n1) + short)
+           sealed_with(group_key(g1), b"\x01\x02\x03"))
+    reject("no-count", "from and three bytes more, sealed rightly: 30 bytes",
+           sealed_with(group_key(g1), struct.pack(">I", alice) + b"\x00\x00\x00"))
+    old = sealed_with(unicast.expand(g1, b"tern v0 group key", 16), struct.pack(">I", alice) + hello)
+    assert len(old) >= MIN_FRAME and matches(g1, old)
+    reject("first-draft", "a frame as this section was first drafted, with no count and under the "
+           "key of the label \"tern v0 group key\": the tag is the group's, and the check fails", old)
 
     a, b = COLLIDE
     ga, gb = secret(a), secret(b)
@@ -248,54 +277,79 @@ def build():
             got = m.receive(f)
             d = {"frame": f.hex(), "accept": got is not None}
             if got:
-                d.update({"group": got[0], "from": got[1], "content": got[2].hex()})
+                d.update({"group": got[0], "from": got[1], "count": got[2], "content": got[3].hex()})
             deliveries.append(d)
         members.append({"name": name, "note": note, "self": who,
                         "groups": [g.hex() for g in secrets], "deliveries": deliveries})
         return deliveries
 
-    f1 = seal(g1, n1, alice, hello)
-    f2 = seal(g2, n1, alice, b"two")
+    n2 = bytes.fromhex("0001020304050608")
+    f1 = seal(g1, n1, alice, 7, hello)
+    f2 = seal(g2, n1, alice, 7, b"two")
     d = member("two-groups", "frames of each group, of neither, and one a second time", me, [g1, g2],
-               [f1, f2, seal(secret(7), n1, alice, hello), f1,
-                seal(g1, bytes.fromhex("0001020304050608"), alice, hello)])
+               [f1, f2, seal(secret(7), n1, alice, 7, hello), f1, seal(g1, n2, alice, 8, hello)])
     assert [x["accept"] for x in d] == [True, True, False, False, True]
     d = member("again-passed-on", "a copy that came another way, hops and power changed: the same frame",
-               me, [g1], [f1, seal(g1, n1, alice, hello, {"hops": 1, "power": 3})])
+               me, [g1], [f1, seal(g1, n1, alice, 7, hello, {"hops": 1, "power": 3})])
     assert [x["accept"] for x in d] == [True, False]
     d = member("tags-collide", "two groups whose tags for this nonce are the same four bytes: a frame "
                f"of each (the secrets are the first 16 bytes of SHA-256(\"tern group\" || u32be(i)) for i = {a} and {b})",
-               me, [ga, gb], [seal(gb, bytes(8), alice, b"second"), seal(ga, bytes(8), alice, b"first")])
+               me, [ga, gb], [seal(gb, bytes(8), alice, 0, b"second"), seal(ga, bytes(8), alice, 0, b"first")])
     assert [x.get("group") for x in d] == [1, 0]
-    words = seal(g1, bytes.fromhex("6666666666666666"), alice, hello)
-    for_node = seal(g1, bytes.fromhex("6666666666666666"), alice, b"\x02\x00", hdr=HDR_NODE)
-    d = member("node-and-words-one-nonce", "a frame for the node and one of words share a group's "
-               "nonces: the second with a nonce the first had is refused, whichever kind it is",
-               me, [g1], [for_node, words, seal(g1, bytes.fromhex("6666666666666667"), alice, hello)])
+    for_node = seal(g1, bytes.fromhex("6666666666666666"), alice, 5, b"\x02\x00", hdr=HDR_NODE)
+    d = member("node-and-words-one-count", "a frame for the node and one of words take their counts "
+               "from one: words with the count a frame for the node had are refused, and the next "
+               "are not", me, [g1],
+               [for_node, seal(g1, bytes.fromhex("6666666666666667"), alice, 5, hello),
+                seal(g1, bytes.fromhex("6666666666666668"), alice, 6, hello)])
     assert [x["accept"] for x in d] == [True, False, True]
-    d = member("same-nonce-two-groups", "a nonce accepted for one group does not stand against another's",
-               me, [g1, g2], [f1, f2])
+    d = member("same-count-two-groups", "a count accepted for one group does not stand against "
+               "another's, from the same writer", me, [g1, g2], [f1, f2])
+    assert [x["accept"] for x in d] == [True, True]
+    d = member("same-count-two-writers", "nor one writer's against another's, in one group", me, [g1],
+               [f1, seal(g1, n2, 0x2B3C4D5E, 7, hello)])
     assert [x["accept"] for x in d] == [True, True]
 
-    def numbered(k):
-        return seal(g1, k.to_bytes(8, "big"), alice, hello)
+    counts = []
 
-    first, count = 1000, RECENT + 1
-    m = Member(me, [g1])
-    for k in range(first, first + count):
-        assert m.receive(numbered(k)) is not None
-    again = []
-    for k in (first + count - 1, first + 1, first, first + 1):
-        again.append({"nonce": k.to_bytes(8, "big").hex(), "frame": numbered(k).hex(),
-                      "accept": m.receive(numbered(k)) is not None})
-    assert [x["accept"] for x in again] == [False, False, True, True]
-    recent = [{
-        "name": "edge",
-        "note": "65 frames accepted: the first's nonce has been dropped and the second's has not. "
-        "Accepting the first again drops the second's.",
-        "group_secret": g1.hex(), "self": me, "from": alice, "content": hello.hex(),
-        **FLOOD, "first": first, "count": count, "again": again,
-    }]
+    def counted(name, note, frames, want):
+        """frames is (from, count) for each, in order; want, whether each is accepted."""
+        m = Member(me, [g1])
+        deliveries = []
+        for k, (who, c) in enumerate(frames):
+            f = seal(g1, k.to_bytes(8, "big"), who, c, hello)
+            deliveries.append({"from": who, "count": c, "frame": f.hex(),
+                               "accept": m.receive(f) is not None})
+        assert [x["accept"] for x in deliveries] == [bool(w) for w in want], \
+            (name, [x["accept"] for x in deliveries])
+        counts.append({"name": name, "note": note, "group_secret": g1.hex(), "self": me,
+                       "content": hello.hex(), **FLOOD, "deliveries": deliveries})
+
+    top = 2**32 - 1
+    counted("window", "the highest accepted is 100, then 132: a count is accepted once, down to "
+            "31 below the highest and no further",
+            [(alice, c) for c in (100, 100, 99, 99, 69, 68, 132, 101, 100, 69, 131, 131, 133, 102, 101)],
+            [1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 1, 0, 1, 1, 0])
+    counted("first-count", "a writer's first frame is accepted whatever its count, and the window "
+            "is counted from it",
+            [(alice, 5000), (alice, 4969), (alice, 4968), (alice, 0), (alice, 5001)], [1, 1, 0, 0, 1])
+    counted("from-nought", "counts below 31: the window stops at 0",
+            [(alice, 5), (alice, 0), (alice, 0), (alice, 4), (alice, 6)], [1, 1, 0, 1, 1])
+    counted("skipped", "a writer may skip, however far: to the last count there is",
+            [(alice, 0), (alice, top), (alice, top), (alice, top - 31), (alice, top - 32), (alice, 0),
+             (alice, 1)], [1, 1, 0, 1, 0, 0, 0])
+    bob = 0x2B3C4D5E
+    counted("two-writers", "each writer's counts are its own",
+            [(alice, 10), (bob, 10), (alice, 10), (bob, 9), (bob, 200), (alice, 11), (bob, 10)],
+            [1, 1, 0, 1, 1, 1, 0])
+    w = [0x70000000 + k for k in range(WRITERS + 1)]
+    counted("writers", f"{WRITERS} writers held, then one more. The one forgotten is the one a frame "
+            "was accepted from longest ago: the second, since the first wrote again, and a frame "
+            "that is refused does not count. Its old frame is then accepted again, which forgets "
+            "the third, whose own is accepted again in turn",
+            [(x, 50) for x in w[:WRITERS]] + [(w[1], 50), (w[0], 51), (w[WRITERS], 1), (w[0], 50),
+                                              (w[1], 50), (w[3], 50), (w[2], 50), (w[3], 50)],
+            [1] * WRITERS + [0, 1, 1, 0, 1, 0, 1, 1])
 
     invites, bad = [], []
     for name in ("", "hut", "Καλημέρα", "x" * NAME_MAX):
@@ -319,15 +373,16 @@ def build():
         "are the flood's (draft/flooding.md), and are 5 and 14 where a case does not give them. "
         "self is the routing id of the node receiving. In members, group is the index in groups "
         "of the group a frame is accepted for. hdr is 0x60 for a frame of words and 0x61 for one "
-        "for the node, as node says. In recent, the frames with nonces first to "
-        "first + count - 1, each as eight bytes most significant first, are from, content, hops "
-        "and power sealed under group_secret. In invites and bad_invites, plaintext is that of a "
+        "for the node, as node says. count is a number. In counts, each delivery's frame is content "
+        "from its from, with its count, sealed under group_secret with hops and power, and with a "
+        "nonce of its place in deliveries, from 0, as eight bytes most significant first; frame "
+        "gives it. In invites and bad_invites, plaintext is that of a "
         "unicast message whose hdr has the node flag set (draft/unicast-security.md).",
         "generator": "vectors/tools/groups.py",
         "accepted": accepted,
         "rejected": rejected,
         "members": members,
-        "recent": recent,
+        "counts": counts,
         "invites": invites,
         "bad_invites": bad,
     }
