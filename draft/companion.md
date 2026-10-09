@@ -931,11 +931,12 @@ A node MAY add a tag to the name it advertises, so that a user with
 more than one node can tell them apart before pairing. The tag MUST
 be drawn wholly at random, at least 16 bits of it, and carry nothing
 else: nothing from the node's address, routing id or keys, nor any
-other value that stays the same, such as a serial number. A node MUST NOT keep a tag past the
-Bluetooth address it was advertised with: one whose address changes
-from time to time draws a new tag, independently of the last, with each
-address, and one whose address is fixed keeps its tag until it is
-erased. A node with a screen that advertises a tag SHOULD show it.
+other value that stays the same, such as a serial number. A node
+MUST NOT keep a tag past the Bluetooth address it was advertised with:
+one whose address changes from time to time draws a new tag,
+independently of the last, with each address, and one whose address is
+fixed keeps its tag until it is erased. A node with a screen that
+advertises a tag SHOULD show it.
 
 ## Parameters
 
