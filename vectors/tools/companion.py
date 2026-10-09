@@ -104,6 +104,19 @@ BY_NAME = {name: t for t, (name, _) in FRAMES.items()}
 # read by the version both ends speak, and has none of the fields a later version added.
 SINCE = {(0x43, "news"): 3}
 
+# Types a later version added, and the version that added them. A receiver of an earlier version
+# does not know them: a node answers such a request with ERROR 1, and a client ignores such news.
+TYPE_SINCE = {
+    0x1A: 1, 0x89: 1,  # END_SESSION, ASKED
+    **{t: 2 for t in (0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x45, 0x8A, 0x8B, 0x8C, 0x8D)},  # groups
+    **{t: 4 for t in (0x30, 0x31, 0x32, 0x8E, 0x8F, 0x90, 0x91)},  # positions
+}
+
+
+def defined(t, speak=VERSION):
+    """Whether a connection of version speak defines the type t."""
+    return t in FRAMES and TYPE_SINCE.get(t, 0) <= speak
+
 SETTINGS = {
     1: ("region", [("value", STR, REGION_MAX)]),
     2: ("role", [("value", U8)]),
@@ -174,7 +187,7 @@ def decode(frame, speak=VERSION):
         return "shorter than a type and a sequence number"
     if len(frame) > MAX_FRAME:
         return "longer than the longest frame"
-    if frame[0] not in FRAMES:
+    if not defined(frame[0], speak):
         return "a type this version does not define"
     t, at, values = frame[0], 2, {"type": FRAMES[frame[0]][0], "seq": frame[1]}
     fields = [f for f in FRAMES[t][1] if SINCE.get((t, f[0]), 0) <= speak]
@@ -448,6 +461,29 @@ def build():
         assert isinstance(why, str), frame.hex()
         rejected.append({"why": why, "frame": frame.hex(), "answer": answer(frame, why)})
 
+    # Frames a later version defines, as a receiver of an earlier version reads them: a type it
+    # does not know. A node answers such a request with ERROR 1; a client ignores such news.
+    unknown_to_older = []
+    for name, speak, values in [
+        ("END_SESSION", 0, {"address": BOB}),
+        ("ASKED", 0, {"address": CAROL, "why": 1}),
+        ("MAKE_GROUP", 1, {"name": "Hut"}),
+        ("GROUP", 1, {"group": HUT, "name": "Hut"}),
+        ("SHARE", 3, {"contact": BOB, "precision": 20, "fields": 0, "interval": 900,
+                      "minutes": 60}),
+        ("SET_POSITION", 3, {**SUMMIT, "altitude": 4806, "accuracy": 4, "age": 3}),
+        ("POSITION", 3, {"contact": BOB, **BOB_AT, "altitude": NO_ALTITUDE, "accuracy": 0,
+                         "age": 40}),
+        ("SHARING", 3, {"contact": BOB, "precision": 20, "fields": 0, "interval": 900,
+                        "minutes": 60}),
+    ]:
+        frame = encode(name, 5, **values)
+        assert isinstance(decode(frame), dict)
+        why = decode(frame, speak)
+        assert why == UNKNOWN[0], (name, speak, why)
+        unknown_to_older.append({"type": name, "version": speak, "frame": frame.hex(),
+                                 "why": why, "answer": answer(frame, why)})
+
     ping, ok = encode("PING", 4), encode("OK", 4)
     console = b"status\r\naddress d75a9801...\r\n"
     corrupt = bytearray(wrap(ok))
@@ -492,6 +528,10 @@ def build():
         out = []
         for side, frame in frames:
             fields = decode(frame, speak)
+            if isinstance(fields, str):
+                # A request the client must not send, refused: named by the latest version.
+                assert side == "client" and fields == UNKNOWN[0], fields
+                fields = decode(frame)
             out.append({"from": side, "type": fields["type"], "seq": fields["seq"],
                         "frame": frame.hex()})
         return out
@@ -656,7 +696,9 @@ def build():
         "the same frame as it goes on a byte stream. In extended, frame carries bytes past the "
         "fields this version defines, and fields is what a receiver reads from it. In rejected, "
         "a receiver discards frame; answer is the ERROR code a node answers it with, null for "
-        "none. In streams, items are what a receiver finds in stream, in order: a frame, or a "
+        "none. In unknown_to_older, frame is of a type that version does not define: a node "
+        "speaking it answers ERROR answer, and a client speaking it ignores the news (null). "
+        "In streams, items are what a receiver finds in stream, in order: a frame, or a "
         "run of bytes that is not one, and pending is what it holds at the end waiting for more. "
         "In group_ids, group is the id of the group whose secret is group_secret. Exchange is "
         "one connection, in order. In it the node refuses first contact from the third address "
@@ -685,6 +727,7 @@ def build():
         "frames": frames,
         "extended": extended,
         "rejected": rejected,
+        "unknown_to_older": unknown_to_older,
         "streams": streams,
         "group_ids": group_ids,
         "exchange": exchange,

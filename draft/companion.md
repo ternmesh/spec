@@ -324,7 +324,8 @@ clients what it receives.
 
 **Positions received** (`POSITION`, `GROUP_POSITION`). The position the
 node [holds](positions.md#reading-a-position) from a contact, or from
-a routing id in a group. `from` is as for a `GROUP_MESSAGE`: what a
+a routing id in a group. A node holds none from an address that is not
+a contact. `from` is as for a `GROUP_MESSAGE`: what a
 member claimed. `precision` is the position's, and `lat` and `lon` are
 the centre of its cell, in 10⁻⁷ degree, north and east positive; the
 cell is `360 / 2^precision` degrees each way. `altitude` is in metres,
@@ -434,7 +435,11 @@ not told of group messages or invites at all: their `id`s are ones it
 never sees. One of version 3 or earlier is told of no positions, and
 of no sharing. A node MUST answer a request that the client's version
 does not define with `ERROR` 1, as it does one its own version does not: it
-could not tell that client what the request changed.
+could not tell that client what the request changed. A receiver reads a
+frame of a type that only a later version defines as one of a type it
+does not know, whatever its own version: a node of version 4 answers a
+`SHARE` from a client of version 3 with `ERROR` 1, and a client of
+version 3 ignores a `POSITION`.
 Later versions only add types, settings, error codes and
 fields at the end of a frame, so any two versions can talk. A change
 that cannot be made that way is a new protocol, with its own magic and
@@ -580,8 +585,9 @@ every other client, that the user has seen them.
 renames it if it is one already. An empty name is a name. A node MUST
 refuse an invalid address, or its own, with `ERROR` 4.
 
-**`REMOVE_CONTACT`** removes the contact. It removes the name, and
-ends any sharing of the node's position with the address, and nothing
+**`REMOVE_CONTACT`** removes the contact. It removes the name, ends
+any sharing of the node's position with the address, and forgets the
+[position](positions.md#reading-a-position) held from it, and nothing
 else: messages to and from the address are kept, and so is any session
 with it. A node answers `OK` for an address that is not a
 contact.
@@ -761,6 +767,10 @@ An implementation conforms to this section if, for
 * **rejected:** as a client, it discards or ignores `frame`; as a node, it
   answers a frame whose `type` is a request's with `ERROR` and the code
   `answer`, and does not answer one whose `answer` is `null`;
+* **unknown_to_older:** speaking `version`, it takes `frame` as of a
+  type its version does not define: as a node, it answers `ERROR` with
+  the code `answer`; as a client, it ignores the news, whose `answer`
+  is `null`;
 * **streams:** given the bytes of `stream` as they arrive, it finds
   the frames and the runs of text in `items`, in that order, and holds
   `pending` waiting for more;

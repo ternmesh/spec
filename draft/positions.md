@@ -190,21 +190,31 @@ like any other.
 
 **Who sent it.** A position in a unicast message is from the other
 end of the session it came by, which [first contact](first-contact.md)
-proved. One in a group frame is from the routing id in the frame's
+proved. A node MUST ignore a position in a unicast message from an
+address that is not a contact, though it shares a session with it:
+whose position a user is shown is theirs to choose, as whom they share
+with is. One in a group frame is from the routing id in the frame's
 `from`, which is what [a member claimed](groups.md#receiving). A node
 that shows a group's position under a name it knows by that routing id
 SHOULD NOT show it as proved.
 
 **What a node keeps.** A node holds, for each contact, the last
 position it received from it, and for each group, the last from each
-routing id. A position replaces the one held from the same sender,
-unless it came over the same session as the one held, in a message
-whose counter is lower: that is an older position, overtaken on the
-way, and the node MUST NOT let it replace a newer one. A stopped
-position replaces nothing: the node MUST forget the position it holds
-from that sender. A node MUST forget a position `POSITION_KEEP` after
-it received it, and every position from a contact or group it no
-longer holds.
+routing id. A position replaces the one held from the same sender. A
+stopped position replaces nothing: the node MUST forget the position
+it holds from that sender. A node MUST forget a position
+`POSITION_KEEP` after it received it, every position from a contact or
+group it no longer holds, and the position held from a contact when it
+is removed.
+
+**Older positions.** Messages over a session can arrive out of order,
+and an older position must neither replace a newer one nor bring back
+one that was stopped. So for each session a node keeps the counter of
+the last message it took a position from, stopped or not, for as long
+as it holds the session, and whether or not it still holds the
+position. It MUST ignore a position in a message over that session
+whose counter is lower. A new session starts with none: the old
+session's messages can no longer be opened.
 
 ## Sharing
 
@@ -316,6 +326,13 @@ An implementation conforms to this section if, for
   `content` as `frame`, and opens `frame` to find it (setting the
   counter and the nonce is a test hook, as in the sections that define
   the frames);
+* **receiving:** as a node that shares one session with the sender,
+  holding nothing from it, given each delivery in order, as a message
+  with `counter` whose plaintext is `plaintext`, from an address that
+  is a contact or not as `contact` says, it holds after each the
+  position `holds` (`null` for none). This checks that an older
+  position is ignored after a newer one, and after a stopped one, and
+  that one from an address that is not a contact is ignored;
 * **schedule:** for a destination whose `interval` is given, whose last
   position went at `last_at` (`null` for none since sharing began), at
   time `now`, with a fix `age` seconds old whose cell has `changed`
@@ -466,6 +483,10 @@ up as little as it can.
   fields.
 * **Places**: a point that is not where a node is, such as a meeting
   point, sent to a contact or group as a message.
+* **Order in a group.** Group frames carry no counter, so an older
+  position flooded late, after a stopped one, shows the writer where
+  they were. A counter or a time in the position would close it, at a
+  cost of bytes on every group position.
 * **Replay** in a group, as for every [group frame](groups.md#not-yet-specified):
   a position recorded and flooded again once its nonce has been
   forgotten shows the writer where they were.

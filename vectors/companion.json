@@ -1,5 +1,5 @@
 {
-  "description": "The companion protocol, version 4 (draft/companion.md). Frames, streams, addresses and group ids are hex; numbers are numbers; strings are text. In frames, frame is the frame alone, as one BLE write or notification carries it, and stream is the same frame as it goes on a byte stream. In extended, frame carries bytes past the fields this version defines, and fields is what a receiver reads from it. In rejected, a receiver discards frame; answer is the ERROR code a node answers it with, null for none. In streams, items are what a receiver finds in stream, in order: a frame, or a run of bytes that is not one, and pending is what it holds at the end waiting for more. In group_ids, group is the id of the group whose secret is group_secret. Exchange is one connection, in order. In it the node refuses first contact from the third address just before the ASKED; the group it makes has the secret made, where a node in use draws one; and after its own group message is sent it receives a message to that group from the second address's routing id, and then an invite from that address to the group whose secret is invited. After it leaves the first group, it receives a position from the second address, just before its POSITION. Older holds connections to the same node by clients of earlier versions. To the client of version 0 it holds what the exchange begins with, and refuses that first contact after the sync, before the client's SAVE_CONTACT. To the client of version 1 it holds what the exchange has before its JOIN but for the group message and the invite received, which come after the sync and before the client's SEND; the client's last request is one its version does not define, which a client must not send, and the node answers it as it would any other it does not know from that client. To the client of version 2 it holds what the exchange begins with, and its SYNCED is version 2's, without news. To the client of version 3 it holds what the exchange begins with, a position from the second address, and sharing with that address: the sync sends neither, and the node refuses the client's SHARE, which it must not send. Positions are in units of 10^-7 degree. Each connection's frames are read by the version its client speaks. The three addresses are the public keys of RFC 8032's first three Ed25519 test vectors.",
+  "description": "The companion protocol, version 4 (draft/companion.md). Frames, streams, addresses and group ids are hex; numbers are numbers; strings are text. In frames, frame is the frame alone, as one BLE write or notification carries it, and stream is the same frame as it goes on a byte stream. In extended, frame carries bytes past the fields this version defines, and fields is what a receiver reads from it. In rejected, a receiver discards frame; answer is the ERROR code a node answers it with, null for none. In unknown_to_older, frame is of a type that version does not define: a node speaking it answers ERROR answer, and a client speaking it ignores the news (null). In streams, items are what a receiver finds in stream, in order: a frame, or a run of bytes that is not one, and pending is what it holds at the end waiting for more. In group_ids, group is the id of the group whose secret is group_secret. Exchange is one connection, in order. In it the node refuses first contact from the third address just before the ASKED; the group it makes has the secret made, where a node in use draws one; and after its own group message is sent it receives a message to that group from the second address's routing id, and then an invite from that address to the group whose secret is invited. After it leaves the first group, it receives a position from the second address, just before its POSITION. Older holds connections to the same node by clients of earlier versions. To the client of version 0 it holds what the exchange begins with, and refuses that first contact after the sync, before the client's SAVE_CONTACT. To the client of version 1 it holds what the exchange has before its JOIN but for the group message and the invite received, which come after the sync and before the client's SEND; the client's last request is one its version does not define, which a client must not send, and the node answers it as it would any other it does not know from that client. To the client of version 2 it holds what the exchange begins with, and its SYNCED is version 2's, without news. To the client of version 3 it holds what the exchange begins with, a position from the second address, and sharing with that address: the sync sends neither, and the node refuses the client's SHARE, which it must not send. Positions are in units of 10^-7 degree. Each connection's frames are read by the version its client speaks. The three addresses are the public keys of RFC 8032's first three Ed25519 test vectors.",
   "generator": "vectors/tools/companion.py",
   "crc_check": {
     "input": "313233343536373839",
@@ -894,6 +894,64 @@
     {
       "why": "a field cut short",
       "frame": "8e173d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c1023ff7bc20326c218000000000000",
+      "answer": null
+    }
+  ],
+  "unknown_to_older": [
+    {
+      "type": "END_SESSION",
+      "version": 0,
+      "frame": "1a053d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+      "why": "a type this version does not define",
+      "answer": 1
+    },
+    {
+      "type": "ASKED",
+      "version": 0,
+      "frame": "8905fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb91154890802501",
+      "why": "a type this version does not define",
+      "answer": null
+    },
+    {
+      "type": "MAKE_GROUP",
+      "version": 1,
+      "frame": "200503487574",
+      "why": "a type this version does not define",
+      "answer": 1
+    },
+    {
+      "type": "GROUP",
+      "version": 1,
+      "frame": "8a05c0037dcd77f6eac603487574",
+      "why": "a type this version does not define",
+      "answer": null
+    },
+    {
+      "type": "SHARE",
+      "version": 3,
+      "frame": "31053d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c14000384003c",
+      "why": "a type this version does not define",
+      "answer": 1
+    },
+    {
+      "type": "SET_POSITION",
+      "version": 3,
+      "frame": "30051b517c0804176ca012c600040003",
+      "why": "a type this version does not define",
+      "answer": 1
+    },
+    {
+      "type": "POSITION",
+      "version": 3,
+      "frame": "8e053d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c1023ff7bc20326c21880000000000028",
+      "why": "a type this version does not define",
+      "answer": null
+    },
+    {
+      "type": "SHARING",
+      "version": 3,
+      "frame": "90053d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c14000384003c",
+      "why": "a type this version does not define",
       "answer": null
     }
   ],

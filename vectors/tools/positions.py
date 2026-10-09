@@ -179,6 +179,24 @@ def open_group(g, frame):
     return struct.unpack(">I", p[:4])[0], p[4:]
 
 
+class Receiver:
+    """What a node holds from the other end of one session: the position, and the counter of
+    the last message it took a position from, which it keeps after the position is forgotten."""
+
+    def __init__(self):
+        self.held, self.last = None, None
+
+    def receive(self, contact, counter, plaintext):
+        got = decode(plaintext)
+        if not contact or isinstance(got, str):
+            return self.held
+        if self.last is not None and counter < self.last:
+            return self.held  # older than one already taken: overtaken on the way
+        self.last = counter
+        self.held = None if got["precision"] == 0 else got
+        return self.held
+
+
 def due(interval, last_at, changed, age, now):
     """Whether a position may go to a destination now. last_at is when the last position to it
     went on the air, None if none has since sharing began; changed, whether the position it would
@@ -339,6 +357,29 @@ def build():
          **groups.FLOOD, "content": town.hex(), "frame": grp.hex()},
     ]
 
+    receiving = []
+    for name, note, deliveries in [
+        ("overtaken", "an older position after a newer is ignored", [
+            (True, 5, encode(24, *SUMMIT)), (True, 3, encode(12, *HARBOUR)),
+            (True, 6, encode(16, *HARBOUR))]),
+        ("after-stopped", "a stopped position overtakes an older one, which is ignored when it "
+         "comes: the counter is kept though the position is forgotten", [
+            (True, 5, encode(24, *SUMMIT)), (True, 7, encode(0)), (True, 6, encode(20, *SUMMIT)),
+            (True, 8, encode(12, *SUMMIT))]),
+        ("ignored-keeps-nothing", "a plaintext that is ignored moves no counter", [
+            (True, 9, encode(12, *SUMMIT)[:-1]), (True, 4, encode(12, *SUMMIT))]),
+        ("not-a-contact", "a position from an address that is not a contact is ignored", [
+            (False, 0, encode(12, *SUMMIT)), (False, 1, encode(0))]),
+    ]:
+        r = Receiver()
+        out = []
+        for contact, counter, p in deliveries:
+            out.append({"contact": contact, "counter": counter, "plaintext": p.hex(),
+                        "holds": r.receive(contact, counter, p)})
+        receiving.append({"name": name, "note": note, "deliveries": out})
+    assert [d["holds"] for d in receiving[1]["deliveries"]][1:3] == [None, None]
+    assert receiving[0]["deliveries"][1]["holds"]["precision"] == 24
+
     schedule = []
     for note, interval, last_at, changed, age, now in [
         ("the first since sharing began", 900, None, True, 0, 1000),
@@ -372,6 +413,8 @@ def build():
         "its optional fields and with all three, and of the unicast and group frames that carry "
         "it, with their time on air at each profile of draft/phy.md. In frames, a position as "
         "each frame carries it; the unicast frame's route is hops, power, next and destination. "
+        "In receiving, each case is one session, new, and holds is what read gives "
+        "for the position the node holds from its other end after each delivery, null for none. "
         "In schedule, due is whether a position may go to a destination, given interval, when "
         "the last went (last_at, null for none since sharing began), whether the position "
         "changed since, the fix's age and the time now.",
@@ -383,6 +426,7 @@ def build():
         "ages": ages,
         "sizes": sizes,
         "frames": frames,
+        "receiving": receiving,
         "schedule": schedule,
     }
 

@@ -1,5 +1,5 @@
 {
-  "description": "Positions, draft 0 (draft/positions.md). Latitudes and longitudes are integers in units of 10^-7 degree, north and east positive; plaintexts, where, frames, secrets and nonces are hex; times are seconds. In grid, row and column are the cell of the point at precision, where is how they go on the air, and centre_latitude, centre_longitude, south and west are the cell's centre, rounded down, and its south-west corner. In positions, plaintext is that of a message for the node made from the other fields (accuracy as the sender's estimate in metres, age_seconds as the fix's age), and read is what a receiver takes from it, age in seconds as the least the byte stands for. In extended, bytes after the fields are read past. A receiver ignores each plaintext of ignored. In ages, byte is the age field for seconds, and read_seconds what it is read as. In sizes, the lengths in bytes of a position at each precision, without its optional fields and with all three, and of the unicast and group frames that carry it, with their time on air at each profile of draft/phy.md. In frames, a position as each frame carries it; the unicast frame's route is hops, power, next and destination. In schedule, due is whether a position may go to a destination, given interval, when the last went (last_at, null for none since sharing began), whether the position changed since, the fix's age and the time now.",
+  "description": "Positions, draft 0 (draft/positions.md). Latitudes and longitudes are integers in units of 10^-7 degree, north and east positive; plaintexts, where, frames, secrets and nonces are hex; times are seconds. In grid, row and column are the cell of the point at precision, where is how they go on the air, and centre_latitude, centre_longitude, south and west are the cell's centre, rounded down, and its south-west corner. In positions, plaintext is that of a message for the node made from the other fields (accuracy as the sender's estimate in metres, age_seconds as the fix's age), and read is what a receiver takes from it, age in seconds as the least the byte stands for. In extended, bytes after the fields are read past. A receiver ignores each plaintext of ignored. In ages, byte is the age field for seconds, and read_seconds what it is read as. In sizes, the lengths in bytes of a position at each precision, without its optional fields and with all three, and of the unicast and group frames that carry it, with their time on air at each profile of draft/phy.md. In frames, a position as each frame carries it; the unicast frame's route is hops, power, next and destination. In receiving, each case is one session, new, and holds is what read gives for the position the node holds from its other end after each delivery, null for none. In schedule, due is whether a position may go to a destination, given interval, when the last went (last_at, null for none since sharing began), whether the position changed since, the fix's age and the time now.",
   "generator": "vectors/tools/positions.py",
   "grid": [
     {
@@ -1101,6 +1101,146 @@
       "power": 14,
       "content": "0260c1309c",
       "frame": "61050e505050505050505095a335ad8797a0dc73107a2e8a3fee6a89b1bfd879"
+    }
+  ],
+  "receiving": [
+    {
+      "name": "overtaken",
+      "note": "an older position after a newer is ignored",
+      "deliveries": [
+        {
+          "contact": true,
+          "counter": 5,
+          "plaintext": "02c0c12f1b09c340",
+          "holds": {
+            "precision": 24,
+            "row": 6330253,
+            "column": 8708512,
+            "latitude": 458325040,
+            "longitude": 68644058,
+            "south": 458324933,
+            "west": 68643951
+          }
+        },
+        {
+          "contact": true,
+          "counter": 3,
+          "plaintext": "0260d5f078",
+          "holds": {
+            "precision": 24,
+            "row": 6330253,
+            "column": 8708512,
+            "latitude": 458325040,
+            "longitude": 68644058,
+            "south": 458324933,
+            "west": 68643951
+          }
+        },
+        {
+          "contact": true,
+          "counter": 6,
+          "plaintext": "0280d5e50784",
+          "holds": {
+            "precision": 16,
+            "row": 27378,
+            "column": 33730,
+            "latitude": 603945922,
+            "longitude": 52871704,
+            "south": 603918457,
+            "west": 52844238
+          }
+        }
+      ]
+    },
+    {
+      "name": "after-stopped",
+      "note": "a stopped position overtakes an older one, which is ignored when it comes: the counter is kept though the position is forgotten",
+      "deliveries": [
+        {
+          "contact": true,
+          "counter": 5,
+          "plaintext": "02c0c12f1b09c340",
+          "holds": {
+            "precision": 24,
+            "row": 6330253,
+            "column": 8708512,
+            "latitude": 458325040,
+            "longitude": 68644058,
+            "south": 458324933,
+            "west": 68643951
+          }
+        },
+        {
+          "contact": true,
+          "counter": 7,
+          "plaintext": "0200",
+          "holds": null
+        },
+        {
+          "contact": true,
+          "counter": 6,
+          "plaintext": "02a0c12f109c34",
+          "holds": null
+        },
+        {
+          "contact": true,
+          "counter": 8,
+          "plaintext": "0260c1309c",
+          "holds": {
+            "precision": 12,
+            "row": 1545,
+            "column": 2126,
+            "latitude": 458349609,
+            "longitude": 68994140,
+            "south": 457910156,
+            "west": 68554687
+          }
+        }
+      ]
+    },
+    {
+      "name": "ignored-keeps-nothing",
+      "note": "a plaintext that is ignored moves no counter",
+      "deliveries": [
+        {
+          "contact": true,
+          "counter": 9,
+          "plaintext": "0260c130",
+          "holds": null
+        },
+        {
+          "contact": true,
+          "counter": 4,
+          "plaintext": "0260c1309c",
+          "holds": {
+            "precision": 12,
+            "row": 1545,
+            "column": 2126,
+            "latitude": 458349609,
+            "longitude": 68994140,
+            "south": 457910156,
+            "west": 68554687
+          }
+        }
+      ]
+    },
+    {
+      "name": "not-a-contact",
+      "note": "a position from an address that is not a contact is ignored",
+      "deliveries": [
+        {
+          "contact": false,
+          "counter": 0,
+          "plaintext": "0260c1309c",
+          "holds": null
+        },
+        {
+          "contact": false,
+          "counter": 1,
+          "plaintext": "0200",
+          "holds": null
+        }
+      ]
     }
   ],
   "schedule": [
