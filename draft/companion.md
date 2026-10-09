@@ -175,7 +175,7 @@ a refusal.
 
 | `type` | News | Fields |
 |---|---|---|
-| `0x80` | `SELF` | `address` `addr`, `role` `u8`, `region` `str` up to 15, `power` `i8`, `time` `u32` |
+| `0x80` | `SELF` | `address` `addr`, `role` `u8`, `region` `str` up to 15, `power` `i8`, `time` `u32`, `cards` `u8`, `card_name` `str` up to 31 |
 | `0x81` | `CONTACT` | `address` `addr`, `session` `u8`, `name` `str` up to 31 |
 | `0x82` | `CONTACT_GONE` | `address` `addr` |
 | `0x83` | `MESSAGE` | `id` `u32`, `contact` `addr`, `time` `u32`, `flags` `u8`, `state` `u8`, `reason` `u8`, `wait` `u16`, `text` `str` up to 128 |
@@ -193,8 +193,10 @@ a refusal.
 | `0x8F` | `GROUP_POSITION` | `group` `gid`, `from` `u32`, `precision` `u8`, `lat` `i32`, `lon` `i32`, `altitude` `i16`, `accuracy` `u8`, `age` `u32` |
 | `0x90` | `SHARING` | `contact` `addr`, `precision` `u8`, `fields` `u8`, `interval` `u16`, `minutes` `u16` |
 | `0x91` | `GROUP_SHARING` | `group` `gid`, `precision` `u8`, `fields` `u8`, `interval` `u16`, `minutes` `u16` |
+| `0x92` | `CARD` | `address` `addr`, `heard` `u32`, `name` `str` up to 31 |
+| `0x93` | `CARD_GONE` | `address` `addr` |
 
-Each news frame but `STATE`, the three `_GONE`s and `ASKED` is a
+Each news frame but `STATE`, the four `_GONE`s and `ASKED` is a
 **record**: the whole of one thing as the node holds it now. A record
 replaces any the client holds for the same thing. `STATE` replaces
 those fields of the `MESSAGE`, `GROUP_MESSAGE` or `INVITE` with its
@@ -214,7 +216,9 @@ it expects has missed some, and SHOULD [sync](#syncing) again.
 ([Roles](routing.md#roles)). `region` is the name of the
 [profile](phy.md#profiles) the node is set to, such as `EU868`, or
 empty if none is. `power` is what it transmits at most, in dBm. `time`
-is its clock.
+is its clock. `cards` is 1 if the node sends [cards](#cards), 0 if
+not, and `card_name` is the name its cards carry, as `SET` 5 and 6 set
+them.
 
 **Contacts** (`CONTACT`). A contact is an address the user has
 saved, with a name. `session` is 1 if the node shares a session with
@@ -359,6 +363,42 @@ accuracy does. The other bits are 0. `interval` is in seconds.
 off, rounded up, as of when the record was sent, and 0 if it is on
 until it is turned off.
 
+### Cards
+
+A [card](cards.md) is how a node whose user chooses says, to the nodes
+near it, who it is: its address and a name. A client turns the node's
+cards on and off and sets the name they carry, with
+[`SET`](#the-requests) 5 and 6; the node signs and sends them, and
+tells clients of the cards it holds from others, as **who is about**.
+
+**Cards held** (`CARD`). A card the node
+[holds](cards.md#receiving), one for each address. `name` is the name
+that card carried, which its sender chose, and may be empty. `heard` is
+how many seconds ago the node accepted that card, as of when the record
+was sent. A card's `number` stays on the node: a client has no use for
+it.
+
+A card's name is a claim its sender made, not a name the user gave, and
+a client SHOULD show it as such, beside the address's
+[short code](sharing.md#the-short-code), and never in the place of a
+contact's name. A node holds cards whether or not it sends its own:
+receiving them puts nothing on the air.
+
+**Meeting someone from a card.** A client makes a card's sender a
+contact with `SAVE_CONTACT`, giving the card's `address` and whatever
+name the user chooses, which it MAY offer the card's `name` for. That
+lets the sender in when it makes [first
+contact](#who-may-make-first-contact), and a `SEND` to the address
+makes first contact from this end. A client MUST NOT send either for a
+card's address unless its user asked it to, as
+[Presence cards](cards.md#receiving) requires of the node. Saving a
+contact changes nothing about the card, which the node keeps as long as
+it would have.
+
+A client that receives `ASKED` for an address it holds a card from
+MAY show the card's name with it, as its sender's claim: the address in
+an `ASKED` is proved, and the card is signed by it.
+
 ### Who may make first contact
 
 A session starts with [first contact](first-contact.md), which either
@@ -412,10 +452,12 @@ A node with a client that has said `HELLO` MUST send that client:
   turned off or runs out, and, with `precision` 0, when it ends because
   the contact is removed or the group left;
 * `NEIGHBOUR_GONE` when the node forgets a neighbour;
+* `CARD` when the node accepts a card, and `CARD_GONE` when it forgets
+  one;
 * `ASKED` when it refuses [first contact](#who-may-make-first-contact),
   as that section says.
 
-A `minutes` or an `age` that only counts on is not a change.
+A `minutes`, an `age` or a `heard` that only counts on is not a change.
 
 It SHOULD send `NEIGHBOUR`, `AIRTIME` and `POWER` when they change,
 and MAY send each no more often than once every `QUIET` seconds, so
@@ -436,8 +478,10 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 5. Version 4 is the same without [positions](#positions): the
-requests `0x33` to `0x35`, error 12, and the news `POSITION`,
+version 6. Version 5 is the same without [cards](#cards): the settings
+5 and 6, `SELF`'s `cards` and `card_name`, and the news `CARD` and
+`CARD_GONE`. Version 4 is version 5 without [positions](#positions):
+the requests `0x33` to `0x35`, error 12, and the news `POSITION`,
 `GROUP_POSITION`, `SHARING` and `GROUP_SHARING`. Version 3 is version 4
 without [updates](#updating-the-firmware):
 the requests `0x30` to `0x32`, `UPDATING`, errors 10 and 11, and
@@ -453,13 +497,17 @@ from `INFO` itself, so it reads an `INFO` by the lesser of its own
 version and the `version` the `INFO` carries. A client of an earlier version is
 not told of group messages or invites at all: their `id`s are ones it
 never sees. One of version 4 or earlier is told of no positions, and
-of no sharing. A node MUST answer a request that the client's version
-does not define with `ERROR` 1, as it does one its own version does
-not: it could not tell that client what the request changed. A
+of no sharing. One of version 5 or earlier is told of no cards, and
+is sent a `SELF` without `cards` and `card_name`. A node MUST answer a
+request, or a setting, that the client's version does not define with
+`ERROR` 1, as it does one its own version does not: it could not tell
+that client what the request changed. A
 receiver reads a frame of a type that only a later version defines as
 one of a type it does not know, whatever its own version: a node of
 version 5 answers a `SHARE` from a client of version 4 with `ERROR` 1,
-and a client of version 4 ignores a `POSITION`.
+and a client of version 4 ignores a `POSITION`. Likewise, a node of
+version 6 answers a `SET` of setting 5 from a client of version 5 with
+`ERROR` 1, and a client of version 5 ignores a `CARD`.
 Later versions only add types, settings, error codes and
 fields at the end of a frame, so any two versions can talk. A change
 that cannot be made that way is a new protocol, with its own magic and
@@ -469,8 +517,8 @@ A client then, typically, sets the node's clock and syncs:
 
 ```
 client                         node
-HELLO       seq 1, version 5  ─▶
-                              ◀─  INFO        seq 1, version 5
+HELLO       seq 1, version 6  ─▶
+                              ◀─  INFO        seq 1, version 6
 SET_TIME    seq 2             ─▶
                               ◀─  OK          seq 2
 SYNC        seq 3, after 0    ─▶
@@ -492,14 +540,14 @@ goes back to 0.
 greater than `after`, in order of `id`, a `NEIGHBOUR` for every
 neighbour, a `POSITION` or `GROUP_POSITION` for every position it
 holds, a `SHARING` or `GROUP_SHARING` for every contact or group it
-shares its position with, one `AIRTIME` and one `POWER`. Then it
-answers `SYNCED`. News that a change prompts while it syncs is sent as
-at any other time, among the rest.
+shares its position with, a `CARD` for every card it holds, one
+`AIRTIME` and one `POWER`. Then it answers `SYNCED`. News that a change
+prompts while it syncs is sent as at any other time, among the rest.
 
-For contacts, groups, neighbours, positions and sharing, a sync is the
-whole list: a client that receives `SYNCED` MUST forget every contact,
-group, neighbour and position it holds that the sync did not send, as
-if it had received its `_GONE` or a position's record with `precision`
+For contacts, groups, neighbours, positions, sharing and cards, a sync
+is the whole list: a client that receives `SYNCED` MUST forget every
+contact, group, neighbour, position and card it holds that the sync
+did not send, as if it had received its `_GONE` or a position's record with `precision`
 0, and take sharing to be off with every contact and group the sync
 sent no `SHARING` or `GROUP_SHARING` for. Messages are not: a sync
 sends only those after `after`, and a client keeps the rest.
@@ -580,11 +628,24 @@ was given, counting on from it, until it is given another.
 | 2 | role | `u8` | 0 leaf, 1 relay |
 | 3 | power | `i8` | the most the node transmits at, in dBm |
 | 4 | passkey | `u32` | the [Bluetooth](#bluetooth-le) passkey, 0 to 999999, or `0xFFFFFFFF` for a random one each time |
+| 5 | cards | `u8` | 1 to send [cards](#cards), 0 to send none |
+| 6 | card name | `str` up to 31 | the name the node's cards carry; empty for none |
 
 A node MUST refuse, with `ERROR` 3, a region it does not have and a
 power its radio cannot send at or that would let it radiate more than
 its profile allows. A node MAY restart to apply a setting, after it
 has answered: the connection then drops, and the client starts again.
+
+A node sends no cards until it is given `SET` 5 with 1, and stops when
+given it with 0; it MUST refuse any other value with `ERROR` 3. When
+it sends them is [Presence cards](cards.md#sending)' rule, which
+turning them off and on does not reset. Cards
+are off on a node that has never been told, and its card name is
+empty. The card name is the [`name`](cards.md#the-frame) in each card
+the node sends from then on, and the one name a node puts on the air
+in clear. A node keeps it while its cards are off. A client MUST NOT
+send `SET` 5 with 1, or change the card name, unless its user asked it
+to: being seen is the user's choice, as sharing a position is.
 
 **`SEND`** sends `text` to the node at `to`, as a new message. The
 answer, `QUEUED`, means the node has the message and has given it the
@@ -858,9 +919,9 @@ An implementation conforms to this section if, for
   answers a frame whose `type` is a request's with `ERROR` and the code
   `answer`, and does not answer one whose `answer` is `null`;
 * **unknown_to_older:** speaking `version`, it takes `frame` as of a
-  type its version does not define: as a node, it answers `ERROR` with
-  the code `answer`; as a client, it ignores news, and discards an
-  answer, whose `answer` is `null`;
+  type, or naming a setting, its version does not define: as a node,
+  it answers `ERROR` with the code `answer`; as a client, it ignores
+  news, and discards an answer, whose `answer` is `null`;
 * **streams:** given the bytes of `stream` as they arrive, it finds
   the frames and the runs of text in `items`, in that order, and holds
   `pending` waiting for more;
@@ -872,8 +933,8 @@ An implementation conforms to this section if, for
   is the node refusing first contact from the address it names. The
   group it makes has the secret `made`, which in use the node draws;
   the `INVITE` it receives is to the group whose secret is `invited`;
-  and the `GROUP_MESSAGE` and `POSITION` it receives come when the file
-  says;
+  and the `GROUP_MESSAGE`, `POSITION` and second `CARD` it receives,
+  and the card it forgets, come when the file says;
 * **older:** for each of its connections, as the same node, given the
   frames of a client of the `version` given, it sends the node's, in
   order. The node refuses the same first contact and sends a client of
@@ -884,7 +945,9 @@ An implementation conforms to this section if, for
   client of version 3 or earlier an `INFO` without `board` and
   `release`; it refuses a client of version 3 an update; and it sends
   a client of version 4 or earlier no position or sharing, and refuses
-  a client of version 4 `SHARE`;
+  a client of version 4 `SHARE`; and it sends a client of version 5 or
+  earlier no card, and a `SELF` without `cards` and `card_name`, and
+  refuses a client of version 5 `SET` 5;
 * **update:** as a client, given the `image` to send and the node's
   frames in order, it sends the client's frames of each of the two
   connections in `update`, in order, going on in the second from the
@@ -967,6 +1030,30 @@ paired.
 where each person is now, not a history. A record for each sender,
 which the next replaces, is that; a message for each position would
 fill a node's store with a day of one person's walk.
+
+**Why a card is a record, and carries no number or signal.** Who is
+about is a list a client shows, as neighbours and positions are, so a
+card held is a record that the next from the same address replaces,
+and a sync sends them all. A card's `number` is a counter, which
+[goal 1](#goals) keeps from clients: the node has already used it to
+refuse an older card. [Presence cards](cards.md#receiving) has a node
+keep a card's number, what it said and when it was heard, and no
+signal: a card heard through a relay says nothing of how near its
+sender is. `heard` is a `u32` and not a `NEIGHBOUR`'s `u16`, because a
+card is held for [`CARD_KEPT`](cards.md#parameters), a day, which is
+longer than `0xFFFF` seconds.
+
+**Why a card becomes a contact by `SAVE_CONTACT`.** Saving a contact is
+already what lets an address in and gives it the user's name; a frame
+of its own would do the same with a card's address in it. The card's
+name is not taken as the contact's, since it is a claim its sender
+made and the contact's name is the user's.
+
+**Why the card's name is a setting of its own.** It is the one name a
+node puts on the air in clear. Every other name a client gives the
+node is kept for the user, and goes on the air, if at all, only in an
+invite, sealed: a setting that is nothing but what cards carry keeps
+the two from being mixed up.
 
 **Why a record, and not a change.** A record says the whole of one
 thing, so a client that applies records in order is right after each,
@@ -1105,3 +1192,6 @@ and a node needs a way to say it cannot be updated at all.
   publishes its firmware, not only that it arrived whole.
 * **Sleeping leaves**: what a client sees of a node that is off the
   air most of the time.
+* **How many cards a sync sends.** A node in a crowd may hold a day of
+  cards, and each is a frame of a sync. A node holds what it has room
+  for, and nothing yet lets a client ask for fewer.
