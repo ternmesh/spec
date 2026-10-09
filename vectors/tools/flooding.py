@@ -32,6 +32,7 @@ SEEN_ROOM = 128
 POWER_MARGIN = 10
 FLOOD_OWN_PPM, FLOOD_OWN_WINDOW_S = 5_000, 600
 FLOOD_RELAY_PPM, FLOOD_RELAY_WINDOW_S = 30_000, 60
+FLOOD_BUSY_PPM = 200_000
 
 
 def head(hdr, hops, power):
@@ -56,6 +57,13 @@ def passes(relay, relay_neighbours, hops):
     if relay_neighbours <= FLOOD_SPARSE:
         return hops
     return hops - 1 if hops > 1 else None
+
+
+def busy_drops_ppm(busy_ppm):
+    """How often in a million a relay that busy drops a frame it would pass on."""
+    if busy_ppm <= FLOOD_BUSY_PPM:
+        return 0
+    return (busy_ppm - FLOOD_BUSY_PPM) * 1_000_000 // (1_000_000 - FLOOD_BUSY_PPM)
 
 
 def longest_wait(sf, bw_hz, length):
@@ -121,6 +129,8 @@ def self_check():
     # A floor of -3.5 dBm and the margin is 6.5, rounded up to 7; louder than announces at 2.
     assert power(2, [-56], -9, 22) == 7 and power(2, [], -9, 22) == 2
     assert power(2, [-56, None], -9, 22) == 22 and power(2, [300], -9, 22) == 22
+    # A relay busy 60% of the time is half way from 20% to never idle.
+    assert [busy_drops_ppm(b) for b in (0, 200_000, 600_000, 1_000_000)] == [0, 0, 500_000, 1_000_000]
     # 0.5% of ten minutes is 3 s of airtime: nine frames of 320.768 ms, and not a tenth.
     b = Bucket(FLOOD_OWN_PPM, FLOOD_OWN_WINDOW_S, 9, 500_000)
     assert [b.pays(0, 320_768_000) for _ in range(10)] == [True] * 9 + [False]
@@ -176,6 +186,8 @@ def build():
                            "sends": passes(role == "relay", n, hops)})
 
     copies = [{"received": n, "drops": n >= FLOOD_COPIES} for n in (1, 2, 3)]
+    busies = [{"busy_ppm": b, "drops_ppm": busy_drops_ppm(b)}
+              for b in (0, 100_000, 200_000, 200_001, 400_000, 600_000, 900_000, 1_000_000)]
 
     waits = []
     for _, _, bw, sf, _, _, _ in phy.PROFILES:
@@ -267,6 +279,7 @@ def build():
         "same": same,
         "passes": passed,
         "copies": copies,
+        "busies": busies,
         "waits": waits,
         "powers": powers,
         "seen": seen,
