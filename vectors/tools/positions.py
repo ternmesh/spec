@@ -346,8 +346,9 @@ def build():
     alice = 0x1D2E3F40
     grp = seal_group(g1, nonce, alice, town)
     assert open_group(g1, grp) == (alice, town)
-    # A member that knows only groups.md's frame does not take it: its header is authenticated.
-    assert groups.open_frame(g1, 0x0A0B0C0D, grp) is None
+    # groups.md's own frame with its node flag set: the same bytes, and a member takes it.
+    assert grp == groups.seal(g1, nonce, alice, town, hdr=groups.HDR_NODE)
+    assert groups.open_frame(g1, 0x0A0B0C0D, grp) == (alice, town)
     frames = [
         {"name": "to-a-contact", "note": "a secured unicast frame with the node flag set",
          "session_secret": s1.hex(), "direction": 1, "counter": 5, "hdr": HDR_UNICAST_NODE,

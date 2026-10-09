@@ -75,9 +75,18 @@ group.
 | 15 | 4 + `c` | ciphertext | yes (encrypted) |
 | 19 + `c` | 8 | AEAD tag | |
 
-`hdr` is `0x60`: format `01`, draft 0; type `100`, a group frame; flags
-`000`, none defined. The frame is `27 + c` bytes, so `c`, the length of
-what the writer has to say, is at most 228.
+`hdr` is laid out as a [unicast frame's](unicast-security.md#the-frame)
+is:
+
+| Bits | Field | Value in this section |
+|---|---|---|
+| 7–6 | format | `01`: draft 0 |
+| 5–3 | type | `100`: a group frame |
+| 2–0 | flags | bit 0 is `node`; bits 2 and 1 are `0` |
+
+So `hdr` is `0x60`, or `0x61` with `node` set. Other flags are
+reserved. The frame is `27 + c` bytes, so `c`, the length of what the
+writer has to say, is at most 228.
 
 What is encrypted is the **plaintext**:
 
@@ -85,6 +94,14 @@ What is encrypted is the **plaintext**:
 |---|---|---|---|
 | 0 | 4 | `from` | the writer's routing id |
 | 4 | `c` | `content` | what the writer has to say |
+
+**`node`** says who `content` is for, as it does in a unicast frame.
+Clear, it is for the members' users: words to show. Set, it is for the
+node itself, and its first byte says what it is, from the same numbers
+as a unicast message for the node: `0x02` is
+[a position](positions.md#the-position). A kind goes in a group frame
+only where the section that defines it says so, and an
+[invite](#invites) does not.
 
 For a frame with nonce `N`:
 
@@ -114,7 +131,8 @@ it accepted for that group.
 To receive a group frame, which the flood hands over once however many
 copies arrive:
 
-1. A node MUST discard a frame shorter than 27 bytes.
+1. A node MUST discard a frame shorter than 27 bytes, or whose `hdr`
+   is neither `0x60` nor `0x61`.
 2. For each group it holds, it computes `gtag(N)` from the frame's
    `nonce` and compares it with the frame's `gtag`. If none matches,
    the frame is not for this node, and it MUST NOT treat that as an
@@ -132,6 +150,13 @@ copies arrive:
 Whether a node passes the frame on is [the flood's](flooding.md#passing-on)
 to say, and does not depend on any of this: a relay that holds no group
 passes on every group's frames.
+
+A frame with `node` set is in every other way a frame like any other:
+it is sealed, tagged, opened and accepted the same way, and its nonce
+is held with the group's others. A member that accepts one whose
+`content` is empty, or whose first byte is a kind it does not know or
+one that does not go in a group frame, MUST do nothing more with it,
+and MUST NOT show it as words.
 
 `from` is what the frame says. A member that shows it to a user as a
 name it knows by that routing id is showing what a member claimed.
@@ -176,11 +201,11 @@ cannot open.
 An implementation conforms to this section if, for
 [`vectors/groups.json`](../vectors/groups.json):
 
-* **accepted:** given `group_secret`, `nonce`, `from`, `content`,
-  `hops` and `power` (setting the nonce is a test hook; in use, a
-  writer draws it), it produces exactly `frame`, and, as a member
+* **accepted:** given `hdr`, `group_secret`, `nonce`, `from`,
+  `content`, `hops` and `power` (setting the nonce is a test hook; in
+  use, a writer draws it), it produces exactly `frame`, and, as a member
   holding `group_secret` whose routing id is `self`, it accepts `frame`
-  and recovers `from` and `content`;
+  and recovers `from` and `content`, and whether `node` is set;
 * **rejected:** as a member holding `group_secret` whose routing id is
   `self`, it does not accept `frame`;
 * **members:** as a node whose routing id is `self`, holding every
@@ -188,7 +213,8 @@ An implementation conforms to this section if, for
   order, it accepts exactly those whose `accept` is true, for the group
   `group`, with that `from` and `content`. These check that a frame for
   a group not held is passed over, that every group whose tag matches
-  is tried, and that a frame is accepted once;
+  is tried, that a frame is accepted once, and that a frame for the
+  node and one of words draw on one group's nonces;
 * **recent:** as a member holding `group_secret` and no nonces, given
   the frames with nonces `first` to `first + count - 1`, each as eight
   bytes, in order, and then each of `again`, it accepts those whose
@@ -213,7 +239,9 @@ frame, and its length. `nonce` is random and `gtag` is a function of it
 that only members can compute, so two frames of one group look no more
 alike than two frames of different groups, and nothing in either names
 a node. [The flood](flooding.md#what-an-observer-learns) says what its
-own three bytes give away.
+own three bytes give away. `hdr` is in clear, so the flag `node` tells
+an observer which group frames are not words: today, that they are
+[positions](positions.md#what-an-observer-learns).
 
 What it can still do is count. Frames that leave one place soon after
 each other are likely one conversation, whatever they carry.
@@ -274,6 +302,16 @@ proves as much as an address would here, which is nothing.
 time can read and write, as for unicast. The cost is under
 [Not yet specified](#not-yet-specified): replay.
 
+**A flag for the node, as unicast has.** Positions to a group needed
+a way to say that `content` is not words. The flag is the one a unicast
+frame already has, in a byte that is already authenticated, in bits
+that were reserved, and so a frame for the node costs no byte more than
+one of words. A kind inside every `content`, words included, would hide
+which frames are not words, for a byte on every frame: see
+[Positions](positions.md#not-yet-specified). A member of before the
+flag drops a frame with it set, as [the flood](flooding.md#the-head)
+of before did, and misses positions and no words.
+
 **Invites over sessions.** A secret typed in, or shown as a code, would
 need no session, and the companion link may yet offer both. An invite
 over a session needs nothing new on the air but one flag, comes from a
@@ -289,8 +327,8 @@ anything else the two say.
 * **Signed frames**, for groups that will pay for them.
 * **A new secret for a group**, handed round by its members without
   each inviting the rest again.
-* **What `content` is**: its text, and whether anything says a frame
-  answers another. As for a unicast message, this section carries
+* **What `content` is**, with `node` clear: its text, and whether
+  anything says a frame answers another. As for a unicast message, this section carries
   bytes.
 * **Length.** The ciphertext is as long as the plaintext.
 * **Measured cost**: tag checks for each group held, on the nRF52840.
