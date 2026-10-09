@@ -927,6 +927,17 @@ the user clears them, on the node itself or over USB.
 find it. It MUST NOT advertise its address, its routing id or anything
 derived from them, nor the user's name for it.
 
+A node MAY add a tag to the name it advertises, so that a user with
+more than one node can tell them apart before pairing. The tag MUST
+be drawn wholly at random, at least 16 bits of it, and carry nothing
+else: nothing from the node's address, routing id or keys, nor any
+other value that stays the same, such as a serial number. A node
+MUST NOT keep a tag past the Bluetooth address it was advertised with:
+one whose address changes from time to time draws a new tag,
+independently of the last, with each address, and one whose address is
+fixed keeps its tag until it is erased. A node with a screen that
+advertises a tag SHOULD show it.
+
 ## Parameters
 
 | Name | Value | |
@@ -1177,6 +1188,20 @@ one it claimed.
 frame on the air that only the session's two ends can make, and the
 radio protocol has none yet. Until it does, ending a session is what a
 node does with its own keys.
+
+**Why a random tag in the name.** With every node named alike, a user
+with several of them nearby cannot tell from a phone's list which one
+is which. A tag taken from the address would tell them, and would also
+tell anyone in range which mesh node it was. A tag drawn at random says
+nothing about the node's mesh identity. Kept from day to day, it lets
+a node be recognised, but no more than a fixed Bluetooth address
+already does; a node that changes its address so as not to be followed
+would be undone by a tag that stayed the same, so a new tag is drawn
+with each address. A new draw that happens to equal the last tells an
+observer no more than two different nodes that happen to match, so it
+is not drawn again. Sixteen bits makes two nodes in one place alike about once
+in 65,000. A name the user chooses was the other way, and would say who
+the node belongs to.
 
 **Why the passkey, and not "just works" pairing.** A node may relay
 for its neighbours on a hill, and anyone who can drive it can read its
