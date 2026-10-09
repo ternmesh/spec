@@ -26,6 +26,7 @@ GROUP_MIN = 27
 FLOOD_HOPS = 5
 HDR_CARD = 0x68
 CARD_MIN, CARD_MAX = 103, 134
+CARD_HOPS = 2
 FLOOD_SPARSE = 8
 FLOOD_WAIT = 8
 FLOOD_COPIES = 2
@@ -50,13 +51,17 @@ def flooded(frame):
 
 
 def frame_id(frame):
-    return hashlib.sha256(frame[HEAD:]).digest()[:8]
+    """A group frame's id is of the bytes after the head; any other kind's has hdr in front, so
+    that a frame relabelled as another kind is a different frame."""
+    if frame[:1] == bytes([HDR_GROUP]):
+        return hashlib.sha256(frame[HEAD:]).digest()[:8]
+    return hashlib.sha256(frame[:1] + frame[HEAD:]).digest()[:8]
 
 
-def passes(relay, relay_neighbours, hops):
+def passes(relay, relay_neighbours, hops, most=FLOOD_HOPS):
     """The hops a node sends a frame on with, having not seen it before, or None for not at
-    all. A bridge spends no hop."""
-    hops = min(hops, FLOOD_HOPS)
+    all. A bridge spends no hop. `most` is FLOOD_HOPS, or CARD_HOPS for a card."""
+    hops = min(hops, most)
     if not relay or hops == 0:
         return None
     if relay_neighbours <= FLOOD_SPARSE:
@@ -212,6 +217,12 @@ def build():
         ("last-byte", good, bytes(other)),
         ("first-byte-after-the-head", good, bytes(first)),
         ("longer", good, good + b"\x00"),
+        # A group frame of a card's length, and the same bytes relabelled as a card: each kind
+        # passes the other's checks, so they must not share an id.
+        ("relabelled-as-a-card", head(0x60, 5, 22) + bytes(range(110)),
+         head(HDR_CARD, 5, 22) + bytes(range(110))),
+        ("a-card-passed-on", head(HDR_CARD, 2, 22) + bytes(range(110)),
+         head(HDR_CARD, 1, -9) + bytes(range(110))),
     ]:
         same.append({"name": name, "a": a.hex(), "b": b.hex(), "same": frame_id(a) == frame_id(b)})
 
@@ -220,6 +231,13 @@ def build():
         for hops in (5, 4, 2, 1, 0, 6, 255):
             passed.append({"role": role, "relay_neighbours": n, "hops": hops,
                            "sends": passes(role == "relay", n, hops)})
+
+    # A card's hops are read as no more than CARD_HOPS, whatever it says.
+    card_passed = []
+    for role, n in [("relay", 9), ("relay", 8), ("leaf", 3)]:
+        for hops in (5, 3, 2, 1, 0, 255):
+            card_passed.append({"role": role, "relay_neighbours": n, "hops": hops,
+                                "sends": passes(role == "relay", n, hops, CARD_HOPS)})
 
     copies = [{"received": n, "drops": n >= FLOOD_COPIES} for n in (1, 2, 3)]
     busies = [{"busy_ppm": b, "drops_ppm": busy_drops_ppm(b),
@@ -317,10 +335,12 @@ def build():
 
     return {
         "description": "Frames for every node, draft 0 (draft/flooding.md). Frames, ids and what "
-        "follows a head (rest) are hex; power is signed. A frame's id is the first eight bytes of "
-        "the SHA-256 of everything after its three-byte head. In passes, a node of that role with "
+        "follows a head (rest) are hex; power is signed. A group frame's id is the first eight "
+        "bytes of the SHA-256 of everything after its three-byte head; any other kind's, of hdr "
+        "and everything after the head. In passes, a node of that role with "
         "that many relay neighbours receives a frame it has not seen with those hops, and sends "
-        "it on with sends as its hops, or does not, for null. In copies, received counts every "
+        "it on with sends as its hops, or does not, for null; card_passes is "
+        "the same for a card, whose hops are read as no more than CARD_HOPS. In copies, received counts every "
         "copy a relay waiting to pass a frame on has received, the first included. In waits, "
         "airtime_ns is the frame's time on the air with the profiles' preamble and coding rate "
         "(vectors/phy.json) and longest_ns the longest a relay waits before passing it on. In "
@@ -337,6 +357,7 @@ def build():
         "rejected": rejected,
         "same": same,
         "passes": passed,
+        "card_passes": card_passed,
         "copies": copies,
         "shares": shares,
         "busies": busies,

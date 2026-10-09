@@ -22,6 +22,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from first_contact import valid_address  # noqa: E402
+
 VECTORS = Path(__file__).resolve().parent.parent
 OUT = VECTORS / "cards.json"
 
@@ -30,6 +33,8 @@ LABEL = b"tern v0 card"
 NAME_MAX = 31
 MIN_LEN = 3 + 32 + 4 + 64  # head, address, number, signature: a card with no name
 CARD_HOPS = 2
+NEUTRAL = bytes([1]) + bytes(31)  # the encoding of the neutral point, RFC 8032 5.1.2
+ORDER_8 = bytes.fromhex("26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05")
 FLOOD_HOPS = 5
 
 
@@ -77,7 +82,7 @@ def read(frame: bytes, own: bytes):
         return None
     addr, number = frame[3:35], int.from_bytes(frame[35:39], "big")
     name, sig = frame[39:-64], frame[-64:]
-    if addr == own:
+    if addr == own or not valid_address(addr):
         return None
     try:
         name.decode("utf-8")
@@ -138,6 +143,13 @@ def build():
         ("a name of 32 bytes, though signed", too_long),
         ("one byte short of a card with no name", good[:MIN_LEN - 1]),
         ("the receiver's own card", card(s[1], 5, b"Me", CARD_HOPS, 20)),
+        # The neutral point as the address, the neutral point as R and 0 as S: the verification
+        # equation holds for any message, so a verifier without weak-key checks would take it.
+        ("an address that is the neutral point, with a signature any message passes",
+         bytes([HDR, CARD_HOPS, 20]) + NEUTRAL + (5).to_bytes(4, "big") + b"Ada" + NEUTRAL
+         + bytes(32)),
+        ("an address of order 8, though its card is otherwise whole",
+         bytes([HDR, CARD_HOPS, 20]) + ORDER_8 + (5).to_bytes(4, "big") + b"Ada" + bytes(64)),
     ]
     for _, frame in rejected:
         assert read(frame, own) is None
@@ -166,7 +178,8 @@ def build():
             "Presence cards, draft 0 (draft/cards.md). For each accepted case, a node given seed, "
             "number, name, hops and power MUST produce frame, whose signature is over signed; and "
             "a node whose address is self MUST accept frame and read address, number and name "
-            "from it. Each rejected frame MUST be discarded by a node whose address is self. "
+            "from it. Each rejected frame MUST be discarded by a node whose address is self, "
+            "among them two whose address first-contact.json rejects. "
             "Given each of deliveries in order, holding no cards, a node whose address is self "
             "MUST keep exactly those whose keep is true. A card's hops and power are not signed: "
             "relayed_still_valid is good with them changed, and MUST be accepted."

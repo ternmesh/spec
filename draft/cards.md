@@ -115,8 +115,11 @@ copies arrive:
 
 1. A node MUST discard a card shorter than 103 bytes or longer than
    134, or whose `hdr` is not `0x68`.
-2. It MUST discard a card whose `address` is its own, or whose `name`
-   is not valid UTF-8.
+2. It MUST discard a card whose `address` is its own, or is not a
+   valid address as [First contact](first-contact.md#addresses) says,
+   or whose `name` is not valid UTF-8. This comes before the signature:
+   an address of small order, with a signature to match, passes
+   Ed25519's equation for any message.
 3. It MUST discard a card unless `Verify(address, M, sig)` passes.
 4. It MUST discard a card whose `number` is not higher than the one it
    holds for that address. Otherwise it holds this one in its place.

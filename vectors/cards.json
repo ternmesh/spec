@@ -1,5 +1,5 @@
 {
-  "description": "Presence cards, draft 0 (draft/cards.md). For each accepted case, a node given seed, number, name, hops and power MUST produce frame, whose signature is over signed; and a node whose address is self MUST accept frame and read address, number and name from it. Each rejected frame MUST be discarded by a node whose address is self. Given each of deliveries in order, holding no cards, a node whose address is self MUST keep exactly those whose keep is true. A card's hops and power are not signed: relayed_still_valid is good with them changed, and MUST be accepted.",
+  "description": "Presence cards, draft 0 (draft/cards.md). For each accepted case, a node given seed, number, name, hops and power MUST produce frame, whose signature is over signed; and a node whose address is self MUST accept frame and read address, number and name from it. Each rejected frame MUST be discarded by a node whose address is self, among them two whose address first-contact.json rejects. Given each of deliveries in order, holding no cards, a node whose address is self MUST keep exactly those whose keep is true. A card's hops and power are not signed: relayed_still_valid is good with them changed, and MUST be accepted.",
   "generator": "vectors/tools/cards.py",
   "hdr": 104,
   "label": "tern v0 card",
@@ -88,6 +88,14 @@
     {
       "why": "the receiver's own card",
       "frame": "68021419dd846009f5b0274b07bc4347a3635a3fee4464f2720f79e233f38ce8f95108000000054d6561b520c23d0bd276ab616231daed62dc148df1470addea55ae6b7c26f428aa88d62ded6e48cb178e814766a55e2232362175ecd1d1471f5f4cb6ea15f7b2c20e"
+    },
+    {
+      "why": "an address that is the neutral point, with a signature any message passes",
+      "frame": "68021401000000000000000000000000000000000000000000000000000000000000000000000541646101000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "why": "an address of order 8, though its card is otherwise whole",
+      "frame": "68021426e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc050000000541646100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
     }
   ],
   "relayed_still_valid": "6800f7d6d15fabbc42ce56174a4363e757437a4a7baf421b690caa24676f3f4f17c996000000054164616dbc247b76cc23ae2aad2dd6004a89e49cd40a9b1444104074f17d241d85f7dfc801f5a9144821bcad1ea7f872b0dd9ac65b62ab714fa7469aaa1ba0d2b32407",

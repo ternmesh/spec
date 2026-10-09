@@ -69,11 +69,17 @@ shorter than 103 or longer than 134, and MUST NOT treat a frame whose
 not:
 
 ```
-id = SHA-256(frame[3..])[0..8]
+id = SHA-256(frame[3..])[0..8]              for a group frame
+id = SHA-256(hdr || frame[3..])[0..8]       for any other kind
 ```
 
 every byte after the head, so the same for every copy of a frame
-wherever it was heard, and different for any other frame.
+wherever it was heard, and different for any other frame. A frame of
+another kind has `hdr` in its id too: a group frame of a card's length
+relabelled as a card, or a card as a group frame, passes the other
+kind's checks, and if it shared an id, a copy altered on the air and
+heard first would have the real one ignored. A group frame's id is
+kept as it was.
 
 ## Sending
 
@@ -225,6 +231,8 @@ An implementation conforms to this section if, for
   relay neighbours, receiving a frame it has not seen whose `hops` is
   `hops`, it passes the frame on with `sends` as its `hops`, or, where
   `sends` is `null`, does not;
+* **card_passes:** as **passes**, for a [card](cards.md), whose
+  `hops` is read as no more than `CARD_HOPS`;
 * **copies:** as a relay waiting to pass a frame on, having received
   `received` copies of it in all, the first included, it drops the
   frame, or not, as `drops` says;
