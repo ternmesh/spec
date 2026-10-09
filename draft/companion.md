@@ -930,11 +930,11 @@ derived from them, nor the user's name for it.
 A node MAY add a tag to the name it advertises, so that a user with
 more than one node can tell them apart before pairing. The tag MUST
 carry at least 16 bits drawn at random, and nothing from the node's
-address, routing id or keys. It MUST NOT outlast the Bluetooth address
-it is advertised with: a node whose address changes from time to time
-draws a new tag with each address, and one whose address is fixed keeps
-its tag until it is erased. A node with a screen that advertises a tag
-SHOULD show it.
+address, routing id or keys. A node MUST NOT keep a tag past the
+Bluetooth address it was advertised with: one whose address changes
+from time to time draws a new tag, independently of the last, with each
+address, and one whose address is fixed keeps its tag until it is
+erased. A node with a screen that advertises a tag SHOULD show it.
 
 ## Parameters
 
@@ -1194,8 +1194,10 @@ tell anyone in range which mesh node it was. A tag drawn at random says
 nothing about the node's mesh identity. Kept from day to day, it lets
 a node be recognised, but no more than a fixed Bluetooth address
 already does; a node that changes its address so as not to be followed
-would be undone by a tag that stayed the same, so the tag changes with
-the address. Sixteen bits makes two nodes in one place alike about once
+would be undone by a tag that stayed the same, so a new tag is drawn
+with each address. A new draw that happens to equal the last tells an
+observer no more than two different nodes that happen to match, so it
+is not drawn again. Sixteen bits makes two nodes in one place alike about once
 in 65,000. A name the user chooses was the other way, and would say who
 the node belongs to.
 
