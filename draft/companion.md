@@ -928,10 +928,13 @@ find it. It MUST NOT advertise its address, its routing id or anything
 derived from them, nor the user's name for it.
 
 A node MAY add a tag to the name it advertises, so that a user with
-more than one node can tell them apart before pairing. The tag MUST be
-drawn at random, and not from the node's address, routing id or keys;
-the node keeps it until it is erased, and draws a new one then. A node
-with a screen that advertises a tag SHOULD show it.
+more than one node can tell them apart before pairing. The tag MUST
+carry at least 16 bits drawn at random, and nothing from the node's
+address, routing id or keys. It MUST NOT outlast the Bluetooth address
+it is advertised with: a node whose address changes from time to time
+draws a new tag with each address, and one whose address is fixed keeps
+its tag until it is erased. A node with a screen that advertises a tag
+SHOULD show it.
 
 ## Parameters
 
@@ -1188,10 +1191,13 @@ node does with its own keys.
 with several of them nearby cannot tell from a phone's list which one
 is which. A tag taken from the address would tell them, and would also
 tell anyone in range which mesh node it was. A tag drawn at random says
-nothing about the node's mesh identity. It does stay the same from day
-to day, and so lets a node be recognised, but no more than the fixed
-Bluetooth address it already advertises from. A name the user chooses
-was the other way, and would say who the node belongs to.
+nothing about the node's mesh identity. Kept from day to day, it lets
+a node be recognised, but no more than a fixed Bluetooth address
+already does; a node that changes its address so as not to be followed
+would be undone by a tag that stayed the same, so the tag changes with
+the address. Sixteen bits makes two nodes in one place alike about once
+in 65,000. A name the user chooses was the other way, and would say who
+the node belongs to.
 
 **Why the passkey, and not "just works" pairing.** A node may relay
 for its neighbours on a hill, and anyone who can drive it can read its
