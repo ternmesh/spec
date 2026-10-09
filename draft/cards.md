@@ -89,7 +89,9 @@ The [flood's table of kinds](flooding.md#the-head) gains a row:
 
 A node MUST NOT send a card unless its user has turned cards on, and
 MUST stop when they turn them off. Turning cards on is a setting of
-the node's, which the [companion link](companion.md) will carry.
+the node's, which the [companion link](companion.md#cards) carries
+with the name, and by which a client is told of the cards the node
+holds.
 
 1. `number` MUST be higher than that of any card the node has sent
    before with this address. A node MAY use a count kept in flash, or
@@ -131,7 +133,8 @@ see [Not yet specified](#not-yet-specified).
 
 What a node does with a card it holds is its user's to see, as **who is
 about**: the name, beside the address's [short code](sharing.md), and
-how recently it was heard. A node MUST NOT save a card's sender as a
+how recently it was heard. A client is told of them as the [companion
+protocol](companion.md#cards) says. A node MUST NOT save a card's sender as a
 contact, or start first contact with it, unless its user says so.
 
 A card does not need to be held to be passed on, and whether it is
@@ -310,7 +313,5 @@ it should deliver.
 * **Replay of a forgotten card.** A card recorded and flooded again
   once its receivers have forgotten its number is taken as new, saying
   what it said then. It cannot say anything its sender did not.
-* **The companion link**: the setting that turns cards on, the name,
-  and how a client is told of who is about.
 * **Sending a card on asking.** A node that has just been turned on
   could ask those near it for theirs, rather than wait up to an hour.
