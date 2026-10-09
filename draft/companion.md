@@ -48,7 +48,7 @@ Fields are big-endian. Kinds:
 | Kind | Bytes | |
 |---|---|---|
 | `u8`, `u16`, `u32` | 1, 2, 4 | unsigned |
-| `i8` | 1 | two's complement |
+| `i8`, `i16`, `i32` | 1, 2, 4 | two's complement |
 | `addr` | 32 | an [address](first-contact.md#addresses) |
 | `gid` | 8 | a [group's id](#groups) |
 | `str` | 1 + `n` | a `u8` length `n`, then `n` bytes of UTF-8; each field gives its longest `n` |
@@ -113,6 +113,9 @@ its field allows, or if a `str` is not valid UTF-8.
 | `0x23` | `SEND_GROUP` | `ref` `u32`, `group` `gid`, `text` `str` up to 128 | `QUEUED` |
 | `0x24` | `SEND_INVITE` | `group` `gid`, `to` `addr` | `QUEUED` |
 | `0x25` | `JOIN` | `id` `u32` | `OK` |
+| `0x30` | `SET_POSITION` | `lat` `i32`, `lon` `i32`, `altitude` `i16`, `accuracy` `u16`, `age` `u16` | `OK` |
+| `0x31` | `SHARE` | `contact` `addr`, `precision` `u8`, `fields` `u8`, `interval` `u16`, `minutes` `u16` | `OK` |
+| `0x32` | `SHARE_GROUP` | `group` `gid`, `precision` `u8`, `fields` `u8`, `interval` `u16`, `minutes` `u16` | `OK` |
 
 Any request may instead be answered by `ERROR`.
 
@@ -148,6 +151,7 @@ Error codes:
 | 7 | the Bluetooth link's MTU is too small ([below](#bluetooth-le)) |
 | 8 | not now: the node cannot act on this request until it has finished something else |
 | 9 | not held: a group the node is not in, or an invite it does not hold |
+| 10 | not a contact: an address the node does not hold as one |
 
 Other codes are reserved. A client MUST treat one it does not know as
 a refusal.
@@ -170,6 +174,10 @@ a refusal.
 | `0x8B` | `GROUP_GONE` | `group` `gid` |
 | `0x8C` | `GROUP_MESSAGE` | `id` `u32`, `group` `gid`, `from` `u32`, `time` `u32`, `flags` `u8`, `state` `u8`, `reason` `u8`, `wait` `u16`, `text` `str` up to 128 |
 | `0x8D` | `INVITE` | `id` `u32`, `contact` `addr`, `group` `gid`, `time` `u32`, `flags` `u8`, `state` `u8`, `reason` `u8`, `wait` `u16`, `name` `str` up to 31 |
+| `0x8E` | `POSITION` | `contact` `addr`, `precision` `u8`, `lat` `i32`, `lon` `i32`, `altitude` `i16`, `accuracy` `u8`, `age` `u32` |
+| `0x8F` | `GROUP_POSITION` | `group` `gid`, `from` `u32`, `precision` `u8`, `lat` `i32`, `lon` `i32`, `altitude` `i16`, `accuracy` `u8`, `age` `u32` |
+| `0x90` | `SHARING` | `contact` `addr`, `precision` `u8`, `fields` `u8`, `interval` `u16`, `minutes` `u16` |
+| `0x91` | `GROUP_SHARING` | `group` `gid`, `precision` `u8`, `fields` `u8`, `interval` `u16`, `minutes` `u16` |
 
 Each news frame but `STATE`, the three `_GONE`s and `ASKED` is a
 **record**: the whole of one thing as the node holds it now. A record
@@ -306,6 +314,35 @@ A node holds the secret a received invite carried for as long as it
 holds the invite, so that the user can [`JOIN`](#the-requests) later.
 It MUST NOT hold the group itself until then.
 
+### Positions
+
+[Positions](positions.md) are shared only with the contacts and groups
+the user chooses, at the precision the user chooses. A client gives
+the node its own position, and turns sharing on and off; the node
+works out the cells, decides when each goes on the air, and tells
+clients what it receives.
+
+**Positions received** (`POSITION`, `GROUP_POSITION`). The position the
+node [holds](positions.md#reading-a-position) from a contact, or from
+a routing id in a group. `from` is as for a `GROUP_MESSAGE`: what a
+member claimed. `precision` is the position's, and `lat` and `lon` are
+the centre of its cell, in 10⁻⁷ degree, north and east positive; the
+cell is `360 / 2^precision` degrees each way. `altitude` is in metres,
+`-32768` if the position gave none, and `accuracy` in metres, 0 if it
+gave none. `age` is how many seconds old the fix was as of when the
+record was sent, from the position's own `age` and the time since the
+node received it. A record whose `precision` is 0 says the node holds
+no position from that sender, and its other fields are 0.
+
+**Sharing** (`SHARING`, `GROUP_SHARING`). How the node shares its
+position with a contact or a group, as [`SHARE`](#the-requests) set it.
+`precision` is 1 to 24, or 0 when sharing is off, and then the other
+fields are 0. `fields` bit 0: altitude goes with each position. Bit 1:
+accuracy does. The other bits are 0. `interval` is in seconds.
+`minutes` is how many minutes are left until the node turns sharing
+off, rounded up, as of when the record was sent, and 0 if it is on
+until it is turned off.
+
 ### Who may make first contact
 
 A session starts with [first contact](first-contact.md), which either
@@ -353,9 +390,16 @@ A node with a client that has said `HELLO` MUST send that client:
 * `CONTACT` and `CONTACT_GONE` when a contact is saved, renamed,
   removed, or gains or loses a session;
 * `SELF` when anything in it but `time` changes;
+* `POSITION` and `GROUP_POSITION` when a position is received, and
+  when one is forgotten, with `precision` 0;
+* `SHARING` and `GROUP_SHARING` when sharing is turned on, changed,
+  turned off or runs out, and, with `precision` 0, when it ends because
+  the contact is removed or the group left;
 * `NEIGHBOUR_GONE` when the node forgets a neighbour;
 * `ASKED` when it refuses [first contact](#who-may-make-first-contact),
   as that section says.
+
+A `minutes` or an `age` that only counts on is not a change.
 
 It SHOULD send `NEIGHBOUR`, `AIRTIME` and `POWER` when they change,
 and MAY send each no more often than once every `QUIET` seconds, so
@@ -376,7 +420,10 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 3. Version 2 is the same without `SYNCED`'s `news`. Version 1
+version 4. Version 3 is the same without [positions](#positions): the
+requests `0x30` to `0x32`, error 10, and the news `POSITION`,
+`GROUP_POSITION`, `SHARING` and `GROUP_SHARING`. Version 2 is version 3
+without `SYNCED`'s `news`. Version 1
 is version 2 without [groups](#groups): the
 requests `0x20` to `0x25`, `MADE`, error 9, and the news `GROUP`,
 `GROUP_GONE`, `GROUP_MESSAGE` and `INVITE`. Version 0 is version 1
@@ -384,8 +431,9 @@ without `END_SESSION` and `ASKED`. A receiver reads a frame by the
 version both ends speak: a client of version 3 reads a `SYNCED` from a
 node of version 2 as the two bytes it is. A client of an earlier version is
 not told of group messages or invites at all: their `id`s are ones it
-never sees. A node MUST answer a request that the client's version does
-not define with `ERROR` 1, as it does one its own version does not: it
+never sees. One of version 3 or earlier is told of no positions, and
+of no sharing. A node MUST answer a request that the client's version
+does not define with `ERROR` 1, as it does one its own version does not: it
 could not tell that client what the request changed.
 Later versions only add types, settings, error codes and
 fields at the end of a frame, so any two versions can talk. A change
@@ -396,8 +444,8 @@ A client then, typically, sets the node's clock and syncs:
 
 ```
 client                         node
-HELLO       seq 1, version 3  ─▶
-                              ◀─  INFO        seq 1, version 3
+HELLO       seq 1, version 4  ─▶
+                              ◀─  INFO        seq 1, version 4
 SET_TIME    seq 2             ─▶
                               ◀─  OK          seq 2
 SYNC        seq 3, after 0    ─▶
@@ -417,16 +465,19 @@ goes back to 0.
 `CONTACT` for every contact, a `GROUP` for every group, a `MESSAGE`,
 `GROUP_MESSAGE` or `INVITE` for every one it holds whose `id` is
 greater than `after`, in order of `id`, a `NEIGHBOUR` for every
-neighbour, one `AIRTIME` and one `POWER`. Then it answers `SYNCED`. News that a
-change prompts while it syncs is sent as at any other time, among the
-rest.
+neighbour, a `POSITION` or `GROUP_POSITION` for every position it
+holds, a `SHARING` or `GROUP_SHARING` for every contact or group it
+shares its position with, one `AIRTIME` and one `POWER`. Then it
+answers `SYNCED`. News that a change prompts while it syncs is sent as
+at any other time, among the rest.
 
-For contacts, groups and neighbours, a sync is the whole list: a
-client that receives `SYNCED` MUST forget every contact, group and
-neighbour it holds that the sync did not send, as if it had received
-its `_GONE`. Messages are
-not: a sync sends only those after `after`, and a client keeps the
-rest.
+For contacts, groups, neighbours, positions and sharing, a sync is the
+whole list: a client that receives `SYNCED` MUST forget every contact,
+group, neighbour and position it holds that the sync did not send, as
+if it had received its `_GONE` or a position's record with `precision`
+0, and take sharing to be off with every contact and group the sync
+sent no `SHARING` or `GROUP_SHARING` for. Messages are not: a sync
+sends only those after `after`, and a client keeps the rest.
 
 A client that has missed news since it sent the `SYNC`, either by a
 gap in the count or because the count it expects next is not the
@@ -530,8 +581,9 @@ renames it if it is one already. An empty name is a name. A node MUST
 refuse an invalid address, or its own, with `ERROR` 4.
 
 **`REMOVE_CONTACT`** removes the contact. It removes the name, and
-nothing else: messages to and from the address are kept, and so is any
-session with it. A node answers `OK` for an address that is not a
+ends any sharing of the node's position with the address, and nothing
+else: messages to and from the address are kept, and so is any session
+with it. A node answers `OK` for an address that is not a
 contact.
 
 **`END_SESSION`** ends the session the node shares with `address`: the
@@ -554,9 +606,9 @@ node draws, and holds it under `name`. The answer, `MADE`, gives its
 id. A node with no room for another group answers `ERROR` 5.
 
 **`LEAVE_GROUP`** leaves the group: the node erases its secret and its
-keys. Its messages are kept; one still waiting to go to it, and an
-invite to it still waiting, become not delivered, since neither will
-now be sent. Nothing goes on the air, so the other members are not
+keys, and ends any sharing of its position with the group. Its
+messages are kept; one still waiting to go to it, and an invite to it
+still waiting, become not delivered, since neither will now be sent. Nothing goes on the air, so the other members are not
 told. A node answers `OK` for a group it does not
 hold.
 
@@ -579,6 +631,36 @@ the name the invite gave. A node MUST answer `ERROR` 9 if it holds no
 such invite, or the invite is one it sent, and `ERROR` 5 if it has no
 room for another group. It answers `OK` for a group it holds already,
 and changes nothing.
+
+**`SET_POSITION`** gives the node the client's position: `lat` and
+`lon` in 10⁻⁷ degree, WGS 84, north and east positive; `altitude` in
+metres above the WGS 84 ellipsoid, or `-32768` if the client has none;
+`accuracy` in metres, or 0 if it has none; and `age`, how many seconds
+old the fix is. The node uses it as [Positions](positions.md#sharing)
+says, and sends nothing on the air because of it unless sharing is on.
+A node MUST refuse a `lat` beyond ±900000000 or a `lon` beyond
+±1800000000 with `ERROR` 3. A client SHOULD give the node its position
+when it moves, and SHOULD NOT give it more often than every few
+seconds.
+
+**`SHARE`** turns sharing of the node's position with `contact` on,
+changes it, or, with `precision` 0, turns it off. `precision`, `fields`
+and `interval` are as in `SHARING`; `minutes` is how long sharing
+lasts, from now, 0 for until it is turned off. A node MUST refuse an
+invalid `contact`, or its own address, with `ERROR` 4, and an address
+that is not a contact with `ERROR` 10. It MUST refuse a `precision`
+above 24, a bit of `fields` that is not defined, and an `interval`
+below [`POSITION_MIN`](positions.md#parameters), with `ERROR` 3, unless
+`precision` is 0, when it ignores the other three. Turning off sharing
+that is off is `OK`, and changes nothing.
+
+**`SHARE_GROUP`** is `SHARE` for a group the node holds, with
+`POSITION_GROUP_MIN` in the place of `POSITION_MIN`. A node MUST refuse
+a group it does not hold with `ERROR` 9.
+
+A client MUST NOT send `SHARE` or `SHARE_GROUP` that the user did not
+ask for: the choice to share, with whom, and how exactly, is the
+user's.
 
 ## Byte streams
 
@@ -690,14 +772,16 @@ An implementation conforms to this section if, for
   is the node refusing first contact from the address it names. The
   group it makes has the secret `made`, which in use the node draws;
   the `INVITE` it receives is to the group whose secret is `invited`;
-  and the `GROUP_MESSAGE` it receives comes when the file says;
+  and the `GROUP_MESSAGE` and `POSITION` it receives come when the file
+  says;
 * **older:** for each of its connections, as the same node, given the
   frames of a client of the `version` given, it sends the node's, in
   order. The node refuses the same first contact and sends a client of
   version 0 no `ASKED`; it receives the same invite and group message
   and sends a client of version 1 neither, and refuses that client a
-  request its version does not define; and it answers a client of
-  version 2's `SYNC` with a `SYNCED` without `news`.
+  request its version does not define; it answers a client of
+  version 2's `SYNC` with a `SYNCED` without `news`; and it sends a
+  client of version 3 no position or sharing, and refuses it `SHARE`.
 
 What a node holds, and so which news it sends and when, depends on the
 rest of the node, and is checked by running a client against it. The
@@ -756,6 +840,22 @@ lost, and on a quiet node nothing might come to show it. On a byte
 stream a frame can be lost so, its CRC wrong. With the count in the
 `SYNCED`, the client knows at once. It is a field and not a news
 frame of its own, so a sync costs no frame more.
+
+**Why the node rounds a position, and not the client.** A user may
+share a town with a group and a street with a friend, and change
+either from a phone or a laptop. If each client rounded, each
+`SET_POSITION` would carry a position for every destination, and a
+client that rounded wrongly would put it on the air. The node holds the
+choices, as it holds the names, so it is the one place that has to get
+the grid right, and it is checked against
+[the vectors](../vectors/positions.json). The exact position goes no
+further than the node, over a link that is already encrypted and
+paired.
+
+**Why received positions are records, not messages.** A map shows
+where each person is now, not a history. A record for each sender,
+which the next replaces, is that; a message for each position would
+fill a node's store with a day of one person's walk.
 
 **Why a record, and not a change.** A record says the whole of one
 thing, so a client that applies records in order is right after each,
@@ -862,6 +962,10 @@ node they were near, and follow it about.
 * **Authentication over TCP.** The framing above serves TCP, but
   nothing yet says who may drive a node over a network. Until something
   does, a node SHOULD NOT offer this protocol on a network socket.
+* **A node's own fix**, for a node with a satellite receiver to tell
+  its clients where it is.
+* **What became of a position** sent: whether it went, and whether a
+  contact acknowledged it.
 * **Developer frames**: routes, links and counters for whoever is
   debugging the mesh, which the console shows today.
 * **Firmware updates** over this link.

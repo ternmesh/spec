@@ -23,7 +23,7 @@ import routing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 3
+VERSION = 4
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -31,9 +31,9 @@ STREAM_TAIL = 2  # the CRC
 
 NAME_MAX, TEXT_MAX, FIRMWARE_MAX, REGION_MAX = 31, 128, 31, 15
 
-# Each field is (name, kind, and for a string its longest). Kinds: u8, i8, u16, u32, addr (32
-# bytes), gid (a group's id, 8 bytes), str (a u8 length, then that many bytes of UTF-8).
-U8, I8, U16, U32, ADDR, GID, STR = "u8", "i8", "u16", "u32", "addr", "gid", "str"
+# Each field is (name, kind, and for a string its longest). Kinds: u8, i8, u16, i16, u32, i32,
+# addr (32 bytes), gid (a group's id, 8 bytes), str (a u8 length, then that many bytes of UTF-8).
+U8, I8, U16, I16, U32, I32, ADDR, GID, STR = "u8", "i8", "u16", "i16", "u32", "i32", "addr", "gid", "str"
 BYTES = {ADDR: 32, GID: 8}
 
 FRAMES = {
@@ -54,6 +54,12 @@ FRAMES = {
     0x23: ("SEND_GROUP", [("ref", U32), ("group", GID), ("text", STR, TEXT_MAX)]),
     0x24: ("SEND_INVITE", [("group", GID), ("to", ADDR)]),
     0x25: ("JOIN", [("id", U32)]),
+    0x30: ("SET_POSITION", [("lat", I32), ("lon", I32), ("altitude", I16), ("accuracy", U16),
+                            ("age", U16)]),
+    0x31: ("SHARE", [("contact", ADDR), ("precision", U8), ("fields", U8), ("interval", U16),
+                     ("minutes", U16)]),
+    0x32: ("SHARE_GROUP", [("group", GID), ("precision", U8), ("fields", U8), ("interval", U16),
+                           ("minutes", U16)]),
     # Answers, node to client.
     0x40: ("OK", []),
     0x41: ("ERROR", [("code", U8)]),
@@ -83,6 +89,14 @@ FRAMES = {
     0x8D: ("INVITE", [("id", U32), ("contact", ADDR), ("group", GID), ("time", U32),
                       ("flags", U8), ("state", U8), ("reason", U8), ("wait", U16),
                       ("name", STR, NAME_MAX)]),
+    0x8E: ("POSITION", [("contact", ADDR), ("precision", U8), ("lat", I32), ("lon", I32),
+                        ("altitude", I16), ("accuracy", U8), ("age", U32)]),
+    0x8F: ("GROUP_POSITION", [("group", GID), ("from", U32), ("precision", U8), ("lat", I32),
+                              ("lon", I32), ("altitude", I16), ("accuracy", U8), ("age", U32)]),
+    0x90: ("SHARING", [("contact", ADDR), ("precision", U8), ("fields", U8), ("interval", U16),
+                       ("minutes", U16)]),
+    0x91: ("GROUP_SHARING", [("group", GID), ("precision", U8), ("fields", U8), ("interval", U16),
+                             ("minutes", U16)]),
 }
 BY_NAME = {name: t for t, (name, _) in FRAMES.items()}
 
@@ -99,7 +113,7 @@ SETTINGS = {
 
 REQUESTS, ANSWERS, NEWS = (0x01, 0x3F), (0x40, 0x7F), (0x80, 0xBF)
 
-FIXED = {U8: ">B", I8: ">b", U16: ">H", U32: ">I"}
+FIXED = {U8: ">B", I8: ">b", U16: ">H", I16: ">h", U32: ">I", I32: ">i"}
 
 
 def crc16(data):
@@ -281,6 +295,12 @@ MADE_SECRET = bytes(range(16))
 INVITED_SECRET = bytes.fromhex("c4" * 16)
 HUT, RIDGE = group_id(MADE_SECRET), group_id(INVITED_SECRET)
 
+# Positions, in 10^-7 degree. The client's own is positions.json's summit. Bob's is the centre of
+# the cell at precision 16 that positions.json's harbour is in, as a node reports one it holds.
+SUMMIT = dict(lat=458_325_000, lon=68_644_000)
+BOB_AT = dict(precision=16, lat=603_945_922, lon=52_871_704)
+NO_ALTITUDE = -32768
+
 
 def build():
     self_check()
@@ -311,6 +331,14 @@ def build():
         ("SEND_GROUP", 20, {"ref": 0xC0FFEE02, "group": HUT, "text": "Anyone at the hut?"}),
         ("SEND_INVITE", 21, {"group": HUT, "to": BOB}),
         ("JOIN", 22, {"id": 22}),
+        ("SET_POSITION", 23, {**SUMMIT, "altitude": 4806, "accuracy": 4, "age": 3}),
+        ("SET_POSITION", 24, {"lat": -336_183_000, "lon": -704_517_000, "altitude": NO_ALTITUDE,
+                              "accuracy": 0, "age": 600}),
+        ("SHARE", 25, {"contact": BOB, "precision": 20, "fields": 3, "interval": 900,
+                       "minutes": 60}),
+        ("SHARE", 26, {"contact": BOB, "precision": 0, "fields": 0, "interval": 0, "minutes": 0}),
+        ("SHARE_GROUP", 27, {"group": RIDGE, "precision": 12, "fields": 0, "interval": 300,
+                             "minutes": 0}),
         ("OK", 4, {}),
         ("ERROR", 15, {"code": 4}),
         ("INFO", 1, {"version": 2, "firmware": "tern 0.1.0 heltec-v3"}),
@@ -350,6 +378,18 @@ def build():
                         "flags": 0, "state": 2, "reason": 0, "wait": 0, "name": "Hut"}),
         ("INVITE", 22, {"id": 22, "contact": BOB, "group": RIDGE, "time": 1_790_000_200,
                         "flags": 0, "state": 4, "reason": 0, "wait": 0, "name": "Ridge"}),
+        ("POSITION", 23, {"contact": BOB, **BOB_AT, "altitude": NO_ALTITUDE, "accuracy": 0,
+                          "age": 40}),
+        ("POSITION", 24, {"contact": BOB, "precision": 0, "lat": 0, "lon": 0, "altitude": 0,
+                          "accuracy": 0, "age": 0}),
+        ("GROUP_POSITION", 25, {"group": RIDGE, "from": routing.rid(CAROL), "precision": 24,
+                                "lat": 458_325_040, "lon": 68_644_058, "altitude": 4806,
+                                "accuracy": 4, "age": 12}),
+        ("SHARING", 26, {"contact": BOB, "precision": 20, "fields": 3, "interval": 900,
+                         "minutes": 60}),
+        ("SHARING", 27, {"contact": BOB, "precision": 0, "fields": 0, "interval": 0, "minutes": 0}),
+        ("GROUP_SHARING", 28, {"group": RIDGE, "precision": 12, "fields": 0, "interval": 300,
+                               "minutes": 0}),
     ]
     frames = []
     for name, seq, values in examples:
@@ -400,6 +440,9 @@ def build():
         encode("GROUP", 16, group=HUT, name="Hut")[:-1],
         encode("INVITE", 22, id=22, contact=BOB, group=RIDGE, time=0, flags=0, state=4, reason=0,
                wait=0, name="Ridge")[:-6],
+        encode("SET_POSITION", 23, **SUMMIT, altitude=0, accuracy=0, age=0)[:-1],
+        encode("SHARE", 25, contact=BOB, precision=20, fields=0, interval=900, minutes=0)[:-1],
+        encode("POSITION", 23, contact=BOB, **BOB_AT, altitude=0, accuracy=0, age=0)[:-1],
     ]:
         why = decode(frame)
         assert isinstance(why, str), frame.hex()
@@ -508,9 +551,29 @@ def build():
         ("client", encode("LEAVE_GROUP", 13, group=HUT)),
         ("node", encode("OK", 13)),
         ("node", encode("GROUP_GONE", 24, group=HUT)),
-        ("client", encode("END_SESSION", 14, address=BOB)),
+        # The client gives the node its position, and the user shares it with Bob for an hour.
+        # Bob's position arrives. A precision past 24 is refused, and sharing with Bob is
+        # turned off again.
+        ("client", encode("SET_POSITION", 14, **SUMMIT, altitude=4806, accuracy=4, age=3)),
         ("node", encode("OK", 14)),
-        ("node", encode("CONTACT", 25, address=BOB, session=0, name="Bob")),
+        ("client", encode("SHARE", 15, contact=BOB, precision=20, fields=0, interval=900,
+                          minutes=60)),
+        ("node", encode("OK", 15)),
+        ("node", encode("SHARING", 25, contact=BOB, precision=20, fields=0, interval=900,
+                        minutes=60)),
+        ("node", encode("POSITION", 26, contact=BOB, **BOB_AT, altitude=NO_ALTITUDE, accuracy=0,
+                        age=40)),
+        ("client", encode("SHARE_GROUP", 16, group=RIDGE, precision=25, fields=0, interval=300,
+                          minutes=0)),
+        ("node", encode("ERROR", 16, code=3)),
+        ("client", encode("SHARE", 17, contact=BOB, precision=0, fields=0, interval=0,
+                          minutes=0)),
+        ("node", encode("OK", 17)),
+        ("node", encode("SHARING", 27, contact=BOB, precision=0, fields=0, interval=0,
+                        minutes=0)),
+        ("client", encode("END_SESSION", 18, address=BOB)),
+        ("node", encode("OK", 18)),
+        ("node", encode("CONTACT", 28, address=BOB, session=0, name="Bob")),
     ])
 
     # The same node with clients of earlier versions. To one of version 0, Carol is refused after
@@ -566,13 +629,28 @@ def build():
             ("node", encode("POWER", 5, **power)),
             ("node", encode("SYNCED", 2, speak=2)),
         ], 2)},
+        {"version": 3, "frames": connection([
+            ("client", encode("HELLO", 1, version=3)),
+            ("node", info),
+            ("client", encode("SYNC", 2, after=0)),
+            ("node", encode("SELF", 0, **self_)),
+            ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+            ("node", encode("MESSAGE", 2, flags=0, **where)),
+            ("node", encode("NEIGHBOUR", 3, **neighbour)),
+            ("node", encode("AIRTIME", 4, **airtime)),
+            ("node", encode("POWER", 5, **power)),
+            ("node", encode("SYNCED", 2, news=6, speak=3)),
+            ("client", encode("SHARE", 3, contact=BOB, precision=0, fields=0, interval=0,
+                              minutes=0)),
+            ("node", encode("ERROR", 3, code=1)),
+        ], 3)},
     ]
 
     group_ids = [{"group_secret": g.hex(), "group": group_id(g).hex()}
                  for g in (MADE_SECRET, INVITED_SECRET, bytes(16), bytes([0xFF] * 16))]
 
     return {
-        "description": "The companion protocol, version 3 (draft/companion.md). Frames, streams, "
+        "description": "The companion protocol, version 4 (draft/companion.md). Frames, streams, "
         "addresses and group ids are hex; numbers are numbers; strings are text. In frames, "
         "frame is the frame alone, as one BLE write or notification carries it, and stream is "
         "the same frame as it goes on a byte stream. In extended, frame carries bytes past the "
@@ -585,7 +663,8 @@ def build():
         "just before the ASKED; the group it makes has the secret made, where a node in use "
         "draws one; and after its own group message is sent it receives a message to that group "
         "from the second address's routing id, and then an invite from that address to the "
-        "group whose secret is invited. Older holds connections to the same node by clients of "
+        "group whose secret is invited. After it leaves the first group, it receives a position "
+        "from the second address, just before its POSITION. Older holds connections to the same node by clients of "
         "earlier versions. To the client of version 0 it holds what the exchange begins with, "
         "and refuses that first contact after the sync, before the client's SAVE_CONTACT. To "
         "the client of version 1 it holds what the exchange has before its JOIN but for the "
@@ -593,7 +672,10 @@ def build():
         "client's SEND; the client's last request is one its version does not define, which a "
         "client must not send, and the node answers it as it would any other it does not know "
         "from that client. To the client of version 2 it holds what the exchange begins with, "
-        "and its SYNCED is version 2's, without news. Each connection's frames are read by the "
+        "and its SYNCED is version 2's, without news. To the client of version 3 it holds what "
+        "the exchange begins with, a position from the second address, and sharing with that "
+        "address: the sync sends neither, and the node refuses the client's SHARE, which it must "
+        "not send. Positions are in units of 10^-7 degree. Each connection's frames are read by the "
         "version its client speaks. The three addresses are the public keys of RFC 8032's first three "
         "Ed25519 test vectors.",
         "generator": "vectors/tools/companion.py",

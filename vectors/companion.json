@@ -1,5 +1,5 @@
 {
-  "description": "The companion protocol, version 3 (draft/companion.md). Frames, streams, addresses and group ids are hex; numbers are numbers; strings are text. In frames, frame is the frame alone, as one BLE write or notification carries it, and stream is the same frame as it goes on a byte stream. In extended, frame carries bytes past the fields this version defines, and fields is what a receiver reads from it. In rejected, a receiver discards frame; answer is the ERROR code a node answers it with, null for none. In streams, items are what a receiver finds in stream, in order: a frame, or a run of bytes that is not one, and pending is what it holds at the end waiting for more. In group_ids, group is the id of the group whose secret is group_secret. Exchange is one connection, in order. In it the node refuses first contact from the third address just before the ASKED; the group it makes has the secret made, where a node in use draws one; and after its own group message is sent it receives a message to that group from the second address's routing id, and then an invite from that address to the group whose secret is invited. Older holds connections to the same node by clients of earlier versions. To the client of version 0 it holds what the exchange begins with, and refuses that first contact after the sync, before the client's SAVE_CONTACT. To the client of version 1 it holds what the exchange has before its JOIN but for the group message and the invite received, which come after the sync and before the client's SEND; the client's last request is one its version does not define, which a client must not send, and the node answers it as it would any other it does not know from that client. To the client of version 2 it holds what the exchange begins with, and its SYNCED is version 2's, without news. Each connection's frames are read by the version its client speaks. The three addresses are the public keys of RFC 8032's first three Ed25519 test vectors.",
+  "description": "The companion protocol, version 4 (draft/companion.md). Frames, streams, addresses and group ids are hex; numbers are numbers; strings are text. In frames, frame is the frame alone, as one BLE write or notification carries it, and stream is the same frame as it goes on a byte stream. In extended, frame carries bytes past the fields this version defines, and fields is what a receiver reads from it. In rejected, a receiver discards frame; answer is the ERROR code a node answers it with, null for none. In streams, items are what a receiver finds in stream, in order: a frame, or a run of bytes that is not one, and pending is what it holds at the end waiting for more. In group_ids, group is the id of the group whose secret is group_secret. Exchange is one connection, in order. In it the node refuses first contact from the third address just before the ASKED; the group it makes has the secret made, where a node in use draws one; and after its own group message is sent it receives a message to that group from the second address's routing id, and then an invite from that address to the group whose secret is invited. After it leaves the first group, it receives a position from the second address, just before its POSITION. Older holds connections to the same node by clients of earlier versions. To the client of version 0 it holds what the exchange begins with, and refuses that first contact after the sync, before the client's SAVE_CONTACT. To the client of version 1 it holds what the exchange has before its JOIN but for the group message and the invite received, which come after the sync and before the client's SEND; the client's last request is one its version does not define, which a client must not send, and the node answers it as it would any other it does not know from that client. To the client of version 2 it holds what the exchange begins with, and its SYNCED is version 2's, without news. To the client of version 3 it holds what the exchange begins with, a position from the second address, and sharing with that address: the sync sends neither, and the node refuses the client's SHARE, which it must not send. Positions are in units of 10^-7 degree. Each connection's frames are read by the version its client speaks. The three addresses are the public keys of RFC 8032's first three Ed25519 test vectors.",
   "generator": "vectors/tools/companion.py",
   "crc_check": {
     "input": "313233343536373839",
@@ -244,6 +244,71 @@
       },
       "frame": "251600000016",
       "stream": "f55400062516000000165d3a"
+    },
+    {
+      "type": "SET_POSITION",
+      "seq": 23,
+      "fields": {
+        "lat": 458325000,
+        "lon": 68644000,
+        "altitude": 4806,
+        "accuracy": 4,
+        "age": 3
+      },
+      "frame": "30171b517c0804176ca012c600040003",
+      "stream": "f554001030171b517c0804176ca012c60004000304e9"
+    },
+    {
+      "type": "SET_POSITION",
+      "seq": 24,
+      "fields": {
+        "lat": -336183000,
+        "lon": -704517000,
+        "altitude": -32768,
+        "accuracy": 0,
+        "age": 600
+      },
+      "frame": "3018ebf64128d601ec78800000000258",
+      "stream": "f55400103018ebf64128d601ec78800000000258d862"
+    },
+    {
+      "type": "SHARE",
+      "seq": 25,
+      "fields": {
+        "contact": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+        "precision": 20,
+        "fields": 3,
+        "interval": 900,
+        "minutes": 60
+      },
+      "frame": "31193d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c14030384003c",
+      "stream": "f554002831193d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c14030384003c73d4"
+    },
+    {
+      "type": "SHARE",
+      "seq": 26,
+      "fields": {
+        "contact": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+        "precision": 0,
+        "fields": 0,
+        "interval": 0,
+        "minutes": 0
+      },
+      "frame": "311a3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c000000000000",
+      "stream": "f5540028311a3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c0000000000006144"
+    },
+    {
+      "type": "SHARE_GROUP",
+      "seq": 27,
+      "fields": {
+        "group": "c8eafadc0857a696",
+        "precision": 12,
+        "fields": 0,
+        "interval": 300,
+        "minutes": 0
+      },
+      "frame": "321bc8eafadc0857a6960c00012c0000",
+      "stream": "f5540010321bc8eafadc0857a6960c00012c00003a73"
     },
     {
       "type": "OK",
@@ -583,6 +648,91 @@
       },
       "frame": "8d16000000163d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660cc8eafadc0857a6966ab13c480004000000055269646765",
       "stream": "f554003d8d16000000163d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660cc8eafadc0857a6966ab13c48000400000005526964676527e5"
+    },
+    {
+      "type": "POSITION",
+      "seq": 23,
+      "fields": {
+        "contact": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+        "precision": 16,
+        "lat": 603945922,
+        "lon": 52871704,
+        "altitude": -32768,
+        "accuracy": 0,
+        "age": 40
+      },
+      "frame": "8e173d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c1023ff7bc20326c21880000000000028",
+      "stream": "f55400328e173d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c1023ff7bc20326c21880000000000028ab29"
+    },
+    {
+      "type": "POSITION",
+      "seq": 24,
+      "fields": {
+        "contact": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+        "precision": 0,
+        "lat": 0,
+        "lon": 0,
+        "altitude": 0,
+        "accuracy": 0,
+        "age": 0
+      },
+      "frame": "8e183d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c00000000000000000000000000000000",
+      "stream": "f55400328e183d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c000000000000000000000000000000001e1d"
+    },
+    {
+      "type": "GROUP_POSITION",
+      "seq": 25,
+      "fields": {
+        "group": "c8eafadc0857a696",
+        "from": 150946753,
+        "precision": 24,
+        "lat": 458325040,
+        "lon": 68644058,
+        "altitude": 4806,
+        "accuracy": 4,
+        "age": 12
+      },
+      "frame": "8f19c8eafadc0857a69608ff43c1181b517c3004176cda12c6040000000c",
+      "stream": "f554001e8f19c8eafadc0857a69608ff43c1181b517c3004176cda12c6040000000c273e"
+    },
+    {
+      "type": "SHARING",
+      "seq": 26,
+      "fields": {
+        "contact": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+        "precision": 20,
+        "fields": 3,
+        "interval": 900,
+        "minutes": 60
+      },
+      "frame": "901a3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c14030384003c",
+      "stream": "f5540028901a3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c14030384003cbde2"
+    },
+    {
+      "type": "SHARING",
+      "seq": 27,
+      "fields": {
+        "contact": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+        "precision": 0,
+        "fields": 0,
+        "interval": 0,
+        "minutes": 0
+      },
+      "frame": "901b3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c000000000000",
+      "stream": "f5540028901b3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c000000000000e226"
+    },
+    {
+      "type": "GROUP_SHARING",
+      "seq": 28,
+      "fields": {
+        "group": "c8eafadc0857a696",
+        "precision": 12,
+        "fields": 0,
+        "interval": 300,
+        "minutes": 0
+      },
+      "frame": "911cc8eafadc0857a6960c00012c0000",
+      "stream": "f5540010911cc8eafadc0857a6960c00012c0000e4cc"
     }
   ],
   "extended": [
@@ -729,6 +879,21 @@
     {
       "why": "a field cut short",
       "frame": "8d16000000163d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660cc8eafadc0857a696000000000004000000",
+      "answer": null
+    },
+    {
+      "why": "a field cut short",
+      "frame": "30171b517c0804176ca00000000000",
+      "answer": 2
+    },
+    {
+      "why": "a field cut short",
+      "frame": "31193d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c1400038400",
+      "answer": 2
+    },
+    {
+      "why": "a field cut short",
+      "frame": "8e173d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c1023ff7bc20326c218000000000000",
       "answer": null
     }
   ],
@@ -891,13 +1056,13 @@
       "from": "client",
       "type": "HELLO",
       "seq": 1,
-      "frame": "010103"
+      "frame": "010104"
     },
     {
       "from": "node",
       "type": "INFO",
       "seq": 1,
-      "frame": "420103147465726e20302e312e302068656c7465632d7633"
+      "frame": "420104147465726e20302e312e302068656c7465632d7633"
     },
     {
       "from": "client",
@@ -1195,9 +1360,9 @@
     },
     {
       "from": "client",
-      "type": "END_SESSION",
+      "type": "SET_POSITION",
       "seq": 14,
-      "frame": "1a0e3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"
+      "frame": "300e1b517c0804176ca012c600040003"
     },
     {
       "from": "node",
@@ -1206,10 +1371,76 @@
       "frame": "400e"
     },
     {
+      "from": "client",
+      "type": "SHARE",
+      "seq": 15,
+      "frame": "310f3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c14000384003c"
+    },
+    {
+      "from": "node",
+      "type": "OK",
+      "seq": 15,
+      "frame": "400f"
+    },
+    {
+      "from": "node",
+      "type": "SHARING",
+      "seq": 25,
+      "frame": "90193d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c14000384003c"
+    },
+    {
+      "from": "node",
+      "type": "POSITION",
+      "seq": 26,
+      "frame": "8e1a3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c1023ff7bc20326c21880000000000028"
+    },
+    {
+      "from": "client",
+      "type": "SHARE_GROUP",
+      "seq": 16,
+      "frame": "3210c8eafadc0857a6961900012c0000"
+    },
+    {
+      "from": "node",
+      "type": "ERROR",
+      "seq": 16,
+      "frame": "411003"
+    },
+    {
+      "from": "client",
+      "type": "SHARE",
+      "seq": 17,
+      "frame": "31113d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c000000000000"
+    },
+    {
+      "from": "node",
+      "type": "OK",
+      "seq": 17,
+      "frame": "4011"
+    },
+    {
+      "from": "node",
+      "type": "SHARING",
+      "seq": 27,
+      "frame": "901b3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c000000000000"
+    },
+    {
+      "from": "client",
+      "type": "END_SESSION",
+      "seq": 18,
+      "frame": "1a123d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"
+    },
+    {
+      "from": "node",
+      "type": "OK",
+      "seq": 18,
+      "frame": "4012"
+    },
+    {
       "from": "node",
       "type": "CONTACT",
-      "seq": 25,
-      "frame": "81193d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c0003426f62"
+      "seq": 28,
+      "frame": "811c3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c0003426f62"
     }
   ],
   "older": [
@@ -1226,7 +1457,7 @@
           "from": "node",
           "type": "INFO",
           "seq": 1,
-          "frame": "420103147465726e20302e312e302068656c7465632d7633"
+          "frame": "420104147465726e20302e312e302068656c7465632d7633"
         },
         {
           "from": "client",
@@ -1303,7 +1534,7 @@
           "from": "node",
           "type": "INFO",
           "seq": 1,
-          "frame": "420103147465726e20302e312e302068656c7465632d7633"
+          "frame": "420104147465726e20302e312e302068656c7465632d7633"
         },
         {
           "from": "client",
@@ -1410,7 +1641,7 @@
           "from": "node",
           "type": "INFO",
           "seq": 1,
-          "frame": "420103147465726e20302e312e302068656c7465632d7633"
+          "frame": "420104147465726e20302e312e302068656c7465632d7633"
         },
         {
           "from": "client",
@@ -1459,6 +1690,83 @@
           "type": "SYNCED",
           "seq": 2,
           "frame": "4302"
+        }
+      ]
+    },
+    {
+      "version": 3,
+      "frames": [
+        {
+          "from": "client",
+          "type": "HELLO",
+          "seq": 1,
+          "frame": "010103"
+        },
+        {
+          "from": "node",
+          "type": "INFO",
+          "seq": 1,
+          "frame": "420104147465726e20302e312e302068656c7465632d7633"
+        },
+        {
+          "from": "client",
+          "type": "SYNC",
+          "seq": 2,
+          "frame": "020200000000"
+        },
+        {
+          "from": "node",
+          "type": "SELF",
+          "seq": 0,
+          "frame": "8000d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a010545553836380e6ab13b80"
+        },
+        {
+          "from": "node",
+          "type": "CONTACT",
+          "seq": 1,
+          "frame": "81013d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c0103426f62"
+        },
+        {
+          "from": "node",
+          "type": "MESSAGE",
+          "seq": 2,
+          "frame": "8302000000113d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c6ab1379800040000000e57686572652061726520796f753f"
+        },
+        {
+          "from": "node",
+          "type": "NEIGHBOUR",
+          "seq": 3,
+          "frame": "85031d2e3f4001da002a"
+        },
+        {
+          "from": "node",
+          "type": "AIRTIME",
+          "seq": 4,
+          "frame": "870400000e1000057e400000303900000000"
+        },
+        {
+          "from": "node",
+          "type": "POWER",
+          "seq": 5,
+          "frame": "88050f935101"
+        },
+        {
+          "from": "node",
+          "type": "SYNCED",
+          "seq": 2,
+          "frame": "430206"
+        },
+        {
+          "from": "client",
+          "type": "SHARE",
+          "seq": 3,
+          "frame": "31033d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c000000000000"
+        },
+        {
+          "from": "node",
+          "type": "ERROR",
+          "seq": 3,
+          "frame": "410301"
         }
       ]
     }

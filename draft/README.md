@@ -5,7 +5,8 @@ Sections of the specification that are written ahead of the v0 draft
 next two write down the design the simulator measured, for that
 decision to be made on; the two after carry a frame to every node and
 say what a group's is; the last is the link between a node and the
-client driving it, which never goes over LoRa. Each is a
+client driving it, which never goes over LoRa. Positions travel in
+the frames that carry messages. Each is a
 **strawman**: complete enough to implement and test against, written to
 be argued with, and not yet frozen. They move into the specification
 proper when v0 is assembled.
@@ -20,4 +21,5 @@ proper when v0 is assembled.
 | [flooding.md](flooding.md) | Frames for every node: the three-byte head, a frame's id, passing a frame on once after hearing whether others have, how far and how loud, and the share of its time a node gives to floods | [`vectors/flooding.json`](../vectors/flooding.json) |
 | [groups.md](groups.md) | Groups: a shared secret, the frame one member writes for the rest, its random nonce and blinded tag, receiving, and the invite that hands a group over a session | [`vectors/groups.json`](../vectors/groups.json) |
 | [companion.md](companion.md) | The companion protocol: how a phone or computer drives a node over USB serial, TCP or Bluetooth LE. Its frames, framing on a byte stream, the GATT profile, starting, syncing and versions. Never on the air | [`vectors/companion.json`](../vectors/companion.json) |
+| [positions.md](positions.md) | Positions: where a user is, as a cell of a grid as coarse as they choose, sent only to the contacts and groups they choose, inside the frames that carry messages, and when | [`vectors/positions.json`](../vectors/positions.json) |
 | [sharing.md](sharing.md) | Sharing an address off the air: how it is written down, the `ternmesh.org` link a QR code holds, and the short code two people compare. Never on the air | [`vectors/sharing.json`](../vectors/sharing.json) |

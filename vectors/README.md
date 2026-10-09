@@ -18,10 +18,11 @@ Everything in this directory is dedicated to the public domain under
 | `groups.json` | [Groups](../draft/groups.md) | `tools/groups.py` |
 | `companion.json` | [The companion protocol](../draft/companion.md) | `tools/companion.py` |
 | `sharing.json` | [Sharing an address](../draft/sharing.md) | `tools/sharing.py` |
+| `positions.json` | [Positions](../draft/positions.md) | `tools/positions.py` |
 
 Each file is the output of its generator, and CI fails if the two
 disagree. To change a vector, change the generator and run it with
-`generate`; `check` confirms the file matches. The first two generators
-and `tools/groups.py` need the Python `cryptography` package, and check it against published
+`generate`; `check` confirms the file matches. The first two generators,
+`tools/groups.py` and `tools/positions.py` need the Python `cryptography` package, and check it against published
 RFC vectors before computing anything. `tools/phy.py`, `tools/routing.py`,
 `tools/forwarding.py`, `tools/flooding.py`, `tools/companion.py` and `tools/sharing.py` need nothing, and check their arithmetic against values worked by hand.
