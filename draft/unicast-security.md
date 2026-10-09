@@ -129,12 +129,13 @@ flags are reserved.
 
 **`node`** says who the plaintext is for. Clear, it is for the node's
 user: words to show. Set, it is for the node itself, and its first byte
-says what it is: `0x01` is [a group's invite](groups.md#invites), the
-one kind there is. A frame with `node` set is in every other way a
-frame like any other: it takes the next counter, is sealed and opened
-the same way, and is acknowledged. A receiver that accepts one whose
-plaintext is empty, or whose first byte it does not know, MUST do
-nothing more with it, and MUST NOT show it as words.
+says what it is: `0x01` is [a group's invite](groups.md#invites), and
+`0x02` [a position](positions.md#the-position). A frame with `node`
+set is in every other way a frame like any other: it takes the next
+counter, is sealed and opened the same way, and is acknowledged. A
+receiver that accepts one whose plaintext is empty, or whose first byte
+it does not know, MUST do nothing more with it, and MUST NOT show it as
+words.
 
 `route` belongs to the routing layer, which defines it in
 [Frames that follow routes](forwarding.md#the-head): `hops`, `power`,
