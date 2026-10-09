@@ -2,10 +2,7 @@
 
 **Status:** strawman, draft 0. Not frozen. Open for review under the
 seven-day rule in [GOVERNANCE.md](../GOVERNANCE.md). Every number in it
-is **provisional**, and nothing in it is measured. A position to a
-group needs a flag that [Groups](groups.md) and
-[Frames for every node](flooding.md) do not yet define: see
-[Not yet specified](#not-yet-specified).
+is **provisional**, and nothing in it is measured.
 
 A user may let chosen contacts, or a group, see where they are, so
 that a phone app can show them on a map. This section defines what a
@@ -69,9 +66,8 @@ plaintext. It takes the session's next counter, follows a route, and is
 [acknowledged](forwarding.md#messages), as any message is.
 
 **To a group**, in a [group frame](groups.md#the-frame) whose `hdr` is
-`0x61`: the group frame's `0x60` with flag bit 0, `node`, set, as a
-unicast frame's is. `content` is the position. It is sealed with the
-group's keys, [flooded](flooding.md#sending) and charged to the node's
+`0x61`: the group frame with its flag [`node`](groups.md#the-frame)
+set. `content` is the position. It is sealed with the group's keys, [flooded](flooding.md#sending) and charged to the node's
 own [allowance](flooding.md#the-allowance) as a group's message is, and
 nothing answers it.
 
@@ -375,9 +371,10 @@ already carry plaintext for the node, marked by a flag and named by its
 first byte, for [invites](groups.md#invites). A position in the same
 way needs no new frame type, no new rule for relays, and nothing new in
 the session: it is sealed, routed, acknowledged and counted as any
-message is. A group frame had no such flag, and the smallest change is
+message is. A group frame had no such flag, and the smallest change was
 the same flag there, in a byte that is already authenticated and in
-three bits that are already reserved.
+three bits that were reserved: [Groups](groups.md#the-frame) and
+[Frames for every node](flooding.md#the-head) now define it.
 
 **The flag's cost.** The flag is in clear, so it tells an observer
 which frames are not words. A kind inside every plaintext, with no
@@ -461,13 +458,6 @@ up as little as it can.
 
 ## Not yet specified
 
-* **The group frame's flag, in [Groups](groups.md) and
-  [Frames for every node](flooding.md).** Groups defines no flags, and
-  Frames for every node floods only `hdr` `0x60`. Positions to a group
-  need both to take `0x61` as above: flag `node`, a first byte that
-  names the kind, kinds that a member does not know ignored, and relays
-  that pass `0x61` on as they do `0x60`. Until they are amended, a
-  relay of today drops every position to a group.
 * **Hiding the flag**: a kind in every plaintext, words included, so
   that an observer cannot tell a position from a message. It costs a
   byte on every message.

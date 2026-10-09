@@ -21,6 +21,8 @@ import phy  # noqa: E402
 OUT = Path(__file__).resolve().parent.parent / "flooding.json"
 
 HDR_GROUP = 0x60
+HDR_GROUP_NODE = 0x61  # the same, with the node flag set (draft/groups.md)
+FLOODED = (HDR_GROUP, HDR_GROUP_NODE)
 HEAD = 3
 GROUP_MIN = 27
 FLOOD_HOPS = 5
@@ -42,7 +44,7 @@ def head(hdr, hops, power):
 
 def flooded(frame):
     """Whether a receiver takes a frame as a flooded one."""
-    return len(frame) <= 255 and len(frame) >= GROUP_MIN and frame[0] == HDR_GROUP
+    return len(frame) <= 255 and len(frame) >= GROUP_MIN and frame[0] in FLOODED
 
 
 def frame_id(frame):
@@ -176,6 +178,7 @@ def build():
         (0x60, 5, 22, body),
         (0x60, 1, -9, bytes(range(0x80, 0x80 + 40))),
         (0x60, 0, 0, bytes(252)),
+        (0x61, 5, 14, body),
     ]:
         f = head(hdr, hops, pw) + rest
         assert flooded(f)
@@ -189,7 +192,9 @@ def build():
         ("a-message", bytes([0x48]) + good[1:]),
         ("an-acknowledgement", bytes([0x50]) + good[1:]),
         ("an-announce", bytes([0x59]) + good[1:]),
-        ("a-flag-set", bytes([0x61]) + good[1:]),
+        ("a-reserved-flag", bytes([0x62]) + good[1:]),
+        ("both-flags-set", bytes([0x63]) + good[1:]),
+        ("for-the-node-short", bytes([0x61]) + good[1:-1]),
         ("empty", b""),
     ]:
         assert not flooded(f)
@@ -203,6 +208,7 @@ def build():
     for name, a, b in [
         ("passed-on", good, head(0x60, 4, -2) + body),
         ("itself", good, good),
+        ("node-flag-flipped", good, bytes([0x61]) + good[1:]),
         ("last-byte", good, bytes(other)),
         ("first-byte-after-the-head", good, bytes(first)),
         ("longer", good, good + b"\x00"),

@@ -14,7 +14,7 @@ This section carries a frame to every node within a few relays of where
 it began: a **flood**. Each relay that hears the frame sends it once
 more, unless it hears that others already have. What is flooded is for
 the section that defines the frame to say; the one kind so far is a
-[group's message](groups.md).
+[group's frame](groups.md), of words or for the node.
 
 Test vectors: [`vectors/flooding.json`](../vectors/flooding.json),
 produced by
@@ -54,14 +54,18 @@ Every flooded frame starts with three bytes:
 
 `hops` and `power` change at every node. Nothing after them does.
 
-One kind of frame is defined:
+One kind of frame is defined, with its flag [`node`](groups.md#the-frame)
+clear or set:
 
 | `hdr` | Frame | After the head |
 |---|---|---|
 | `0x60` | a **group frame** | [Groups](groups.md#the-frame): at least 24 bytes |
+| `0x61` | a **group frame** for the node | the same |
 
 A receiver MUST discard a group frame shorter than 27 bytes, and MUST
-NOT treat a frame whose `hdr` is none of this table's as flooded.
+NOT treat a frame whose `hdr` is none of this table's as flooded. Every
+rule in this section is the same for both: a relay passes `0x61` on as
+it does `0x60`, and charges it to the same allowance.
 
 **A frame's id** is how a node tells a frame it has had from one it has
 not:
@@ -337,6 +341,13 @@ from going everywhere.
 fills. A node that heard a frame could then send rubbish under the same
 id and have relays take the real one as a copy. A hash of the frame
 cannot be made to match.
+
+**The head is not in the id**, `hdr` included, so a copy whose `node`
+flag was flipped on the way is the same frame to a relay, and fails at
+every member. That gives a node nothing it did not have: one that
+sends a copy with `hops` 0, which no relay passes on, already stops a
+frame it has heard where it is heard first. Keeping `hdr` out keeps the
+id as it was, so the two kinds need nothing new in a relay.
 
 ## What was measured
 
