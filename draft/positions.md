@@ -67,8 +67,9 @@ plaintext. It takes the session's next counter, follows a route, and is
 
 **To a group**, in a [group frame](groups.md#the-frame) whose `hdr` is
 `0x61`: the group frame with its flag [`node`](groups.md#the-frame)
-set. `content` is the position. It is sealed with the group's keys, [flooded](flooding.md#sending) and charged to the node's
-own [allowance](flooding.md#the-allowance) as a group's message is, and
+set. `content` is the position. It is sealed with the group's keys,
+[flooded](flooding.md#sending) and charged to the node's own
+[allowance](flooding.md#the-allowance) as a group's message is, and
 nothing answers it.
 
 In each, the first byte of what is sealed says what it is, as
