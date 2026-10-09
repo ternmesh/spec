@@ -631,8 +631,11 @@ one larger than it has room to hold with `ERROR` 5. It answers
 `UPDATING` with the `offset` the client sends from. If an update with
 the same `size` and `digest` is under way, as when a client lost its
 link part of the way through, `offset` is how many bytes of it the
-node holds, or fewer; otherwise the node abandons any update under way,
-begins this one, and answers 0. A node keeps an update under way until
+node holds: a node that cannot keep all it was sent discards the bytes
+past the offset it gives, and holds exactly that many from then on, so
+that the next `UPDATE_DATA` begins where its bytes end. Otherwise
+the node abandons any update under way, begins this one, and answers 0.
+A node keeps an update under way until
 it restarts or another begins; it need not keep one across a restart.
 
 **`UPDATE_DATA`** gives the node the bytes of the image from `offset`.
@@ -751,7 +754,7 @@ derived from them, nor the user's name for it.
 | `GAP` | 500 ms | |
 | `REFS` | 16 | |
 | `QUIET` | 10 s | |
-| `UPDATE_CHUNK` | 172 bytes | the longest `data` that fits a frame |
+| `UPDATE_CHUNK` | 172 bytes | the most `data` an `UPDATE_DATA` carries: a multiple of four that fits a frame, which is then 179 bytes |
 
 ## Conformance
 
