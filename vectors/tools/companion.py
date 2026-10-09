@@ -23,18 +23,22 @@ import routing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 3
+VERSION = 4
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
 STREAM_TAIL = 2  # the CRC
 
 NAME_MAX, TEXT_MAX, FIRMWARE_MAX, REGION_MAX = 31, 128, 31, 15
+BOARD_MAX, RELEASE_MAX = 31, 31
+UPDATE_CHUNK = 172
 
-# Each field is (name, kind, and for a string its longest). Kinds: u8, i8, u16, u32, addr (32
-# bytes), gid (a group's id, 8 bytes), str (a u8 length, then that many bytes of UTF-8).
-U8, I8, U16, U32, ADDR, GID, STR = "u8", "i8", "u16", "u32", "addr", "gid", "str"
-BYTES = {ADDR: 32, GID: 8}
+# Each field is (name, kind, and for a string or bytes its longest). Kinds: u8, i8, u16, u32, addr
+# (32 bytes), gid (a group's id, 8 bytes), digest (a SHA-256, 32 bytes), str (a u8 length, then
+# that many bytes of UTF-8), raw (bytes: a u8 length, then that many bytes of anything).
+U8, I8, U16, U32, ADDR, GID, DIGEST, STR, RAW = (
+    "u8", "i8", "u16", "u32", "addr", "gid", "digest", "str", "raw")
+BYTES = {ADDR: 32, GID: 8, DIGEST: 32}
 
 FRAMES = {
     # Requests, client to node.
@@ -54,13 +58,18 @@ FRAMES = {
     0x23: ("SEND_GROUP", [("ref", U32), ("group", GID), ("text", STR, TEXT_MAX)]),
     0x24: ("SEND_INVITE", [("group", GID), ("to", ADDR)]),
     0x25: ("JOIN", [("id", U32)]),
+    0x30: ("UPDATE_BEGIN", [("size", U32), ("digest", DIGEST)]),
+    0x31: ("UPDATE_DATA", [("offset", U32), ("data", RAW, UPDATE_CHUNK)]),
+    0x32: ("UPDATE_END", []),
     # Answers, node to client.
     0x40: ("OK", []),
     0x41: ("ERROR", [("code", U8)]),
-    0x42: ("INFO", [("version", U8), ("firmware", STR, FIRMWARE_MAX)]),
+    0x42: ("INFO", [("version", U8), ("firmware", STR, FIRMWARE_MAX), ("board", STR, BOARD_MAX),
+                    ("release", STR, RELEASE_MAX)]),
     0x43: ("SYNCED", [("news", U8)]),
     0x44: ("QUEUED", [("id", U32)]),
     0x45: ("MADE", [("group", GID)]),
+    0x46: ("UPDATING", [("offset", U32)]),
     # News, node to client.
     0x80: ("SELF", [("address", ADDR), ("role", U8), ("region", STR, REGION_MAX), ("power", I8),
                     ("time", U32)]),
@@ -88,7 +97,7 @@ BY_NAME = {name: t for t, (name, _) in FRAMES.items()}
 
 # Fields a later version added to a frame, and the version that added them. A frame is built and
 # read by the version both ends speak, and has none of the fields a later version added.
-SINCE = {(0x43, "news"): 3}
+SINCE = {(0x43, "news"): 3, (0x42, "board"): 4, (0x42, "release"): 4}
 
 SETTINGS = {
     1: ("region", [("value", STR, REGION_MAX)]),
@@ -144,6 +153,9 @@ def encode(kind, seq, /, *, speak=VERSION, **values):
         elif kind in BYTES:
             assert len(v) == BYTES[kind]
             out += v
+        elif kind == RAW:
+            assert len(v) <= field[2]
+            out += bytes([len(v)]) + v
         else:
             raw = v.encode("utf-8")
             assert len(raw) <= field[2]
@@ -178,6 +190,13 @@ def decode(frame, speak=VERSION):
                 return "a field cut short"
             values[name] = frame[at : at + BYTES[kind]].hex()
             at += BYTES[kind]
+        elif kind == RAW:
+            if at + 1 > len(frame) or at + 1 + frame[at] > len(frame):
+                return "a field cut short"
+            if frame[at] > fields[i][2]:
+                return "bytes longer than their field allows"
+            values[name] = frame[at + 1 : at + 1 + frame[at]].hex()
+            at += 1 + frame[at]
         else:
             if at + 1 > len(frame) or at + 1 + frame[at] > len(frame):
                 return "a field cut short"
@@ -269,6 +288,9 @@ def self_check():
                      wait=0, text="x" * TEXT_MAX)
     assert len(longest) == 48 + TEXT_MAX <= MAX_FRAME
     assert len(encode("SEND", 1, ref=0, to=bytes(32), text="x" * TEXT_MAX)) == 39 + TEXT_MAX
+    assert len(encode("UPDATE_DATA", 1, offset=0, data=bytes(UPDATE_CHUNK))) == 179 <= MAX_FRAME
+    assert encode("INFO", 1, speak=3, version=4, firmware="t", board="b", release="1") == (
+        b"\x42\x01\x04\x01t")
 
 
 # The public keys of RFC 8032's first three Ed25519 test vectors (section 7.1): valid addresses.
@@ -281,11 +303,24 @@ MADE_SECRET = bytes(range(16))
 INVITED_SECRET = bytes.fromhex("c4" * 16)
 HUT, RIDGE = group_id(MADE_SECRET), group_id(INVITED_SECRET)
 
+# The image an update sends: 400 bytes, so two whole chunks and a short one. A node in the
+# vectors runs any image whose digest is right; a real one also checks that it is an image for
+# its hardware.
+IMAGE = bytes((i * 151 + 7) & 0xFF for i in range(400))
+DIGEST_OF_IMAGE = hashlib.sha256(IMAGE).digest()
+FIRMWARE = dict(firmware="tern 0.2.0 heltec-v3", board="heltec-v3", release="0.2.0")
+
+
+def info(speak=VERSION):
+    """The node's INFO, as a client of version speak is sent it."""
+    return encode("INFO", 1, speak=speak, version=VERSION, **FIRMWARE)
+
 
 def build():
     self_check()
 
     examples = [
+        ("HELLO", 1, {"version": 4}),
         ("HELLO", 1, {"version": 3}),
         ("HELLO", 1, {"version": 2}),
         ("HELLO", 1, {"version": 1}),
@@ -311,12 +346,22 @@ def build():
         ("SEND_GROUP", 20, {"ref": 0xC0FFEE02, "group": HUT, "text": "Anyone at the hut?"}),
         ("SEND_INVITE", 21, {"group": HUT, "to": BOB}),
         ("JOIN", 22, {"id": 22}),
+        ("UPDATE_BEGIN", 23, {"size": len(IMAGE), "digest": DIGEST_OF_IMAGE}),
+        ("UPDATE_DATA", 24, {"offset": 0, "data": IMAGE[:UPDATE_CHUNK]}),
+        ("UPDATE_DATA", 25, {"offset": 2 * UPDATE_CHUNK, "data": IMAGE[2 * UPDATE_CHUNK :]}),
+        ("UPDATE_END", 26, {}),
         ("OK", 4, {}),
         ("ERROR", 15, {"code": 4}),
-        ("INFO", 1, {"version": 2, "firmware": "tern 0.1.0 heltec-v3"}),
+        ("INFO", 1, {"version": 4, **FIRMWARE}),
+        ("INFO", 1, {"version": 4, "firmware": "tern (built by hand)", "board": "",
+                     "release": ""}),
         ("SYNCED", 2, {"news": 6}),
         ("QUEUED", 10, {"id": 18}),
         ("MADE", 17, {"group": HUT}),
+        ("UPDATING", 23, {"offset": 0}),
+        ("UPDATING", 23, {"offset": 2 * UPDATE_CHUNK}),
+        ("ERROR", 24, {"code": 10}),
+        ("ERROR", 26, {"code": 11}),
         ("SELF", 0, {"address": ALICE, "role": 1, "region": "EU868", "power": 14,
                      "time": 1_790_000_000}),
         ("SELF", 1, {"address": ALICE, "role": 0, "region": "US915", "power": -9, "time": 0}),
@@ -400,6 +445,12 @@ def build():
         encode("GROUP", 16, group=HUT, name="Hut")[:-1],
         encode("INVITE", 22, id=22, contact=BOB, group=RIDGE, time=0, flags=0, state=4, reason=0,
                wait=0, name="Ridge")[:-6],
+        encode("UPDATE_BEGIN", 23, size=1, digest=DIGEST_OF_IMAGE)[:-1],
+        encode("UPDATE_DATA", 24, offset=0, data=IMAGE[:10])[:-1],
+        encode("UPDATE_DATA", 24, offset=0, data=b"")[:-1] + bytes([UPDATE_CHUNK + 1])
+        + IMAGE[: UPDATE_CHUNK + 1],
+        encode("UPDATING", 23, offset=0)[:-1],
+        encode("INFO", 1, version=4, **FIRMWARE)[:-1],
     ]:
         why = decode(frame)
         assert isinstance(why, str), frame.hex()
@@ -428,7 +479,6 @@ def build():
                         "pending": pending.hex()})
 
     # A connection, as both ends see it: who sends what, in order.
-    info = encode("INFO", 1, version=VERSION, firmware="tern 0.1.0 heltec-v3")
     self_ = dict(address=ALICE, role=1, region="EU868", power=14, time=1_790_000_000)
     neighbour = dict(routing_id=0x1D2E3F40, role=1, snr_quarter_db=-38, heard=42)
     airtime = dict(period=3600, allowed=360_000, used=12_345, wait=0)
@@ -455,7 +505,7 @@ def build():
 
     exchange = connection([
         ("client", encode("HELLO", 1, version=VERSION)),
-        ("node", info),
+        ("node", info()),
         ("client", encode("SET_TIME", 2, time=1_790_000_000)),
         ("node", encode("OK", 2)),
         ("client", encode("SYNC", 3, after=0)),
@@ -522,7 +572,7 @@ def build():
     older = [
         {"version": 0, "frames": connection([
             ("client", encode("HELLO", 1, version=0)),
-            ("node", info),
+            ("node", info(0)),
             ("client", encode("SYNC", 2, after=17)),
             ("node", encode("SELF", 0, **self_)),
             ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
@@ -536,7 +586,7 @@ def build():
         ], 0)},
         {"version": 1, "frames": connection([
             ("client", encode("HELLO", 1, version=1)),
-            ("node", info),
+            ("node", info(1)),
             ("client", encode("SYNC", 2, after=0)),
             ("node", encode("SELF", 0, **{**self_, "time": 1_790_000_130})),
             ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
@@ -556,7 +606,7 @@ def build():
         ], 1)},
         {"version": 2, "frames": connection([
             ("client", encode("HELLO", 1, version=2)),
-            ("node", info),
+            ("node", info(2)),
             ("client", encode("SYNC", 2, after=0)),
             ("node", encode("SELF", 0, **self_)),
             ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
@@ -568,11 +618,84 @@ def build():
         ], 2)},
     ]
 
+    # An update over two connections: the link is lost after the second chunk, and the client goes
+    # on from where the node says. Then a node refusing what it should, on one connection.
+    def start():
+        return [
+            ("client", encode("HELLO", 1, version=VERSION)),
+            ("node", info()),
+            ("client", encode("SET_TIME", 2, time=1_790_000_000)),
+            ("node", encode("OK", 2)),
+            ("client", encode("SYNC", 3, after=0)),
+            ("node", encode("SELF", 0, **self_)),
+            ("node", encode("AIRTIME", 1, **airtime)),
+            ("node", encode("POWER", 2, **power)),
+            ("node", encode("SYNCED", 3, news=3)),
+        ]
+
+    size, chunk = len(IMAGE), UPDATE_CHUNK
+
+    def data(seq, at, n=chunk, image=IMAGE):
+        return encode("UPDATE_DATA", seq, offset=at, data=image[at : at + n])
+
+    begin = encode("UPDATE_BEGIN", 4, size=size, digest=DIGEST_OF_IMAGE)
+    update = [
+        connection(start() + [
+            ("client", begin),
+            ("node", encode("UPDATING", 4, offset=0)),
+            ("client", data(5, 0)),
+            ("node", encode("OK", 5)),
+            ("client", data(6, chunk)),
+            ("node", encode("OK", 6)),
+        ]),
+        connection(start() + [
+            ("client", begin),
+            ("node", encode("UPDATING", 4, offset=2 * chunk)),
+            ("client", data(5, 2 * chunk)),
+            ("node", encode("OK", 5)),
+            ("client", encode("UPDATE_END", 6)),
+            ("node", encode("OK", 6)),
+        ]),
+    ]
+    wrong = hashlib.sha256(b"").digest()
+    refusals = connection([
+        ("client", encode("HELLO", 1, version=VERSION)),
+        ("node", info()),
+        ("client", data(2, 0)),
+        ("node", encode("ERROR", 2, code=10)),
+        ("client", encode("UPDATE_END", 3)),
+        ("node", encode("ERROR", 3, code=10)),
+        ("client", encode("UPDATE_BEGIN", 4, size=0, digest=DIGEST_OF_IMAGE)),
+        ("node", encode("ERROR", 4, code=3)),
+        ("client", encode("UPDATE_BEGIN", 5, size=size, digest=wrong)),
+        ("node", encode("UPDATING", 5, offset=0)),
+        ("client", data(6, 0)),
+        ("node", encode("OK", 6)),
+        ("client", data(7, 0)),
+        ("node", encode("OK", 7)),
+        ("client", data(8, 300)),
+        ("node", encode("ERROR", 8, code=10)),
+        ("client", data(9, chunk)),
+        ("node", encode("OK", 9)),
+        ("client", encode("UPDATE_DATA", 10, offset=2 * chunk, data=bytes(chunk))),
+        ("node", encode("ERROR", 10, code=3)),
+        ("client", encode("UPDATE_DATA", 11, offset=2 * chunk, data=b"")),
+        ("node", encode("ERROR", 11, code=3)),
+        ("client", encode("UPDATE_END", 12)),
+        ("node", encode("ERROR", 12, code=10)),
+        ("client", data(13, 2 * chunk)),
+        ("node", encode("OK", 13)),
+        ("client", encode("UPDATE_END", 14)),
+        ("node", encode("ERROR", 14, code=11)),
+        ("client", encode("UPDATE_END", 15)),
+        ("node", encode("ERROR", 15, code=10)),
+    ])
+
     group_ids = [{"group_secret": g.hex(), "group": group_id(g).hex()}
                  for g in (MADE_SECRET, INVITED_SECRET, bytes(16), bytes([0xFF] * 16))]
 
     return {
-        "description": "The companion protocol, version 3 (draft/companion.md). Frames, streams, "
+        "description": "The companion protocol, version 4 (draft/companion.md). Frames, streams, "
         "addresses and group ids are hex; numbers are numbers; strings are text. In frames, "
         "frame is the frame alone, as one BLE write or notification carries it, and stream is "
         "the same frame as it goes on a byte stream. In extended, frame carries bytes past the "
@@ -594,7 +717,12 @@ def build():
         "client must not send, and the node answers it as it would any other it does not know "
         "from that client. To the client of version 2 it holds what the exchange begins with, "
         "and its SYNCED is version 2's, without news. Each connection's frames are read by the "
-        "version its client speaks. The three addresses are the public keys of RFC 8032's first three "
+        "version its client speaks, and each client of an earlier version is sent an INFO "
+        "without board and release. Update is one update of image, whose SHA-256 is "
+        "image_digest, over two connections to a node that holds only itself: the link is lost "
+        "after the first connection's last frame, and the node keeps what it was sent. "
+        "Refusals is one connection to a node with no update under way, given an image of the "
+        "same size whose digest is not its own. The three addresses are the public keys of RFC 8032's first three "
         "Ed25519 test vectors.",
         "generator": "vectors/tools/companion.py",
         "crc_check": {"input": b"123456789".hex(), "crc": crc16(b"123456789")},
@@ -607,6 +735,10 @@ def build():
         "group_ids": group_ids,
         "exchange": exchange,
         "older": older,
+        "image": IMAGE.hex(),
+        "image_digest": DIGEST_OF_IMAGE.hex(),
+        "update": update,
+        "refusals": refusals,
     }
 
 

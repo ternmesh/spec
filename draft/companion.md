@@ -51,7 +51,9 @@ Fields are big-endian. Kinds:
 | `i8` | 1 | two's complement |
 | `addr` | 32 | an [address](first-contact.md#addresses) |
 | `gid` | 8 | a [group's id](#groups) |
+| `digest` | 32 | a SHA-256 digest ([FIPS 180-4](https://doi.org/10.6028/NIST.FIPS.180-4)) |
 | `str` | 1 + `n` | a `u8` length `n`, then `n` bytes of UTF-8; each field gives its longest `n` |
+| `bytes` | 1 + `n` | a `u8` length `n`, then `n` bytes of anything; each field gives its longest `n` |
 
 A **routing id** is a `u32`, as in [Routes](routing.md#routing-ids).
 **Time** is a `u32` of seconds since 1970-01-01 00:00 UTC, ignoring
@@ -113,6 +115,9 @@ its field allows, or if a `str` is not valid UTF-8.
 | `0x23` | `SEND_GROUP` | `ref` `u32`, `group` `gid`, `text` `str` up to 128 | `QUEUED` |
 | `0x24` | `SEND_INVITE` | `group` `gid`, `to` `addr` | `QUEUED` |
 | `0x25` | `JOIN` | `id` `u32` | `OK` |
+| `0x30` | `UPDATE_BEGIN` | `size` `u32`, `digest` `digest` | `UPDATING` |
+| `0x31` | `UPDATE_DATA` | `offset` `u32`, `data` `bytes` up to 172 | `OK` |
+| `0x32` | `UPDATE_END` | | `OK` |
 
 Any request may instead be answered by `ERROR`.
 
@@ -122,14 +127,22 @@ Any request may instead be answered by `ERROR`.
 |---|---|---|
 | `0x40` | `OK` | |
 | `0x41` | `ERROR` | `code` `u8` |
-| `0x42` | `INFO` | `version` `u8`, `firmware` `str` up to 31 |
+| `0x42` | `INFO` | `version` `u8`, `firmware` `str` up to 31, `board` `str` up to 31, `release` `str` up to 31 |
 | `0x43` | `SYNCED` | `news` `u8` |
 | `0x44` | `QUEUED` | `id` `u32` |
 | `0x45` | `MADE` | `group` `gid` |
+| `0x46` | `UPDATING` | `offset` `u32` |
 
 `firmware` names the node's software, for a person to read. A client
 MUST NOT decide what the node supports from it: that is what `version`
-is for.
+is for. `board` and `release` are for a client to read, and are how it
+finds firmware for the node ([Updating the firmware](#updating-the-firmware)):
+`board` names the hardware the node's firmware is built for, such as
+`heltec-v3`, in lowercase letters, digits and hyphens, and is empty if
+the node cannot be updated over this protocol; `release` is the version
+of that firmware, as [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
+writes one, without a leading `v`, and is empty if it has none, as a
+build made by hand may not.
 
 `news` in `SYNCED` is the node's [count](#news) as it answers: the
 `seq` its next news frame will carry. It is how a client knows it
@@ -143,11 +156,13 @@ Error codes:
 | 2 | malformed |
 | 3 | a value the node refuses: a region it does not have, a power it cannot send at, empty text |
 | 4 | not a [valid](first-contact.md#addresses) address, or the node's own |
-| 5 | no room: the node cannot hold another contact or message |
+| 5 | no room: the node cannot hold another contact, message or group, or the image an [update](#updating-the-firmware) offers |
 | 6 | `HELLO` first |
 | 7 | the Bluetooth link's MTU is too small ([below](#bluetooth-le)) |
 | 8 | not now: the node cannot act on this request until it has finished something else |
 | 9 | not held: a group the node is not in, or an invite it does not hold |
+| 10 | not where the update is: no [update](#updating-the-firmware) is under way, or not at that offset |
+| 11 | not an image this node runs: the update is discarded |
 
 Other codes are reserved. A client MUST treat one it does not know as
 a refusal.
@@ -376,13 +391,18 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 3. Version 2 is the same without `SYNCED`'s `news`. Version 1
+version 4. Version 3 is the same without [updates](#updating-the-firmware):
+the requests `0x30` to `0x32`, `UPDATING`, errors 10 and 11, and
+`INFO`'s `board` and `release`. Version 2 is version 3 without
+`SYNCED`'s `news`. Version 1
 is version 2 without [groups](#groups): the
 requests `0x20` to `0x25`, `MADE`, error 9, and the news `GROUP`,
 `GROUP_GONE`, `GROUP_MESSAGE` and `INVITE`. Version 0 is version 1
 without `END_SESSION` and `ASKED`. A receiver reads a frame by the
 version both ends speak: a client of version 3 reads a `SYNCED` from a
-node of version 2 as the two bytes it is. A client of an earlier version is
+node of version 2 as the two bytes it is. A client learns that version
+from `INFO` itself, so it reads an `INFO` by the lesser of its own
+version and the `version` the `INFO` carries. A client of an earlier version is
 not told of group messages or invites at all: their `id`s are ones it
 never sees. A node MUST answer a request that the client's version does
 not define with `ERROR` 1, as it does one its own version does not: it
@@ -396,8 +416,8 @@ A client then, typically, sets the node's clock and syncs:
 
 ```
 client                         node
-HELLO       seq 1, version 3  ─▶
-                              ◀─  INFO        seq 1, version 3
+HELLO       seq 1, version 4  ─▶
+                              ◀─  INFO        seq 1, version 4
 SET_TIME    seq 2             ─▶
                               ◀─  OK          seq 2
 SYNC        seq 3, after 0    ─▶
@@ -459,8 +479,8 @@ client is waiting on is one it gave up on, and the client MUST ignore
 it.
 
 A request given up on may have been acted on. Every request but
-`SEND`, `SEND_GROUP`, `SEND_INVITE` and `MAKE_GROUP` can be sent again
-without harm. `SEND_GROUP` carries a `ref` as `SEND` does, under the
+`SEND`, `SEND_GROUP`, `SEND_INVITE`, `MAKE_GROUP` and `UPDATE_END` can
+be sent again without harm. `SEND_GROUP` carries a `ref` as `SEND` does, under the
 same rule, with `group` in the place of `to`. An invite sent twice is
 two invites to one group, and a group made twice is two groups, one of
 which the user leaves: neither is worth a number to prevent. `SEND` carries `ref`, the client's own
@@ -580,6 +600,73 @@ such invite, or the invite is one it sent, and `ERROR` 5 if it has no
 room for another group. It answers `OK` for a group it holds already,
 and changes nothing.
 
+## Updating the firmware
+
+A client can give a node new firmware over this protocol: an **image**,
+which is whatever the node's hardware runs, written as one file. What
+an image holds, and where a client finds one, is the business of the
+firmware and of whoever publishes it, not of this section: a client
+finds one by the `board` and `release` in [`INFO`](#answers). A node
+whose `board` is empty answers `UPDATE_BEGIN` with `ERROR` 5.
+
+An update is three requests:
+
+```
+client                                 node
+UPDATE_BEGIN  size, digest        ─▶
+                                  ◀─  UPDATING  offset 0
+UPDATE_DATA   offset 0, 172 bytes ─▶
+                                  ◀─  OK
+UPDATE_DATA   offset 172, ...     ─▶
+                                  ◀─  OK
+...
+UPDATE_END                        ─▶
+                                  ◀─  OK
+                                        the node restarts, running the image
+```
+
+**`UPDATE_BEGIN`** says that an image of `size` bytes, whose SHA-256 is
+`digest`, follows. A node MUST refuse a `size` of 0 with `ERROR` 3, and
+one larger than it has room to hold with `ERROR` 5. It answers
+`UPDATING` with the `offset` the client sends from. If an update with
+the same `size` and `digest` is under way, as when a client lost its
+link part of the way through, `offset` is how many bytes of it the
+node holds, or fewer; otherwise the node abandons any update under way,
+begins this one, and answers 0. A node keeps an update under way until
+it restarts or another begins; it need not keep one across a restart.
+
+**`UPDATE_DATA`** gives the node the bytes of the image from `offset`.
+Its answer is `OK` if `offset` is the number of bytes the node holds,
+and it then holds `data` too; and `OK` again if `offset` and `data`'s
+length end where the node's bytes end, without holding them twice, so
+that a client that gave up on the answer to the last can send it again.
+Otherwise a node answers `ERROR` 10, as it does with no update under way,
+and the client sends `UPDATE_BEGIN` again to learn where to go on from.
+Whatever its `offset`, a node MUST refuse empty `data` with `ERROR` 3,
+and, with an update under way, `data` that would run past `size`. A client sends `data` of `UPDATE_CHUNK` bytes, all but
+the last; a node takes any length.
+
+**`UPDATE_END`** asks the node to run the image. A node that holds fewer
+than `size` bytes of it answers `ERROR` 10. One whose bytes' SHA-256 is
+not `digest`, or that will not run them, because they are not an image
+for its hardware or not one it can check, answers `ERROR` 11 and
+discards the update. Otherwise it answers `OK`, then restarts into the
+image: the connection drops, and the client starts again. A client that
+gave up on an `UPDATE_END` does not send it again, since the node may
+be restarting into the image: it waits for the node, and reads
+`release` in its `INFO`.
+
+A node keeps everything it holds across an update: its address, its
+sessions, contacts, groups, messages and settings, and its Bluetooth
+bonds. A node SHOULD go back to the firmware it ran before if the new
+image does not start, so that a bad image does not leave it unable to
+take another. While an update is under way, the node goes on as at any
+other time: it sends news, answers other requests, and is on the air.
+
+Anyone who can drive a node can update it: over Bluetooth, a client
+that has [paired](#bluetooth-le). The digest says only that the image
+arrived as the client sent it, not who made it.
+
 ## Byte streams
 
 On USB serial and TCP, each frame is sent as:
@@ -664,6 +751,7 @@ derived from them, nor the user's name for it.
 | `GAP` | 500 ms | |
 | `REFS` | 16 | |
 | `QUIET` | 10 s | |
+| `UPDATE_CHUNK` | 172 bytes | the longest `data` that fits a frame |
 
 ## Conformance
 
@@ -697,7 +785,17 @@ An implementation conforms to this section if, for
   version 0 no `ASKED`; it receives the same invite and group message
   and sends a client of version 1 neither, and refuses that client a
   request its version does not define; and it answers a client of
-  version 2's `SYNC` with a `SYNCED` without `news`.
+  version 2's `SYNC` with a `SYNCED` without `news`, and gives a
+  client of each earlier version an `INFO` without `board` and
+  `release`;
+* **update:** as a client, given the `image` to send and the node's
+  frames in order, it sends the client's frames of each of the two
+  connections in `update`, in order, going on in the second from the
+  offset the node gives; and as a node that runs any image whose
+  digest is right, given the client's frames in order, it sends the
+  node's, the second connection's after the first's link was lost. The
+  node's frames in `refusals` are those of a node given the client's,
+  on one connection.
 
 What a node holds, and so which news it sends and when, depends on the
 rest of the node, and is checked by running a client against it. The
@@ -840,6 +938,28 @@ protocol keeps a node's address out of the clear. A Bluetooth
 advertisement that carried it would tell anyone in range which mesh
 node they were near, and follow it about.
 
+**Why an update is the companion protocol's own.** A node's radio
+firmware is what a phone that drives it most often has to change, and
+the link to it is already open, paired and checked. A second Bluetooth
+service, as some meshes offer, would need its own pairing rules and its
+own client code in every app, and would not work over USB. One request
+at a time is slower than a stream of writes, about four minutes for an
+image of a megabyte over Bluetooth, and is what lets a node of any size
+take an update with the one buffer it already has.
+
+**Why a digest, and an offset from the node.** A link drops part of the
+way through an image of thousands of frames more often than not on a
+walk away from the node. With the node saying how much it holds, a
+client goes on from there, and never has to know what became of the
+last frame it sent. The digest is what lets a node tell the image it
+holds part of from another of the same size, and check the whole
+before running it, whatever the link did to it.
+
+**Why the board in `INFO`.** `firmware` is for a person, and a client
+must not decide from it. An image built for other hardware does not
+start, at best, so a client needs a name it can match to choose one,
+and a node needs a way to say it cannot be updated at all.
+
 ## Not yet specified
 
 * **A group's secret as a code**, to hand to someone with no session,
@@ -864,6 +984,7 @@ node they were near, and follow it about.
   does, a node SHOULD NOT offer this protocol on a network socket.
 * **Developer frames**: routes, links and counters for whoever is
   debugging the mesh, which the console shows today.
-* **Firmware updates** over this link.
+* **Signed firmware**: an image a node checks was made by whoever
+  publishes its firmware, not only that it arrived whole.
 * **Sleeping leaves**: what a client sees of a node that is off the
   air most of the time.
