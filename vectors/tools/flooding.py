@@ -24,6 +24,8 @@ HDR_GROUP = 0x60
 HEAD = 3
 GROUP_MIN = 27
 FLOOD_HOPS = 5
+HDR_CARD = 0x68
+CARD_MIN, CARD_MAX = 103, 134
 FLOOD_SPARSE = 8
 FLOOD_WAIT = 8
 FLOOD_COPIES = 2
@@ -41,7 +43,9 @@ def head(hdr, hops, power):
 
 
 def flooded(frame):
-    """Whether a receiver takes a frame as a flooded one."""
+    """Whether a receiver takes a frame as a flooded one: a group frame, or a card (cards.md)."""
+    if frame[:1] == bytes([HDR_CARD]):
+        return CARD_MIN <= len(frame) <= CARD_MAX
     return len(frame) <= 255 and len(frame) >= GROUP_MIN and frame[0] == HDR_GROUP
 
 
@@ -191,6 +195,8 @@ def build():
         ("an-announce", bytes([0x59]) + good[1:]),
         ("a-flag-set", bytes([0x61]) + good[1:]),
         ("empty", b""),
+        ("a-card-too-short", bytes([HDR_CARD]) + bytes(CARD_MIN - 2)),
+        ("a-card-too-long", bytes([HDR_CARD]) + bytes(CARD_MAX)),
     ]:
         assert not flooded(f)
         rejected.append({"name": name, "frame": f.hex()})

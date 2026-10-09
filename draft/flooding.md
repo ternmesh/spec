@@ -13,8 +13,8 @@ number here is **provisional**.
 This section carries a frame to every node within a few relays of where
 it began: a **flood**. Each relay that hears the frame sends it once
 more, unless it hears that others already have. What is flooded is for
-the section that defines the frame to say; the one kind so far is a
-[group's message](groups.md).
+the section that defines the frame to say: a
+[group's message](groups.md), or a [card](cards.md).
 
 Test vectors: [`vectors/flooding.json`](../vectors/flooding.json),
 produced by
@@ -54,14 +54,16 @@ Every flooded frame starts with three bytes:
 
 `hops` and `power` change at every node. Nothing after them does.
 
-One kind of frame is defined:
+Two kinds of frame are defined:
 
 | `hdr` | Frame | After the head |
 |---|---|---|
 | `0x60` | a **group frame** | [Groups](groups.md#the-frame): at least 24 bytes |
+| `0x68` | a **card** | [Presence cards](cards.md#the-frame): 100 to 131 bytes |
 
-A receiver MUST discard a group frame shorter than 27 bytes, and MUST
-NOT treat a frame whose `hdr` is none of this table's as flooded.
+A receiver MUST discard a group frame shorter than 27 bytes, and a card
+shorter than 103 or longer than 134, and MUST NOT treat a frame whose
+`hdr` is none of this table's as flooded.
 
 **A frame's id** is how a node tells a frame it has had from one it has
 not:
@@ -75,7 +77,8 @@ wherever it was heard, and different for any other frame.
 
 ## Sending
 
-A node floods a frame of its own with `hops` set to `FLOOD_HOPS` and
+A node floods a frame of its own with `hops` set to `FLOOD_HOPS`, or
+fewer where the section that defines its kind says so, and
 `power` to what it is sent at, once. It takes the frame's id as
 [seen](#receiving) before it sends, and waits for
 [its allowance](#the-allowance).
@@ -118,7 +121,8 @@ A leaf MUST NOT pass a flooded frame on. A relay passes on a frame it
 had not seen as follows.
 
 1. It reads `hops` as no more than `FLOOD_HOPS`: a frame that says more
-   is taken to say `FLOOD_HOPS`.
+   is taken to say `FLOOD_HOPS`. A card's is read as no more than
+   [`CARD_HOPS`](cards.md#parameters).
 2. A relay with more than `FLOOD_SPARSE` relay neighbours is **in a
    crowd**. It MUST NOT pass on a frame whose `hops` is 0 or 1, and
    passes any other on with `hops` one less.
