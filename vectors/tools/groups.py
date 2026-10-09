@@ -25,6 +25,9 @@ import unicast  # noqa: E402
 OUT = Path(__file__).resolve().parent.parent / "groups.json"
 
 HDR = 0x60  # format 01, type 100, no flags
+HDR_NODE = 0x61  # the same, with the node flag set: content is for the node
+HDRS = (HDR, HDR_NODE)
+KIND_POSITION = 0x02
 HEAD = 3
 NONCE = HEAD  # where the nonce is
 GTAG = NONCE + 8
@@ -52,21 +55,22 @@ def gtag(g, n):
     return (enc.update(bytes(8) + n) + enc.finalize())[:4]
 
 
-def seal(g, n, sender, content, flood=FLOOD):
-    assert len(g) == 16 and len(n) == 8 and len(content) <= MAX_FRAME - MIN_FRAME
+def seal(g, n, sender, content, flood=FLOOD, hdr=HDR):
+    assert len(g) == 16 and len(n) == 8 and len(content) <= MAX_FRAME - MIN_FRAME and hdr in HDRS
     t = gtag(g, n)
     plaintext = struct.pack(">I", sender) + content
-    ct = AESCCM(group_key(g), tag_length=TAG_LEN).encrypt(bytes(5) + n, plaintext, bytes([HDR]) + n + t)
-    return struct.pack(">BBb", HDR, flood["hops"], flood["power"]) + n + t + ct
+    ct = AESCCM(group_key(g), tag_length=TAG_LEN).encrypt(bytes(5) + n, plaintext, bytes([hdr]) + n + t)
+    return struct.pack(">BBb", hdr, flood["hops"], flood["power"]) + n + t + ct
 
 
 def matches(g, frame):
-    return (MIN_FRAME <= len(frame) <= MAX_FRAME and frame[0] == HDR
+    return (MIN_FRAME <= len(frame) <= MAX_FRAME and frame[0] in HDRS
             and frame[GTAG:BODY] == gtag(g, frame[NONCE:GTAG]))
 
 
 def open_frame(g, me, frame):
-    """A member's check, but for the nonces it holds: (from, content), or None."""
+    """A member's check, but for the nonces it holds: (from, content), or None. Whether content
+    is for the node is frame[0] & 1."""
     if not matches(g, frame):
         return None
     n = frame[NONCE:GTAG]
@@ -134,12 +138,14 @@ def colliding():
 COLLIDE = (48640, 56128)
 
 
-def case(name, note, g, n, sender, content, flood=FLOOD, me=0x0A0B0C0D):
-    frame = seal(g, n, sender, content, flood)
+def case(name, note, g, n, sender, content, flood=FLOOD, me=0x0A0B0C0D, hdr=HDR):
+    frame = seal(g, n, sender, content, flood, hdr)
     assert open_frame(g, me, frame) == (sender, content)
     return {
         "name": name,
         "note": note,
+        "hdr": hdr,
+        "node": hdr == HDR_NODE,
         "group_secret": g.hex(),
         "nonce": n.hex(),
         "from": sender,
@@ -151,7 +157,7 @@ def case(name, note, g, n, sender, content, flood=FLOOD, me=0x0A0B0C0D):
             "tag_key": tag_key(g).hex(),
             "gtag": gtag(g, n).hex(),
             "ccm_nonce": (bytes(5) + n).hex(),
-            "associated_data": (bytes([HDR]) + n + gtag(g, n)).hex(),
+            "associated_data": (bytes([hdr]) + n + gtag(g, n)).hex(),
             "plaintext": (struct.pack(">I", sender) + content).hex(),
         },
         "frame": frame.hex(),
@@ -178,6 +184,12 @@ def build():
              0xFFFFFFFE, "Καλημέρα".encode()),
         case("largest", "228 bytes of content: a 255-byte frame", g2, bytes.fromhex("3333333333333333"),
              1, bytes(i & 0xFF for i in range(MAX_FRAME - MIN_FRAME))),
+        case("for-the-node", "the node flag set: content is for the node, here a position "
+             "(draft/positions.md) of a town", g1, bytes.fromhex("4444444444444444"), alice,
+             bytes.fromhex("0260" "8a6b80"), hdr=HDR_NODE),
+        case("for-the-node-unknown-kind", "the node flag set and a kind no section defines: "
+             "accepted, and nothing more done with it", g1, bytes.fromhex("5555555555555555"),
+             alice, b"\x7f", hdr=HDR_NODE),
     ]
 
     frame = bytes.fromhex(accepted[0]["frame"])
@@ -200,8 +212,17 @@ def build():
     other[GTAG:BODY] = gtag(g1, bytes(other[NONCE:GTAG]))
     reject("nonce-changed", "another nonce, with the tag that goes with it: the check fails", bytes(other))
     reject("tag-flipped", "a bit of the group tag changed", flip(GTAG))
-    reject("header-changed", "a reserved flag set: the header is authenticated",
-           bytes([HDR | 1]) + frame[1:])
+    reject("node-flag-set", "the node flag set on a frame sealed without it: the header is "
+           "authenticated", bytes([HDR_NODE]) + frame[1:])
+    node_frame = bytes.fromhex(accepted[-2]["frame"])
+    reject("node-flag-cleared", "the node flag cleared on a frame sealed with it",
+           bytes([HDR]) + node_frame[1:])
+    reject("reserved-flag", "a reserved flag set", bytes([HDR | 2]) + frame[1:])
+    odd = HDR | 4
+    sealed = AESCCM(group_key(g1), tag_length=TAG_LEN).encrypt(
+        bytes(5) + n1, struct.pack(">I", alice) + hello, bytes([odd]) + n1 + gtag(g1, n1))
+    reject("reserved-flag-sealed", "a reserved flag set, and sealed with it rightly: not a group "
+           "frame of this draft", struct.pack(">BBb", odd, 5, 14) + n1 + gtag(g1, n1) + sealed)
     reject("a-message", "a unicast message's header on it", bytes([0x48]) + frame[1:])
     reject("truncated", "26 bytes: shorter than any frame", frame[:MIN_FRAME - 1])
     reject("another-group", "a frame of a group this node does not hold",
@@ -246,6 +267,12 @@ def build():
                f"of each (the secrets are the first 16 bytes of SHA-256(\"tern group\" || u32be(i)) for i = {a} and {b})",
                me, [ga, gb], [seal(gb, bytes(8), alice, b"second"), seal(ga, bytes(8), alice, b"first")])
     assert [x.get("group") for x in d] == [1, 0]
+    words = seal(g1, bytes.fromhex("6666666666666666"), alice, hello)
+    for_node = seal(g1, bytes.fromhex("6666666666666666"), alice, b"\x02\x00", hdr=HDR_NODE)
+    d = member("node-and-words-one-nonce", "a frame for the node and one of words share a group's "
+               "nonces: the second with a nonce the first had is refused, whichever kind it is",
+               me, [g1], [for_node, words, seal(g1, bytes.fromhex("6666666666666667"), alice, hello)])
+    assert [x["accept"] for x in d] == [True, False, True]
     d = member("same-nonce-two-groups", "a nonce accepted for one group does not stand against another's",
                me, [g1, g2], [f1, f2])
     assert [x["accept"] for x in d] == [True, True]
@@ -291,7 +318,8 @@ def build():
         "hex; routing ids (from, self) and hops are numbers, and power is signed. hops and power "
         "are the flood's (draft/flooding.md), and are 5 and 14 where a case does not give them. "
         "self is the routing id of the node receiving. In members, group is the index in groups "
-        "of the group a frame is accepted for. In recent, the frames with nonces first to "
+        "of the group a frame is accepted for. hdr is 0x60 for a frame of words and 0x61 for one "
+        "for the node, as node says. In recent, the frames with nonces first to "
         "first + count - 1, each as eight bytes most significant first, are from, content, hops "
         "and power sealed under group_secret. In invites and bad_invites, plaintext is that of a "
         "unicast message whose hdr has the node flag set (draft/unicast-security.md).",
