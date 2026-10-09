@@ -71,10 +71,11 @@ it does `0x60`, and charges it to the same allowance.
 not:
 
 ```
-id = SHA-256(frame[3..])[0..8]
+id = SHA-256(frame[0] || frame[3..])[0..8]
 ```
 
-every byte after the head, so the same for every copy of a frame
+`hdr` and every byte after the head: all but `hops` and `power`, which
+change at every node. So it is the same for every copy of a frame
 wherever it was heard, and different for any other frame.
 
 ## Sending
@@ -342,12 +343,16 @@ fills. A node that heard a frame could then send rubbish under the same
 id and have relays take the real one as a copy. A hash of the frame
 cannot be made to match.
 
-**The head is not in the id**, `hdr` included, so a copy whose `node`
-flag was flipped on the way is the same frame to a relay, and fails at
-every member. That gives a node nothing it did not have: one that
-sends a copy with `hops` 0, which no relay passes on, already stops a
-frame it has heard where it is heard first. Keeping `hdr` out keeps the
-id as it was, so the two kinds need nothing new in a relay.
+**`hdr` is in the id**, though `hops` and `power` are not. Were it
+not, a node that heard a group frame could flip its `node` flag and
+send the copy on ahead of it: relays would take the two as one frame
+and pass the flipped one on, every member would refuse it, and the
+real one would be dropped as a copy wherever the flipped one came
+first, across the whole flood. With `hdr` in the id the flipped copy
+is another frame, flooded and refused on its own, and the real one goes
+as it would have. While `0x60` was the only kind flooded, a flipped
+`hdr` was no flood at all and this could not happen; it was the second
+kind that made it matter.
 
 ## What was measured
 

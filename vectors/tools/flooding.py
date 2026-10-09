@@ -48,7 +48,8 @@ def flooded(frame):
 
 
 def frame_id(frame):
-    return hashlib.sha256(frame[HEAD:]).digest()[:8]
+    """hdr and everything after the head: all but hops and power."""
+    return hashlib.sha256(frame[:1] + frame[HEAD:]).digest()[:8]
 
 
 def passes(relay, relay_neighbours, hops):
@@ -318,7 +319,7 @@ def build():
     return {
         "description": "Frames for every node, draft 0 (draft/flooding.md). Frames, ids and what "
         "follows a head (rest) are hex; power is signed. A frame's id is the first eight bytes of "
-        "the SHA-256 of everything after its three-byte head. In passes, a node of that role with "
+        "the SHA-256 of its hdr and everything after its three-byte head. In passes, a node of that role with "
         "that many relay neighbours receives a frame it has not seen with those hops, and sends "
         "it on with sends as its hops, or does not, for null. In copies, received counts every "
         "copy a relay waiting to pass a frame on has received, the first included. In waits, "
