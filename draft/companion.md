@@ -637,7 +637,9 @@ its profile allows. A node MAY restart to apply a setting, after it
 has answered: the connection then drops, and the client starts again.
 
 A node sends no cards until it is given `SET` 5 with 1, and stops when
-given it with 0; it MUST refuse any other value with `ERROR` 3. Cards
+given it with 0; it MUST refuse any other value with `ERROR` 3. When
+it sends them is [Presence cards](cards.md#sending)' rule, which
+turning them off and on does not reset. Cards
 are off on a node that has never been told, and its card name is
 empty. The card name is the [`name`](cards.md#the-frame) in each card
 the node sends from then on, and the one name a node puts on the air

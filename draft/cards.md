@@ -106,7 +106,10 @@ A node sends its first card when cards are turned on, and each next
 one between `CARD_EVERY / 2` and `3 × CARD_EVERY / 2` after the last,
 drawn uniformly, so that nodes turned on together do not stay in step.
 It MAY send one sooner after its name changes, but not twice within
-`CARD_EVERY / 2`.
+`CARD_EVERY / 2`. Turning cards off and on again does not start that
+over: a node that sent a card less than `CARD_EVERY / 2` before cards
+are turned on again sends its first `CARD_EVERY / 2` after that one,
+so that no client, by toggling them, makes it send more often.
 
 ## Receiving
 
