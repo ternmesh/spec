@@ -315,6 +315,31 @@ here is the one that was measured before it was written down.
 A relay that stays silent on one more copy reaches more nodes than one
 that always sends, on three fifths of the airtime.
 
+**The wait, longer.** The 4 to 5 points the firmware is short of
+candidate 3 in the first row at 10 and 20 dBm are not from listening
+first. The MAC candidate 3 ran over holds a frame a random time of its
+own before sending it, and a relay held longer hears more copies. A
+longer `FLOOD_WAIT` does the same, on less airtime. Unicast messages
+and broadcast destinations on time at the five powers, and at 0 and
+20 dBm the time within which 95% of the broadcasts that arrived did:
+
+| | `FLOOD_WAIT` | Unicast | Broadcast | 95% within |
+|---|---|---|---|---|
+| SF7, 200 relays | 8 | 60.8, 92.0, 98.9, 98.0, 96.1% | 39.1, 65.8, 78.0, 83.2, 84.8% | 5.8 s, 2.8 s |
+| | 16 | 60.7, 90.5, 98.2, 97.9, 96.1% | 39.2, 66.8, 78.7, 88.2, 88.7% | |
+| | 24 | 60.7, 90.6, 98.6, 98.0, 96.1% | 39.1, 66.4, 79.3, 88.3, 90.3% | 13.7 s, 3.8 s |
+| SF8 at 62.5 kHz, the channel full | 8 | 21.1, 23.2, 20.0, 17.7, 21.1% | 20.2, 27.5, 32.1, 31.7, 17.9% | 26.0 s, 30.3 s |
+| | 16 | 20.9, 22.5, 17.9, 16.9, 19.5% | 17.6, 28.4, 34.8, 31.9, 19.2% | 43.7 s, 50.5 s |
+| | 24 | 20.1, 22.1, 18.1, 17.3, 19.5% | 14.2, 27.4, 32.3, 30.3, 18.2% | 62.1 s, 69.4 s |
+| SF9, every node a relay | 8 | 38.2, 40.5, 36.8, 38.7, 34.6% | 27.3, 33.6, 38.4, 42.5, 45.3% | 11.5 s, 12.0 s |
+| | 16 | 35.4, 34.3, 30.1, 29.3, 23.8% | 28.7, 37.5, 44.7, 49.0, 49.7% | 18.4 s, 19.3 s |
+| | 24 | 34.0, 32.4, 28.5, 27.1, 20.2% | 28.6, 38.9, 47.0, 52.3, 51.5% | 25.6 s, 26.0 s |
+
+Where the channel has room, sixteen airtimes reach more for the delay
+alone. Where it has none, the floods that now get through take
+unicast's share, or arrive late. `FLOOD_WAIT` stays at 8 until
+something says which of the two a relay sends first.
+
 **The allowance.** At that traffic it does nothing: without it, the
 first row is the same to the digit. With a message from every node
 every 5 minutes, three quarters of them broadcasts, the relays' bucket
@@ -330,9 +355,8 @@ its time, are together allowed five channels.
 
 ## Not yet measured
 
-* **Why listening first costs a flood reach** where the channel is
-  quiet and nodes are many: 4 to 5 points in the first row at 10 and
-  20 dBm.
+* **A longer `FLOOD_WAIT` with a rule for which goes first**, a
+  flooded frame or one that follows a route.
 * **The allowance's numbers against each other.** One load was run
   with them and without. Whether 3% is the right share for a relay,
   or 0.5% for a writer, was not asked.
