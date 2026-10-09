@@ -24,7 +24,7 @@ HDR_GROUP = 0x60
 HDR_GROUP_NODE = 0x61  # the same, with the node flag set (draft/groups.md)
 FLOODED = (HDR_GROUP, HDR_GROUP_NODE)
 HEAD = 3
-GROUP_MIN = 27
+GROUP_MIN = 31
 FLOOD_HOPS = 5
 HDR_CARD = 0x68
 CARD_MIN, CARD_MAX = 103, 134
@@ -149,9 +149,9 @@ class Bucket:
 
 
 def self_check():
-    f = head(0x60, 5, -3) + bytes(range(24))
+    f = head(0x60, 5, -3) + bytes(range(GROUP_MIN - HEAD))
     assert f[:3].hex() == "6005fd" and flooded(f) and not flooded(f[:-1])
-    assert frame_id(f) == frame_id(head(0x60, 2, 14) + bytes(range(24)))
+    assert frame_id(f) == frame_id(head(0x60, 2, 14) + bytes(range(GROUP_MIN - HEAD)))
     # Four relays in a crowd pass a frame on along any path: 5, 4, 3, 2, and the one that hears 1
     # does not.
     assert [passes(True, 9, h) for h in (5, 4, 3, 2, 1, 0)] == [4, 3, 2, 1, None, None]
@@ -178,7 +178,7 @@ def self_check():
 
 def build():
     self_check()
-    body = bytes(range(0x30, 0x30 + 24))
+    body = bytes(range(0x30, 0x30 + GROUP_MIN - HEAD))
     heads = []
     for hdr, hops, pw, rest in [
         (0x60, 5, 22, body),
@@ -271,7 +271,7 @@ def build():
 
     waits = []
     for _, _, bw, sf, _, _, _ in phy.PROFILES:
-        for length in (27, 67, 255):
+        for length in (GROUP_MIN, 67, 255):
             waits.append({"spreading_factor": sf, "bandwidth_hz": bw, "length": length,
                           "airtime_ns": phy.airtime_ns(sf, bw, length),
                           "longest_ns": longest_wait(sf, bw, length)})
@@ -323,7 +323,7 @@ def build():
         ("own-short", FLOOD_OWN_PPM, FLOOD_OWN_WINDOW_S, phy.PROFILES[1],
          [(k * s, 67) for k in range(30)]),
         ("relay", FLOOD_RELAY_PPM, FLOOD_RELAY_WINDOW_S, phy.PROFILES[0],
-         [(k * 100_000_000, 120) for k in range(16)] + [(10 * s, 255), (10 * s, 255), (10 * s, 27)]),
+         [(k * 100_000_000, 120) for k in range(16)] + [(10 * s, 255), (10 * s, 255), (10 * s, GROUP_MIN)]),
         ("relay-eu", FLOOD_RELAY_PPM, FLOOD_RELAY_WINDOW_S, phy.PROFILES[1],
          [(0, 255)] * 6 + [(5 * s, 67), (5 * s, 67), (60 * s, 255)]),
     ]:

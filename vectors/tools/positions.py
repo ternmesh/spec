@@ -162,10 +162,10 @@ def decode(p):
     return out
 
 
-def seal_group(g, n, sender, content, flood=groups.FLOOD):
+def seal_group(g, n, sender, count, content, flood=groups.FLOOD):
     """A group frame with the node flag set: groups.md's frame, with hdr 0x61."""
     t = groups.gtag(g, n)
-    plaintext = struct.pack(">I", sender) + content
+    plaintext = struct.pack(">II", sender, count) + content
     ct = AESCCM(groups.group_key(g), tag_length=8).encrypt(
         bytes(5) + n, plaintext, bytes([HDR_GROUP_NODE]) + n + t)
     return struct.pack(">BBb", HDR_GROUP_NODE, flood["hops"], flood["power"]) + n + t + ct
@@ -176,7 +176,7 @@ def open_group(g, frame):
     if frame[0] != HDR_GROUP_NODE or t != groups.gtag(g, n):
         return None
     p = AESCCM(groups.group_key(g), tag_length=8).decrypt(bytes(5) + n, frame[15:], frame[0:1] + n + t)
-    return struct.unpack(">I", p[:4])[0], p[4:]
+    return (*struct.unpack(">II", p[:8]), p[8:])
 
 
 class Receiver:
@@ -344,17 +344,18 @@ def build():
     g1 = bytes(range(16))
     nonce = bytes.fromhex("5050505050505050")
     alice = 0x1D2E3F40
-    grp = seal_group(g1, nonce, alice, town)
-    assert open_group(g1, grp) == (alice, town)
+    grp = seal_group(g1, nonce, alice, 9, town)
+    assert open_group(g1, grp) == (alice, 9, town)
     # groups.md's own frame with its node flag set: the same bytes, and a member takes it.
-    assert grp == groups.seal(g1, nonce, alice, town, hdr=groups.HDR_NODE)
-    assert groups.open_frame(g1, 0x0A0B0C0D, grp) == (alice, town)
+    assert grp == groups.seal(g1, nonce, alice, 9, town, hdr=groups.HDR_NODE)
+    assert groups.open_frame(g1, 0x0A0B0C0D, grp) == (alice, 9, town)
     frames = [
         {"name": "to-a-contact", "note": "a secured unicast frame with the node flag set",
          "session_secret": s1.hex(), "direction": 1, "counter": 5, "hdr": HDR_UNICAST_NODE,
          **unicast.ROUTE, "plaintext": exact.hex(), "frame": uni.hex()},
         {"name": "to-a-group", "note": "a group frame with the node flag set",
-         "group_secret": g1.hex(), "nonce": nonce.hex(), "from": alice, "hdr": HDR_GROUP_NODE,
+         "group_secret": g1.hex(), "nonce": nonce.hex(), "from": alice, "count": 9,
+         "hdr": HDR_GROUP_NODE,
          **groups.FLOOD, "content": town.hex(), "frame": grp.hex()},
     ]
 

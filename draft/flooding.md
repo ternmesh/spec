@@ -60,11 +60,11 @@ Two kinds of frame are defined, a group frame with its flag
 
 | `hdr` | Frame | After the head |
 |---|---|---|
-| `0x60` | a **group frame** | [Groups](groups.md#the-frame): at least 24 bytes |
+| `0x60` | a **group frame** | [Groups](groups.md#the-frame): at least 28 bytes |
 | `0x61` | a **group frame** for the node | the same |
 | `0x68` | a **card** | [Presence cards](cards.md#the-frame): 100 to 131 bytes |
 
-A receiver MUST discard a group frame shorter than 27 bytes, and a card
+A receiver MUST discard a group frame shorter than 31 bytes, and a card
 shorter than 103 or longer than 134, and MUST NOT treat a frame whose
 `hdr` is none of this table's as flooded. Every rule in this section is
 the same for both group frames: a relay passes `0x61` on as it does

@@ -128,11 +128,11 @@ clients are asked to offer:
 
 | `precision` | `w` | A cell, north to south | Plaintext | Unicast frame | Group frame |
 |---|---|---|---|---|---|
-| 8 | 2 | 156 km: a region | 4 | 27 | 31 |
-| 12 | 3 | 9.8 km: a town | 5 | 28 | 32 |
-| 16 | 4 | 610 m: a neighbourhood | 6 | 29 | 33 |
-| 20 | 5 | 38 m: a street | 7 | 30 | 34 |
-| 24 | 6 | 2.4 m: as exact as there is | 8 | 31 | 35 |
+| 8 | 2 | 156 km: a region | 4 | 27 | 35 |
+| 12 | 3 | 9.8 km: a town | 5 | 28 | 36 |
+| 16 | 4 | 610 m: a neighbourhood | 6 | 29 | 37 |
+| 20 | 5 | 38 m: a street | 7 | 30 | 38 |
+| 24 | 6 | 2.4 m: as exact as there is | 8 | 31 | 39 |
 
 East to west a cell is as wide at the equator, and narrower towards the
 poles: half as wide at 60°. A position with all three optional fields
@@ -321,8 +321,8 @@ An implementation conforms to this section if, for
   as `read_seconds`;
 * **frames:** with the session or group given, it seals `plaintext` or
   `content` as `frame`, and opens `frame` to find it (setting the
-  counter and the nonce is a test hook, as in the sections that define
-  the frames);
+  counter, and the nonce and `count`, is a test hook, as in the
+  sections that define the frames);
 * **receiving:** as a node that shares one session with the sender,
   holding nothing from it, given each delivery in order, as a message
   with `counter` whose plaintext is `plaintext`, from an address that
@@ -433,9 +433,9 @@ still there. The floors keep a user from asking for more than the
 channel holds. A position to a contact, at `EU868`, is a frame of 25
 to 35 bytes and an acknowledgement of 19, 130 to 145 ms on the air for
 each hop: one every quarter of an hour while walking is some fourteen
-seconds a day. A position to a group is one flood, 75 to 90 ms each
+seconds a day. A position to a group is one flood, 80 to 95 ms each
 time a relay passes it on; one every five minutes is at most a
-sixteenth of the 0.5% of its time a node may
+fifteenth of the 0.5% of its time a node may
 [flood](flooding.md#the-allowance) with, and the rule on the allowance
 leaves a message room whatever a group's positions have spent.
 
@@ -474,13 +474,15 @@ up as little as it can.
   fields.
 * **Places**: a point that is not where a node is, such as a meeting
   point, sent to a contact or group as a message.
-* **Order in a group.** Group frames carry no counter, so an older
-  position flooded late, after a stopped one, shows the writer where
-  they were. A counter or a time in the position would close it, at a
-  cost of bytes on every group position.
-* **Replay** in a group, as for every [group frame](groups.md#not-yet-specified):
-  a position recorded and flooded again once its nonce has been
-  forgotten shows the writer where they were.
+* **Order in a group.** A group frame carries its writer's
+  [`count`](groups.md#the-frame), and a member takes a frame that
+  arrives behind a later one, within the window. So an older position
+  that arrives after a newer or a stopped one shows the writer where
+  they were. A rule like [the session's](#reading-a-position), on the
+  `count` of the last frame a position was taken from, would close it.
+* **An old position a member never received**, flooded again by anyone:
+  as for every [group frame](groups.md#not-yet-specified), a member
+  that has taken nothing later from the writer shows where they were.
 * **What became of a position**: a client sees when it shares and
   what it receives, not which positions went or arrived.
 * **Measured cost**: on radios, and in the simulator with positions in
