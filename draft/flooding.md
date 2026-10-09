@@ -142,20 +142,32 @@ nothing answers it.
 
 A relay's **busy share** is the share of a span of time ending now that
 its radio spent sending, or
-[receiving](forwarding.md#listening-first) as Listening first has it.
-The span is `FLOOD_BUSY_SPAN` at least and twice that at most, or the
-time since the node started if that is less.
+[receiving](forwarding.md#listening-first) as Listening first has it,
+in millionths, rounded down. A relay chooses the span, and it may differ
+from one frame to the next, within this:
 
-A relay whose busy share is `FLOOD_BUSY` or less drops no frame for it.
-One whose busy share is more drops a frame it would pass on with
-probability
+* it is `FLOOD_BUSY_SPAN` at least and twice that at most;
+* until the relay has kept count for `FLOOD_BUSY_SPAN`, it is the whole
+  time it has, and it is never longer than that time.
+
+A relay keeps count from when it starts. One that stops, asleep or
+otherwise, starts again when it next keeps count, as if it had just
+started.
+
+When a frame's wait ends, the relay finds how often in a million it
+drops a frame:
 
 ```
-(busy - FLOOD_BUSY) / (1 - FLOOD_BUSY)
+drops = 0                                              if busy <= FLOOD_BUSY
+drops = floor((busy - FLOOD_BUSY) * 1000000
+              / (1000000 - FLOOD_BUSY))                otherwise
 ```
 
-so every one when its radio is never idle. The choice is made afresh
-for each frame. A frame dropped so is not charged to the allowance.
+with `busy` and `FLOOD_BUSY` in millionths: 0 up to `FLOOD_BUSY`, and
+1000000 when the radio is never idle. It then draws a whole number from
+0 to 999999, each as likely as any other and afresh for each frame, and
+drops the frame if the number is less than `drops`. A frame dropped so
+is not charged to the allowance.
 
 This holds for frames a relay passes on and not for a node's own.
 
@@ -220,10 +232,14 @@ An implementation conforms to this section if, for
   selected routes go through (`null` for one not known), and
   `lowest` and `full` its lowest and full power, it sends a flooded
   frame at `power`;
-* **busies:** as a relay whose busy share is `busy_ppm` millionths,
-  when a frame's wait ends, it drops the frame for being busy
-  `drops_ppm` times in a million: never where that is 0, always where
-  it is 1000000, and otherwise as often as that over many frames;
+* **shares:** with its radio sending and receiving over the `radio`
+  given, each from `from_ns` up to `to_ns`, and keeping count from
+  time 0, it finds at each time in `asks` a busy share no less than
+  `least_ppm` and no more than `most_ppm`: the least and the most over
+  every span it may choose;
+* **busies:** as a relay whose busy share is `busy_ppm`, it finds
+  `drops_ppm` as how often in a million it drops a frame, and for each
+  number of `draws` drawn, drops the frame or not as `drops` says;
 * **seen:** taking each id of `takes` as seen at its `at_ns`, it finds
   at each time in `asks` that `id` is seen, or that it may be forgotten,
   as `seen` says: `true` where it MUST be seen;
