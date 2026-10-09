@@ -23,18 +23,23 @@ import routing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 4
+VERSION = 5
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
 STREAM_TAIL = 2  # the CRC
 
 NAME_MAX, TEXT_MAX, FIRMWARE_MAX, REGION_MAX = 31, 128, 31, 15
+BOARD_MAX, RELEASE_MAX = 31, 31
+UPDATE_CHUNK = 172
 
-# Each field is (name, kind, and for a string its longest). Kinds: u8, i8, u16, i16, u32, i32,
-# addr (32 bytes), gid (a group's id, 8 bytes), str (a u8 length, then that many bytes of UTF-8).
-U8, I8, U16, I16, U32, I32, ADDR, GID, STR = "u8", "i8", "u16", "i16", "u32", "i32", "addr", "gid", "str"
-BYTES = {ADDR: 32, GID: 8}
+# Each field is (name, kind, and for a string or bytes its longest). Kinds: u8, i8, u16, i16, u32,
+# i32, addr (32 bytes), gid (a group's id, 8 bytes), digest (a SHA-256, 32 bytes), str (a u8
+# length, then that many bytes of UTF-8), raw (bytes: a u8 length, then that many bytes of
+# anything).
+U8, I8, U16, I16, U32, I32, ADDR, GID, DIGEST, STR, RAW = (
+    "u8", "i8", "u16", "i16", "u32", "i32", "addr", "gid", "digest", "str", "raw")
+BYTES = {ADDR: 32, GID: 8, DIGEST: 32}
 
 FRAMES = {
     # Requests, client to node.
@@ -54,19 +59,24 @@ FRAMES = {
     0x23: ("SEND_GROUP", [("ref", U32), ("group", GID), ("text", STR, TEXT_MAX)]),
     0x24: ("SEND_INVITE", [("group", GID), ("to", ADDR)]),
     0x25: ("JOIN", [("id", U32)]),
-    0x30: ("SET_POSITION", [("lat", I32), ("lon", I32), ("altitude", I16), ("accuracy", U16),
+    0x30: ("UPDATE_BEGIN", [("size", U32), ("digest", DIGEST)]),
+    0x31: ("UPDATE_DATA", [("offset", U32), ("data", RAW, UPDATE_CHUNK)]),
+    0x32: ("UPDATE_END", []),
+    0x33: ("SET_POSITION", [("lat", I32), ("lon", I32), ("altitude", I16), ("accuracy", U16),
                             ("age", U16)]),
-    0x31: ("SHARE", [("contact", ADDR), ("precision", U8), ("fields", U8), ("interval", U16),
+    0x34: ("SHARE", [("contact", ADDR), ("precision", U8), ("fields", U8), ("interval", U16),
                      ("minutes", U16)]),
-    0x32: ("SHARE_GROUP", [("group", GID), ("precision", U8), ("fields", U8), ("interval", U16),
+    0x35: ("SHARE_GROUP", [("group", GID), ("precision", U8), ("fields", U8), ("interval", U16),
                            ("minutes", U16)]),
     # Answers, node to client.
     0x40: ("OK", []),
     0x41: ("ERROR", [("code", U8)]),
-    0x42: ("INFO", [("version", U8), ("firmware", STR, FIRMWARE_MAX)]),
+    0x42: ("INFO", [("version", U8), ("firmware", STR, FIRMWARE_MAX), ("board", STR, BOARD_MAX),
+                    ("release", STR, RELEASE_MAX)]),
     0x43: ("SYNCED", [("news", U8)]),
     0x44: ("QUEUED", [("id", U32)]),
     0x45: ("MADE", [("group", GID)]),
+    0x46: ("UPDATING", [("offset", U32)]),
     # News, node to client.
     0x80: ("SELF", [("address", ADDR), ("role", U8), ("region", STR, REGION_MAX), ("power", I8),
                     ("time", U32)]),
@@ -102,14 +112,15 @@ BY_NAME = {name: t for t, (name, _) in FRAMES.items()}
 
 # Fields a later version added to a frame, and the version that added them. A frame is built and
 # read by the version both ends speak, and has none of the fields a later version added.
-SINCE = {(0x43, "news"): 3}
+SINCE = {(0x43, "news"): 3, (0x42, "board"): 4, (0x42, "release"): 4}
 
 # Types a later version added, and the version that added them. A receiver of an earlier version
 # does not know them: a node answers such a request with ERROR 1, and a client ignores such news.
 TYPE_SINCE = {
     0x1A: 1, 0x89: 1,  # END_SESSION, ASKED
     **{t: 2 for t in (0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x45, 0x8A, 0x8B, 0x8C, 0x8D)},  # groups
-    **{t: 4 for t in (0x30, 0x31, 0x32, 0x8E, 0x8F, 0x90, 0x91)},  # positions
+    **{t: 4 for t in (0x30, 0x31, 0x32, 0x46)},  # updates
+    **{t: 5 for t in (0x33, 0x34, 0x35, 0x8E, 0x8F, 0x90, 0x91)},  # positions
 }
 
 
@@ -171,6 +182,9 @@ def encode(kind, seq, /, *, speak=VERSION, **values):
         elif kind in BYTES:
             assert len(v) == BYTES[kind]
             out += v
+        elif kind == RAW:
+            assert len(v) <= field[2]
+            out += bytes([len(v)]) + v
         else:
             raw = v.encode("utf-8")
             assert len(raw) <= field[2]
@@ -205,6 +219,13 @@ def decode(frame, speak=VERSION):
                 return "a field cut short"
             values[name] = frame[at : at + BYTES[kind]].hex()
             at += BYTES[kind]
+        elif kind == RAW:
+            if at + 1 > len(frame) or at + 1 + frame[at] > len(frame):
+                return "a field cut short"
+            if frame[at] > fields[i][2]:
+                return "bytes longer than their field allows"
+            values[name] = frame[at + 1 : at + 1 + frame[at]].hex()
+            at += 1 + frame[at]
         else:
             if at + 1 > len(frame) or at + 1 + frame[at] > len(frame):
                 return "a field cut short"
@@ -296,6 +317,9 @@ def self_check():
                      wait=0, text="x" * TEXT_MAX)
     assert len(longest) == 48 + TEXT_MAX <= MAX_FRAME
     assert len(encode("SEND", 1, ref=0, to=bytes(32), text="x" * TEXT_MAX)) == 39 + TEXT_MAX
+    assert len(encode("UPDATE_DATA", 1, offset=0, data=bytes(UPDATE_CHUNK))) == 179 <= MAX_FRAME
+    assert encode("INFO", 1, speak=3, version=4, firmware="t", board="b", release="1") == (
+        b"\x42\x01\x04\x01t")
 
 
 # The public keys of RFC 8032's first three Ed25519 test vectors (section 7.1): valid addresses.
@@ -308,6 +332,13 @@ MADE_SECRET = bytes(range(16))
 INVITED_SECRET = bytes.fromhex("c4" * 16)
 HUT, RIDGE = group_id(MADE_SECRET), group_id(INVITED_SECRET)
 
+# The image an update sends: 400 bytes, so two whole chunks and a short one. A node in the
+# vectors runs any image whose digest is right; a real one also checks that it is an image for
+# its hardware.
+IMAGE = bytes((i * 151 + 7) & 0xFF for i in range(400))
+DIGEST_OF_IMAGE = hashlib.sha256(IMAGE).digest()
+FIRMWARE = dict(firmware="tern 0.2.0 heltec-v3", board="heltec-v3", release="0.2.0")
+
 # Positions, in 10^-7 degree. The client's own is positions.json's summit. Bob's is the centre of
 # the cell at precision 16 that positions.json's harbour is in, as a node reports one it holds.
 SUMMIT = dict(lat=458_325_000, lon=68_644_000)
@@ -315,10 +346,17 @@ BOB_AT = dict(precision=16, lat=603_945_922, lon=52_871_704)
 NO_ALTITUDE = -32768
 
 
+def info(speak=VERSION):
+    """The node's INFO, as a client of version speak is sent it."""
+    return encode("INFO", 1, speak=speak, version=VERSION, **FIRMWARE)
+
+
 def build():
     self_check()
 
     examples = [
+        ("HELLO", 1, {"version": 5}),
+        ("HELLO", 1, {"version": 4}),
         ("HELLO", 1, {"version": 3}),
         ("HELLO", 1, {"version": 2}),
         ("HELLO", 1, {"version": 1}),
@@ -344,20 +382,31 @@ def build():
         ("SEND_GROUP", 20, {"ref": 0xC0FFEE02, "group": HUT, "text": "Anyone at the hut?"}),
         ("SEND_INVITE", 21, {"group": HUT, "to": BOB}),
         ("JOIN", 22, {"id": 22}),
-        ("SET_POSITION", 23, {**SUMMIT, "altitude": 4806, "accuracy": 4, "age": 3}),
-        ("SET_POSITION", 24, {"lat": -336_183_000, "lon": -704_517_000, "altitude": NO_ALTITUDE,
+        ("UPDATE_BEGIN", 23, {"size": len(IMAGE), "digest": DIGEST_OF_IMAGE}),
+        ("UPDATE_DATA", 24, {"offset": 0, "data": IMAGE[:UPDATE_CHUNK]}),
+        ("UPDATE_DATA", 25, {"offset": 2 * UPDATE_CHUNK, "data": IMAGE[2 * UPDATE_CHUNK :]}),
+        ("UPDATE_END", 26, {}),
+        ("SET_POSITION", 27, {**SUMMIT, "altitude": 4806, "accuracy": 4, "age": 3}),
+        ("SET_POSITION", 28, {"lat": -336_183_000, "lon": -704_517_000, "altitude": NO_ALTITUDE,
                               "accuracy": 0, "age": 600}),
-        ("SHARE", 25, {"contact": BOB, "precision": 20, "fields": 3, "interval": 900,
+        ("SHARE", 29, {"contact": BOB, "precision": 20, "fields": 3, "interval": 900,
                        "minutes": 60}),
-        ("SHARE", 26, {"contact": BOB, "precision": 0, "fields": 0, "interval": 0, "minutes": 0}),
-        ("SHARE_GROUP", 27, {"group": RIDGE, "precision": 12, "fields": 0, "interval": 300,
+        ("SHARE", 30, {"contact": BOB, "precision": 0, "fields": 0, "interval": 0, "minutes": 0}),
+        ("SHARE_GROUP", 31, {"group": RIDGE, "precision": 12, "fields": 0, "interval": 300,
                              "minutes": 0}),
         ("OK", 4, {}),
         ("ERROR", 15, {"code": 4}),
-        ("INFO", 1, {"version": 2, "firmware": "tern 0.1.0 heltec-v3"}),
+        ("INFO", 1, {"version": 4, **FIRMWARE}),
+        ("INFO", 1, {"version": 4, "firmware": "tern (built by hand)", "board": "",
+                     "release": ""}),
         ("SYNCED", 2, {"news": 6}),
         ("QUEUED", 10, {"id": 18}),
         ("MADE", 17, {"group": HUT}),
+        ("UPDATING", 23, {"offset": 0}),
+        ("UPDATING", 23, {"offset": 2 * UPDATE_CHUNK}),
+        ("ERROR", 24, {"code": 10}),
+        ("ERROR", 26, {"code": 11}),
+        ("ERROR", 29, {"code": 12}),
         ("SELF", 0, {"address": ALICE, "role": 1, "region": "EU868", "power": 14,
                      "time": 1_790_000_000}),
         ("SELF", 1, {"address": ALICE, "role": 0, "region": "US915", "power": -9, "time": 0}),
@@ -453,36 +502,19 @@ def build():
         encode("GROUP", 16, group=HUT, name="Hut")[:-1],
         encode("INVITE", 22, id=22, contact=BOB, group=RIDGE, time=0, flags=0, state=4, reason=0,
                wait=0, name="Ridge")[:-6],
-        encode("SET_POSITION", 23, **SUMMIT, altitude=0, accuracy=0, age=0)[:-1],
-        encode("SHARE", 25, contact=BOB, precision=20, fields=0, interval=900, minutes=0)[:-1],
+        encode("UPDATE_BEGIN", 23, size=1, digest=DIGEST_OF_IMAGE)[:-1],
+        encode("UPDATE_DATA", 24, offset=0, data=IMAGE[:10])[:-1],
+        encode("UPDATE_DATA", 24, offset=0, data=b"")[:-1] + bytes([UPDATE_CHUNK + 1])
+        + IMAGE[: UPDATE_CHUNK + 1],
+        encode("UPDATING", 23, offset=0)[:-1],
+        encode("INFO", 1, version=4, **FIRMWARE)[:-1],
+        encode("SET_POSITION", 27, **SUMMIT, altitude=0, accuracy=0, age=0)[:-1],
+        encode("SHARE", 29, contact=BOB, precision=20, fields=0, interval=900, minutes=0)[:-1],
         encode("POSITION", 23, contact=BOB, **BOB_AT, altitude=0, accuracy=0, age=0)[:-1],
     ]:
         why = decode(frame)
         assert isinstance(why, str), frame.hex()
         rejected.append({"why": why, "frame": frame.hex(), "answer": answer(frame, why)})
-
-    # Frames a later version defines, as a receiver of an earlier version reads them: a type it
-    # does not know. A node answers such a request with ERROR 1; a client ignores such news.
-    unknown_to_older = []
-    for name, speak, values in [
-        ("END_SESSION", 0, {"address": BOB}),
-        ("ASKED", 0, {"address": CAROL, "why": 1}),
-        ("MAKE_GROUP", 1, {"name": "Hut"}),
-        ("GROUP", 1, {"group": HUT, "name": "Hut"}),
-        ("SHARE", 3, {"contact": BOB, "precision": 20, "fields": 0, "interval": 900,
-                      "minutes": 60}),
-        ("SET_POSITION", 3, {**SUMMIT, "altitude": 4806, "accuracy": 4, "age": 3}),
-        ("POSITION", 3, {"contact": BOB, **BOB_AT, "altitude": NO_ALTITUDE, "accuracy": 0,
-                         "age": 40}),
-        ("SHARING", 3, {"contact": BOB, "precision": 20, "fields": 0, "interval": 900,
-                        "minutes": 60}),
-    ]:
-        frame = encode(name, 5, **values)
-        assert isinstance(decode(frame), dict)
-        why = decode(frame, speak)
-        assert why == UNKNOWN[0], (name, speak, why)
-        unknown_to_older.append({"type": name, "version": speak, "frame": frame.hex(),
-                                 "why": why, "answer": answer(frame, why)})
 
     ping, ok = encode("PING", 4), encode("OK", 4)
     console = b"status\r\naddress d75a9801...\r\n"
@@ -507,7 +539,6 @@ def build():
                         "pending": pending.hex()})
 
     # A connection, as both ends see it: who sends what, in order.
-    info = encode("INFO", 1, version=VERSION, firmware="tern 0.1.0 heltec-v3")
     self_ = dict(address=ALICE, role=1, region="EU868", power=14, time=1_790_000_000)
     neighbour = dict(routing_id=0x1D2E3F40, role=1, snr_quarter_db=-38, heard=42)
     airtime = dict(period=3600, allowed=360_000, used=12_345, wait=0)
@@ -538,7 +569,7 @@ def build():
 
     exchange = connection([
         ("client", encode("HELLO", 1, version=VERSION)),
-        ("node", info),
+        ("node", info()),
         ("client", encode("SET_TIME", 2, time=1_790_000_000)),
         ("node", encode("OK", 2)),
         ("client", encode("SYNC", 3, after=0)),
@@ -625,7 +656,7 @@ def build():
     older = [
         {"version": 0, "frames": connection([
             ("client", encode("HELLO", 1, version=0)),
-            ("node", info),
+            ("node", info(0)),
             ("client", encode("SYNC", 2, after=17)),
             ("node", encode("SELF", 0, **self_)),
             ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
@@ -639,7 +670,7 @@ def build():
         ], 0)},
         {"version": 1, "frames": connection([
             ("client", encode("HELLO", 1, version=1)),
-            ("node", info),
+            ("node", info(1)),
             ("client", encode("SYNC", 2, after=0)),
             ("node", encode("SELF", 0, **{**self_, "time": 1_790_000_130})),
             ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
@@ -659,7 +690,7 @@ def build():
         ], 1)},
         {"version": 2, "frames": connection([
             ("client", encode("HELLO", 1, version=2)),
-            ("node", info),
+            ("node", info(2)),
             ("client", encode("SYNC", 2, after=0)),
             ("node", encode("SELF", 0, **self_)),
             ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
@@ -669,9 +700,16 @@ def build():
             ("node", encode("POWER", 5, **power)),
             ("node", encode("SYNCED", 2, speak=2)),
         ], 2)},
-        {"version": 3, "frames": connection([
-            ("client", encode("HELLO", 1, version=3)),
-            ("node", info),
+    ]
+    # Clients of versions 3 and 4, to a node that also holds a position from Bob and shares its
+    # own with him: neither is told of either. Each sends a request its version does not define.
+    for speak, refused in [
+        (3, encode("UPDATE_BEGIN", 3, size=len(IMAGE), digest=DIGEST_OF_IMAGE)),
+        (4, encode("SHARE", 3, contact=BOB, precision=0, fields=0, interval=0, minutes=0)),
+    ]:
+        older.append({"version": speak, "frames": connection([
+            ("client", encode("HELLO", 1, version=speak)),
+            ("node", info(speak)),
             ("client", encode("SYNC", 2, after=0)),
             ("node", encode("SELF", 0, **self_)),
             ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
@@ -679,25 +717,122 @@ def build():
             ("node", encode("NEIGHBOUR", 3, **neighbour)),
             ("node", encode("AIRTIME", 4, **airtime)),
             ("node", encode("POWER", 5, **power)),
-            ("node", encode("SYNCED", 2, news=6, speak=3)),
-            ("client", encode("SHARE", 3, contact=BOB, precision=0, fields=0, interval=0,
-                              minutes=0)),
+            ("node", encode("SYNCED", 2, news=6, speak=speak)),
+            ("client", refused),
             ("node", encode("ERROR", 3, code=1)),
-        ], 3)},
+        ], speak)})
+
+    # Frames a later version defines, as a receiver of an earlier version reads them: a type it
+    # does not know. A node answers such a request with ERROR 1; a client ignores such news.
+    unknown_to_older = []
+    for name, speak, values in [
+        ("END_SESSION", 0, {"address": BOB}),
+        ("ASKED", 0, {"address": CAROL, "why": 1}),
+        ("MAKE_GROUP", 1, {"name": "Hut"}),
+        ("GROUP", 1, {"group": HUT, "name": "Hut"}),
+        ("UPDATE_BEGIN", 3, {"size": len(IMAGE), "digest": DIGEST_OF_IMAGE}),
+        ("UPDATE_END", 3, {}),
+        ("UPDATING", 3, {"offset": 0}),
+        ("SHARE", 4, {"contact": BOB, "precision": 20, "fields": 0, "interval": 900,
+                      "minutes": 60}),
+        ("SET_POSITION", 4, {**SUMMIT, "altitude": 4806, "accuracy": 4, "age": 3}),
+        ("POSITION", 4, {"contact": BOB, **BOB_AT, "altitude": NO_ALTITUDE, "accuracy": 0,
+                         "age": 40}),
+        ("SHARING", 4, {"contact": BOB, "precision": 20, "fields": 0, "interval": 900,
+                        "minutes": 60}),
+    ]:
+        frame = encode(name, 5, **values)
+        assert isinstance(decode(frame), dict)
+        why = decode(frame, speak)
+        assert why == UNKNOWN[0], (name, speak, why)
+        unknown_to_older.append({"type": name, "version": speak, "frame": frame.hex(),
+                                 "why": why, "answer": answer(frame, why)})
+
+    # An update over two connections: the link is lost after the second chunk, and the client goes
+    # on from where the node says. Then a node refusing what it should, on one connection.
+    def start():
+        return [
+            ("client", encode("HELLO", 1, version=VERSION)),
+            ("node", info()),
+            ("client", encode("SET_TIME", 2, time=1_790_000_000)),
+            ("node", encode("OK", 2)),
+            ("client", encode("SYNC", 3, after=0)),
+            ("node", encode("SELF", 0, **self_)),
+            ("node", encode("AIRTIME", 1, **airtime)),
+            ("node", encode("POWER", 2, **power)),
+            ("node", encode("SYNCED", 3, news=3)),
+        ]
+
+    size, chunk = len(IMAGE), UPDATE_CHUNK
+
+    def data(seq, at, n=chunk, image=IMAGE):
+        return encode("UPDATE_DATA", seq, offset=at, data=image[at : at + n])
+
+    begin = encode("UPDATE_BEGIN", 4, size=size, digest=DIGEST_OF_IMAGE)
+    update = [
+        connection(start() + [
+            ("client", begin),
+            ("node", encode("UPDATING", 4, offset=0)),
+            ("client", data(5, 0)),
+            ("node", encode("OK", 5)),
+            ("client", data(6, chunk)),
+            ("node", encode("OK", 6)),
+        ]),
+        connection(start() + [
+            ("client", begin),
+            ("node", encode("UPDATING", 4, offset=2 * chunk)),
+            ("client", data(5, 2 * chunk)),
+            ("node", encode("OK", 5)),
+            ("client", encode("UPDATE_END", 6)),
+            ("node", encode("OK", 6)),
+        ]),
     ]
+    wrong = hashlib.sha256(b"").digest()
+    refusals = connection([
+        ("client", encode("HELLO", 1, version=VERSION)),
+        ("node", info()),
+        ("client", data(2, 0)),
+        ("node", encode("ERROR", 2, code=10)),
+        ("client", encode("UPDATE_END", 3)),
+        ("node", encode("ERROR", 3, code=10)),
+        ("client", encode("UPDATE_BEGIN", 4, size=0, digest=DIGEST_OF_IMAGE)),
+        ("node", encode("ERROR", 4, code=3)),
+        ("client", encode("UPDATE_BEGIN", 5, size=size, digest=wrong)),
+        ("node", encode("UPDATING", 5, offset=0)),
+        ("client", data(6, 0)),
+        ("node", encode("OK", 6)),
+        ("client", data(7, 0)),
+        ("node", encode("OK", 7)),
+        ("client", data(8, 300)),
+        ("node", encode("ERROR", 8, code=10)),
+        ("client", data(9, chunk)),
+        ("node", encode("OK", 9)),
+        ("client", encode("UPDATE_DATA", 10, offset=2 * chunk, data=bytes(chunk))),
+        ("node", encode("ERROR", 10, code=3)),
+        ("client", encode("UPDATE_DATA", 11, offset=2 * chunk, data=b"")),
+        ("node", encode("ERROR", 11, code=3)),
+        ("client", encode("UPDATE_END", 12)),
+        ("node", encode("ERROR", 12, code=10)),
+        ("client", data(13, 2 * chunk)),
+        ("node", encode("OK", 13)),
+        ("client", encode("UPDATE_END", 14)),
+        ("node", encode("ERROR", 14, code=11)),
+        ("client", encode("UPDATE_END", 15)),
+        ("node", encode("ERROR", 15, code=10)),
+    ])
 
     group_ids = [{"group_secret": g.hex(), "group": group_id(g).hex()}
                  for g in (MADE_SECRET, INVITED_SECRET, bytes(16), bytes([0xFF] * 16))]
 
     return {
-        "description": "The companion protocol, version 4 (draft/companion.md). Frames, streams, "
+        "description": "The companion protocol, version 5 (draft/companion.md). Frames, streams, "
         "addresses and group ids are hex; numbers are numbers; strings are text. In frames, "
         "frame is the frame alone, as one BLE write or notification carries it, and stream is "
         "the same frame as it goes on a byte stream. In extended, frame carries bytes past the "
         "fields this version defines, and fields is what a receiver reads from it. In rejected, "
         "a receiver discards frame; answer is the ERROR code a node answers it with, null for "
         "none. In unknown_to_older, frame is of a type that version does not define: a node "
-        "speaking it answers ERROR answer, and a client speaking it ignores the news (null). "
+        "speaking it answers ERROR answer, and a client speaking it ignores news and discards an answer (null). "
         "In streams, items are what a receiver finds in stream, in order: a frame, or a "
         "run of bytes that is not one, and pending is what it holds at the end waiting for more. "
         "In group_ids, group is the id of the group whose secret is group_secret. Exchange is "
@@ -714,11 +849,17 @@ def build():
         "client's SEND; the client's last request is one its version does not define, which a "
         "client must not send, and the node answers it as it would any other it does not know "
         "from that client. To the client of version 2 it holds what the exchange begins with, "
-        "and its SYNCED is version 2's, without news. To the client of version 3 it holds what "
-        "the exchange begins with, a position from the second address, and sharing with that "
-        "address: the sync sends neither, and the node refuses the client's SHARE, which it must "
-        "not send. Positions are in units of 10^-7 degree. Each connection's frames are read by the "
-        "version its client speaks. The three addresses are the public keys of RFC 8032's first three "
+        "and its SYNCED is version 2's, without news. To the clients of versions 3 and 4 it "
+        "holds what the exchange begins with, a position from the second address, and sharing "
+        "with that address: the sync sends neither, and the node refuses the request each "
+        "client's version does not define, which it must not send. Positions are in units of "
+        "10^-7 degree. Each connection's frames are read by the "
+        "version its client speaks, and each client of an earlier version is sent an INFO "
+        "without board and release. Update is one update of image, whose SHA-256 is "
+        "image_digest, over two connections to a node that holds only itself: the link is lost "
+        "after the first connection's last frame, and the node keeps what it was sent. "
+        "Refusals is one connection to a node with no update under way, given an image of the "
+        "same size whose digest is not its own. The three addresses are the public keys of RFC 8032's first three "
         "Ed25519 test vectors.",
         "generator": "vectors/tools/companion.py",
         "crc_check": {"input": b"123456789".hex(), "crc": crc16(b"123456789")},
@@ -727,11 +868,15 @@ def build():
         "frames": frames,
         "extended": extended,
         "rejected": rejected,
-        "unknown_to_older": unknown_to_older,
         "streams": streams,
         "group_ids": group_ids,
         "exchange": exchange,
         "older": older,
+        "unknown_to_older": unknown_to_older,
+        "image": IMAGE.hex(),
+        "image_digest": DIGEST_OF_IMAGE.hex(),
+        "update": update,
+        "refusals": refusals,
     }
 
 

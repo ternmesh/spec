@@ -29,7 +29,8 @@ produced by
 3. **No sender, no destination.** What this section puts in a frame
    names no node.
 4. **Floods do not take the channel.** A node spends a bounded share of
-   its time on its own floods and another on other nodes', whoever asks.
+   its time on its own floods and another on other nodes', whoever asks,
+   and a relay whose radio is busy passes fewer on.
 
 ## Notation
 
@@ -129,11 +130,46 @@ had not seen as follows.
 5. If, before its own copy is on the air, it has received
    `FLOOD_COPIES` copies of the frame, the first included, it MUST drop
    the frame and not send it.
-6. When the wait ends, the frame is sent if
-   [the allowance](#the-allowance) can pay for it, and dropped if not.
+6. When the wait ends, a relay that is [busy](#a-busy-relay) drops the
+   frame, or not, as that section says.
+7. A frame not dropped is sent if [the allowance](#the-allowance) can
+   pay for it, and dropped if not.
 
 A relay sends a frame it passes on once. Nothing listens for it and
 nothing answers it.
+
+## A busy relay
+
+A relay's **busy share** is the share of a span of time ending now that
+its radio spent sending, or
+[receiving](forwarding.md#listening-first) as Listening first has it,
+in millionths, rounded down. A relay chooses the span, and it may differ
+from one frame to the next, within this:
+
+* it is `FLOOD_BUSY_SPAN` at least and twice that at most;
+* until the relay has kept count for `FLOOD_BUSY_SPAN`, it is the whole
+  time it has, and it is never longer than that time.
+
+A relay keeps count from when it starts. One that stops, asleep or
+otherwise, starts again when it next keeps count, as if it had just
+started.
+
+When a frame's wait ends, the relay finds how often in a million it
+drops a frame:
+
+```
+drops = 0                                              if busy <= FLOOD_BUSY
+drops = floor((busy - FLOOD_BUSY) * 1000000
+              / (1000000 - FLOOD_BUSY))                otherwise
+```
+
+with `busy` and `FLOOD_BUSY` in millionths: 0 up to `FLOOD_BUSY`, and
+1000000 when the radio is never idle. It then draws a whole number from
+0 to 999999, each as likely as any other and afresh for each frame, and
+drops the frame if the number is less than `drops`. A frame dropped so
+is not charged to the allowance.
+
+This holds for frames a relay passes on and not for a node's own.
 
 ## The allowance
 
@@ -167,6 +203,8 @@ transmit at all, which bounds these and everything else it sends.
 | `FLOOD_OWN_WINDOW` | 600 s | |
 | `FLOOD_RELAY` | 3% | of a node's time |
 | `FLOOD_RELAY_WINDOW` | 60 s | |
+| `FLOOD_BUSY` | 20% | of a relay's time |
+| `FLOOD_BUSY_SPAN` | 30 s | |
 | `POWER_MARGIN` | 10 dB | as in Routes |
 
 ## Conformance
@@ -194,6 +232,14 @@ An implementation conforms to this section if, for
   selected routes go through (`null` for one not known), and
   `lowest` and `full` its lowest and full power, it sends a flooded
   frame at `power`;
+* **shares:** with its radio sending and receiving over the `radio`
+  given, each from `from_ns` up to `to_ns`, and keeping count from
+  time 0, it finds at each time in `asks` a busy share no less than
+  `least_ppm` and no more than `most_ppm`: the least and the most over
+  every span it may choose;
+* **busies:** as a relay whose busy share is `busy_ppm`, it finds
+  `drops_ppm` as how often in a million it drops a frame, and for each
+  number of `draws` drawn, drops the frame or not as `drops` says;
 * **seen:** taking each id of `takes` as seen at its `at_ns`, it finds
   at each time in `asks` that `id` is seen, or that it may be forgotten,
   as `seen` says: `true` where it MUST be seen;
@@ -270,10 +316,22 @@ can still send its own.
 **What the allowance is not.** It does not keep a mesh's broadcasts
 within what the channel holds. Each node is far inside its own bucket
 when the mesh as a whole is past it: see
-[What was measured](#what-was-measured). What would is a share of the
-air divided between nodes, which is
-[not yet specified](forwarding.md#not-yet-specified), or floods that do
-not go everywhere.
+[What was measured](#what-was-measured).
+
+**A busy relay passes fewer on.** What a relay can see of the whole
+mesh is its own radio: how much of the time it is sending or receiving.
+Where that is most of the time, the floods are what cost messages that
+follow routes their deliveries, and a relay that passes fewer on gives
+the air back. It passes fewer on and not none: a relay that stopped at
+a share of its time passed nothing on where the channel is always
+full, and broadcast there went from 27.5% of destinations to 6.3%.
+Sending a node's routed frames ahead of its flooded ones was tried
+first and changed nothing: a relay seldom holds both, and what they
+contend for is the air between nodes. A relay's own writing is not
+dropped: its own bucket bounds that. What this does not do is divide
+the air between nodes, which is
+[not yet specified](forwarding.md#not-yet-specified), or keep floods
+from going everywhere.
 
 **An id from the bytes.** A flood's id could be a field its writer
 fills. A node that heard a frame could then send rubbish under the same
@@ -337,8 +395,27 @@ and broadcast destinations on time at the five powers, and at 0 and
 
 Where the channel has room, sixteen airtimes reach more for the delay
 alone. Where it has none, the floods that now get through take
-unicast's share, or arrive late. `FLOOD_WAIT` stays at 8 until
-something says which of the two a relay sends first.
+unicast's share, or arrive late, so `FLOOD_WAIT` stays at 8.
+
+**A busy relay.** The rule of [A busy relay](#a-busy-relay), as a
+setting of the simulator and not yet through the firmware's code, at
+0, 10 and 20 dBm:
+
+| | | Unicast | Broadcast |
+|---|---|---|---|
+| SF9, every node a relay | without | 40.5, 38.7, 34.6% | 33.6, 42.5, 45.3% |
+| | with | 42.6, 48.3, 47.9% | 30.0, 40.7, 43.7% |
+| SF7, 200 relays | without | 92.0, 98.0, 96.1% | 65.8, 83.2, 84.8% |
+| | with | 92.1, 97.9, 96.5% | 65.5, 82.6, 84.5% |
+| SF8 at 62.5 kHz, the channel full | without | 23.2, 17.7, 21.1% | 27.5, 31.7, 17.9% |
+| | with | 30.9, 31.8, 27.5% | 18.8, 13.6, 4.2% |
+
+Where the channel has room nothing changes. With every node a relay,
+deliveries per second of airtime rise by up to 47%. Where the channel
+is full at any power, it is a trade: messages that follow routes gain
+6 to 14 points and broadcast loses 9 to 18. With `FLOOD_BUSY` at 40%
+the first row's unicast is 41.1, 45.9 and 45.9%, and its broadcast
+32.0, 40.6 and 43.6%.
 
 **The allowance.** At that traffic it does nothing: without it, the
 first row is the same to the digit. With a message from every node
@@ -355,8 +432,9 @@ its time, are together allowed five channels.
 
 ## Not yet measured
 
-* **A longer `FLOOD_WAIT` with a rule for which goes first**, a
-  flooded frame or one that follows a route.
+* **A busy relay through the firmware's own code.** The simulator
+  made the choice as a frame went to the radio, not as its wait ended,
+  and with nodes that go down and come back it was not run at all.
 * **The allowance's numbers against each other.** One load was run
   with them and without. Whether 3% is the right share for a relay,
   or 0.5% for a writer, was not asked.

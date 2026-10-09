@@ -32,6 +32,8 @@ SEEN_ROOM = 128
 POWER_MARGIN = 10
 FLOOD_OWN_PPM, FLOOD_OWN_WINDOW_S = 5_000, 600
 FLOOD_RELAY_PPM, FLOOD_RELAY_WINDOW_S = 30_000, 60
+FLOOD_BUSY_PPM = 200_000
+FLOOD_BUSY_SPAN_NS = 30 * 1_000_000_000
 
 
 def head(hdr, hops, power):
@@ -56,6 +58,37 @@ def passes(relay, relay_neighbours, hops):
     if relay_neighbours <= FLOOD_SPARSE:
         return hops
     return hops - 1 if hops > 1 else None
+
+
+def busy_drops_ppm(busy_ppm):
+    """How often in a million a relay that busy drops a frame it would pass on."""
+    if busy_ppm <= FLOOD_BUSY_PPM:
+        return 0
+    return (busy_ppm - FLOOD_BUSY_PPM) * 1_000_000 // (1_000_000 - FLOOD_BUSY_PPM)
+
+
+def busy_drops(busy_ppm, draw):
+    """Whether a relay that busy, having drawn `draw` of 0 to 999999, drops the frame."""
+    return draw < busy_drops_ppm(busy_ppm)
+
+
+def busy_share(radio, at):
+    """The least and the most busy share, in millionths, a relay may find at `at`, having kept
+    count from 0: over every span it may choose. `radio` is when the radio was sending or
+    receiving, as (from, to) pairs that do not overlap."""
+    def on(a, b):
+        return sum(max(0, min(t, b) - max(f, a)) for f, t in radio)
+
+    if at <= FLOOD_BUSY_SPAN_NS:
+        spans = [at]
+    else:
+        lo, hi = FLOOD_BUSY_SPAN_NS, min(2 * FLOOD_BUSY_SPAN_NS, at)
+        # The share over a span is least or most where the span ends or where it begins at an
+        # edge of the radio's time on.
+        spans = {lo, hi} | {at - e for pair in radio for e in pair if lo <= at - e <= hi}
+    least = min(on(at - s, at) * 1_000_000 // s for s in spans)
+    most = max(-(-on(at - s, at) * 1_000_000 // s) for s in spans)
+    return least, most
 
 
 def longest_wait(sf, bw_hz, length):
@@ -121,6 +154,13 @@ def self_check():
     # A floor of -3.5 dBm and the margin is 6.5, rounded up to 7; louder than announces at 2.
     assert power(2, [-56], -9, 22) == 7 and power(2, [], -9, 22) == 2
     assert power(2, [-56, None], -9, 22) == 22 and power(2, [300], -9, 22) == 22
+    # A relay busy 60% of the time is half way from 20% to never idle.
+    assert [busy_drops_ppm(b) for b in (0, 200_000, 600_000, 1_000_000)] == [0, 0, 500_000, 1_000_000]
+    assert busy_drops(600_000, 499_999) and not busy_drops(600_000, 500_000)
+    # Half a minute never idle, an hour in: all of the last half minute, half of the last whole.
+    s = 1_000_000_000
+    assert busy_share([(3570 * s, 3600 * s)], 3600 * s) == (500_000, 1_000_000)
+    assert busy_share([(0, 2 * s)], 10 * s) == (200_000, 200_000)
     # 0.5% of ten minutes is 3 s of airtime: nine frames of 320.768 ms, and not a tenth.
     b = Bucket(FLOOD_OWN_PPM, FLOOD_OWN_WINDOW_S, 9, 500_000)
     assert [b.pays(0, 320_768_000) for _ in range(10)] == [True] * 9 + [False]
@@ -176,6 +216,31 @@ def build():
                            "sends": passes(role == "relay", n, hops)})
 
     copies = [{"received": n, "drops": n >= FLOOD_COPIES} for n in (1, 2, 3)]
+    busies = [{"busy_ppm": b, "drops_ppm": busy_drops_ppm(b),
+               "draws": [{"draw": d, "drops": busy_drops(b, d)}
+                         for d in sorted({0, max(busy_drops_ppm(b) - 1, 0),
+                                          min(busy_drops_ppm(b), 999_999), 999_999})]}
+              for b in (0, 100_000, 200_000, 200_001, 400_000, 600_000, 900_000, 1_000_000)]
+
+    s = 1_000_000_000
+    histories = [
+        ("starting: the whole time it has kept count", [(0, 2 * s)], [10 * s, 30 * s]),
+        ("receiving counts as sending does", [(0, 1 * s), (4 * s, 5 * s)], [10 * s]),
+        ("between one span and two: no longer than it has kept count", [(0, 15 * s)], [45 * s]),
+        ("half a minute never idle: all of a short span, half of a long one",
+         [(70 * s, 100 * s)], [100 * s]),
+        ("what was long ago is forgotten", [(0, 40 * s)], [100 * s, 69 * s]),
+        ("a second in every two", [(k * s, (k + 1) * s) for k in range(0, 120, 2)], [120 * s]),
+    ]
+    shares = []
+    for name, radio, asks in histories:
+        shares.append({
+            "name": name,
+            "radio": [{"does": "receiving" if name.startswith("receiving") and k else "sending",
+                       "from_ns": f, "to_ns": u} for k, (f, u) in enumerate(radio)],
+            "asks": [dict(zip(("at_ns", "least_ppm", "most_ppm"), (a,) + busy_share(radio, a)))
+                     for a in asks],
+        })
 
     waits = []
     for _, _, bw, sf, _, _, _ in phy.PROFILES:
@@ -267,6 +332,8 @@ def build():
         "same": same,
         "passes": passed,
         "copies": copies,
+        "shares": shares,
+        "busies": busies,
         "waits": waits,
         "powers": powers,
         "seen": seen,
