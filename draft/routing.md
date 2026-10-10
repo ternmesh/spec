@@ -861,8 +861,14 @@ announces, as before: see [Not yet specified](#not-yet-specified).
   copy's routes in the real node's name. The copy can then stop frames
   reaching that node; it cannot read or forge them, which their own
   encryption and signatures prevent. Eight-byte ids would put this out
-  of reach and cost four more bytes in every id a frame carries; what
-  that costs in delivery is not yet measured.
+  of reach, at four more bytes in every id a frame carries; in the
+  simulator, measured as signing was under [Rationale](#rationale), that
+  took unicast on time from 90.1% to 73.8% at SF7 and from 14.6% to
+  10.3% as deployed, mostly because a frame then holds 14 routes,
+  not 21. Wider ids in announces alone cost nothing measurable but
+  close nothing, as routes and frames still name the node by its four
+  bytes. Nor would eight-byte ids stop the same harm while a node may
+  lie about its routes, above, which needs no chosen id.
 * **Rotating routing ids**, so that a node cannot be followed by its
   announces.
 * **Who is a relay.** The simulator has nodes elect themselves from
