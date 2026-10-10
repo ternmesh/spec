@@ -780,10 +780,12 @@ again later, would then make every neighbour drop every route through
 its sender, as often as anyone cared to send it. With numbers that only
 rise, a restart is a newer announce like any other, and a recorded one
 is late. Storing a number ahead costs one write in `NUMBER_SAVE`
-announces and one a restart, and a node that stops without warning
-loses at most `NUMBER_SAVE` numbers. Numbers are sixteen bits, so a
-recording comes to look newer again once its sender has sent 32768
-announces after it, or restarted 128 times: days at the least.
+announces, and a node that stops without warning loses at most
+`NUMBER_SAVE` numbers; one that restarts and stops again before it
+sends anything loses none, since it stores no number ahead until its
+first announce is due. Numbers are sixteen bits, so a recording comes
+to look newer again once its sender has sent 32768 announces after it,
+or restarted 128 times having sent some: days at the least.
 
 ## What an observer learns
 
