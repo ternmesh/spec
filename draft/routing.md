@@ -461,7 +461,9 @@ Departing from RFC 6206:
 ## The cap
 
 Announces and requests together take no more than `CAP` of a node's
-time: `REQUEST_SHARE` of it for requests, the rest for announces. Each
+time, and a relay whose routes are changing no more than the learning
+allowance below besides: `REQUEST_SHARE` of the cap for requests, the
+rest for announces. Each
 is a token bucket, which fills at its share and holds `CAP_WINDOW` of
 it, or one 255-byte frame if that is more, and starts full.
 
@@ -473,13 +475,16 @@ another, while changed routes remain and the bucket allows.
 
 A relay also keeps a third bucket, the learning allowance, which fills
 at `LEARN_SHARE` of the announces' share and holds `CAP_WINDOW` of it,
-or one 255-byte frame if that is more, and starts full. An announce the
-announces' bucket cannot pay for MAY be paid for from the learning
-allowance instead, if the node is a relay, is not
-[starting](#starting), and has changed routes waiting; the announce
-then carries them first, as any announce does. Nothing else is paid for
-from it. A node whose routes have settled has none waiting, so the
-allowance is spent only while the network is learning.
+or one 255-byte frame if that is more, and starts full. When the
+announces' bucket does not hold the airtime of the longest frame the
+next announce could come to, a relay that is not
+[starting](#starting) and has changed routes waiting MAY build it
+anyway if the learning allowance holds that airtime, and charges the
+learning allowance what the frame actually takes; the announce carries
+the changed routes first, as any announce does. Nothing else is paid
+for from it. A node whose routes have settled has none waiting, so the
+allowance is spent only while the network is learning. With the values
+below, a relay's routing then takes up to 1.375 times `CAP`.
 
 A request frame the requests' bucket cannot pay for is dropped. A
 starved node asks again anyway.
@@ -492,7 +497,7 @@ starved node asks again anyway.
 | `I_MAX` | 512 s | the longest: six doublings |
 | `REDUNDANCY` | 3 | consistent announces that suppress one |
 | `QUIET_MAX` | 2 | intervals a node may be suppressed running |
-| `CAP` | 0.5% | of a node's time, for routing |
+| `CAP` | 0.5% | of a node's time, for routing, besides the learning allowance |
 | `REQUEST_SHARE` | 1/4 | of the cap, for requests |
 | `CAP_WINDOW` | 60 s | |
 | `BURST` | 4 | announces at one time, at most |
