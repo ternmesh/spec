@@ -125,8 +125,10 @@ hearing an announce, after the checks above, a node:
    `sender`: there is nothing to check it with;
 3. MUST discard it unless `Verify(address, M, sig)` passes, with the
    address carried or held;
-4. holds the address for `sender`, if it did not, and takes the
-   announce as the rest of this section says.
+4. takes the announce as the rest of this section says, and holds the
+   address with `sender`'s entry only if that leaves it a neighbour.
+   An announce discarded or not taken later, out of order or with no
+   room for its sender, leaves no address held.
 
 A frame discarded here is not heard at all: it is no sample for a
 floor, no sign of life, and no inconsistency.

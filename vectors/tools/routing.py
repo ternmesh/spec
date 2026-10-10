@@ -592,7 +592,8 @@ def build():
         "discarded whether or not the receiver holds its sender's address. In verified, announce "
         "is an index into announces, held_address is the address the receiver holds for its "
         "sender (null for none), takes whether it takes the announce rather than discarding it, "
-        "and holds_address the address it then holds for the sender.",
+        "and holds_address the address it then holds for the sender, if the rest of the "
+        "section then takes the announce from a neighbour.",
         "generator": "vectors/tools/routing.py",
         "ids": [{"address": x.hex(), "id": rid(x)} for x in addresses],
         "newer": [
