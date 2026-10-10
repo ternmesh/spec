@@ -146,9 +146,9 @@ too: a node MUST NOT send an announce whose `number` is not newer than
 that of the last announce it sent with its address, before a restart
 or since. So it keeps a number `kept` where a restart does not lose it.
 It never sends an announce numbered `kept` or newer: before it would,
-it stores `kept + NUMBER_SAVE` in its place. On starting it numbers its
-first announce `kept`, and stores `kept + NUMBER_SAVE` before it sends
-it. A node MUST keep `kept` for as long as it keeps its identity key,
+it stores a later one in its place, `NUMBER_SAVE` later once an
+announce has gone on the air since it started, and one later until
+then. On starting it numbers its first announce `kept`. A node MUST keep `kept` for as long as it keeps its identity key,
 and lose them together. A node that has never kept one starts from a
 random value; its neighbours from before, if it had any, may discard
 its announces until they [forget](#links) it.
@@ -781,11 +781,11 @@ its sender, as often as anyone cared to send it. With numbers that only
 rise, a restart is a newer announce like any other, and a recorded one
 is late. Storing a number ahead costs one write in `NUMBER_SAVE`
 announces, and a node that stops without warning loses at most
-`NUMBER_SAVE` numbers; one that restarts and stops again before it
-sends anything loses none, since it stores no number ahead until its
-first announce is due. Numbers are sixteen bits, so a recording comes
-to look newer again once its sender has sent 32768 announces after it,
-or restarted 128 times having sent some: days at the least.
+`NUMBER_SAVE` numbers; one that restarts and stops again before an
+announce goes on the air loses one, since until then it stores only one
+ahead. Numbers are sixteen bits, so a recording comes to look newer
+again once its sender has sent 32768 announces after it, or restarted
+128 times having sent some: days at the least.
 
 ## What an observer learns
 
