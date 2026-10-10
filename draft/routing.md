@@ -218,11 +218,13 @@ it to be one. What tells of a neighbour that has gone is
 
 **Numbers out of order.** An announce whose `number` is not newer than
 the last from the same sender is a copy, is late, or is recorded and
-sent again, and is discarded whole, unless nothing has been heard from
-that sender for one of its promises. In that case the node forgets the
-sender, and every route through it, and takes the frame as from a
-neighbour it has just found. That an announce says its sender is
-[starting](#starting) does not excuse its number.
+sent again, and is discarded whole. That an announce says its sender is
+[starting](#starting) does not excuse its number. If nothing has been
+heard from that sender for one of its promises, though, the node also
+forgets the sender, and every route through it, and takes nothing from
+the frame: a sender that lost the number it kept starts from any, and
+is taken as found at its next announce, while a recording can do no
+more than drop a neighbour already silent past what it promised.
 
 **A full table.** A node keeps as many neighbours as it has room for,
 and where there are more nodes to hear than that, which ones it keeps
@@ -531,7 +533,8 @@ An implementation conforms to this section if, for
   replaces `replaces` (`null` for none);
 * **numbering:** hearing an announce numbered `number` from a
   neighbour whose last was `last`, it does as `does` says: `take` it,
-  `discard` it, or forget the neighbour and take it as found `again`.
+  `discard` it, forget the neighbour and take it as found `again`, or
+  `forget` the neighbour and take nothing from it.
   `promise_passed` says whether nothing was heard from the neighbour
   for one of its promises, `starting` whether the announce says so, and
   `was_starting` whether the neighbour's last did;

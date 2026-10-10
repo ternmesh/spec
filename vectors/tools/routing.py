@@ -162,7 +162,7 @@ def numbering(last, number, promise_passed, starting, was_starting):
     """What a node does with an announce from a neighbour it knows. Numbers survive a restart, so
     a starting announce is late or a recording unless it is newer, as any other is."""
     if not newer(number, last):
-        return "again" if promise_passed else "discard"
+        return "forget" if promise_passed else "discard"
     return "again" if starting and not was_starting else "take"
 
 
@@ -264,7 +264,7 @@ def self_check():
     assert floor_next(-15, 0, -50, 9) == -12
     assert numbering(5, 6, False, False, False) == "take"
     assert numbering(5, 4, False, False, False) == "discard"
-    assert numbering(5, 4, True, False, False) == "again"
+    assert numbering(5, 4, True, False, False) == "forget"
     assert numbering(5, 4, False, True, False) == "discard"  # a recorded starting announce
     assert numbering(5, 6, False, True, False) == "again"
     assert numbering(5, 6, False, True, True) == "take"
