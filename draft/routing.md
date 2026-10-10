@@ -141,8 +141,14 @@ spends airtime on nothing.
 
 Requests are not signed: see [Not yet specified](#not-yet-specified).
 
-**`number`** starts at a random value and goes up by one with each
-announce sent.
+**`number`** goes up by one with each announce sent, and never comes
+back, across restarts too: a node MUST NOT send an announce whose
+`number` is not newer than that of every announce it has sent with its
+address. So it keeps a number `kept` where a restart does not lose it.
+It never sends an announce numbered `kept` or newer: before it would,
+it stores `kept + NUMBER_SAVE` in its place. On starting it numbers its
+first announce `kept`, and stores `kept + NUMBER_SAVE` before it sends
+it. A node that has never kept one starts from a random value.
 
 **`promise`** is in seconds up to 32767; with the top bit set, the low
 15 bits are minutes, up to 32766; `0xFFFF` is no promise. It is rounded
@@ -211,12 +217,12 @@ it to be one. What tells of a neighbour that has gone is
 [frames sent to it and lost](forwarding.md#hops).
 
 **Numbers out of order.** An announce whose `number` is not newer than
-the last from the same sender is a copy or is late, and is discarded
-whole, unless it says its sender is [starting](#starting), or nothing
-has been heard from that sender for one of its promises. In that last
-case the sender started again unheard: the node forgets it, and every
-route through it, and takes the frame as from a neighbour it has just
-found.
+the last from the same sender is a copy, is late, or is recorded and
+sent again, and is discarded whole, unless nothing has been heard from
+that sender for one of its promises. In that case the node forgets the
+sender, and every route through it, and takes the frame as from a
+neighbour it has just found. That an announce says its sender is
+[starting](#starting) does not excuse its number.
 
 **A full table.** A node keeps as many neighbours as it has room for,
 and where there are more nodes to hear than that, which ones it keeps
@@ -353,9 +359,10 @@ So for its first `START_ANNOUNCES` announces a node is **starting**:
 * it selects no route but one whose neighbour is the destination;
 * its announces are not suppressed, and its interval does not double.
 
-A node that hears a neighbour say it is starting, when that neighbour's
-last announce did not, forgets the neighbour and every route through
-it, and takes the frame as from a neighbour it has just found. It MUST
+A node that hears a neighbour say it is starting, in an announce whose
+`number` is newer than the last, when that neighbour's last announce
+did not say so, forgets the neighbour and every route through it, and
+takes the frame as from a neighbour it has just found. It MUST
 ignore routes listed in an announce that says its sender is starting.
 
 ### Starving, and asking
@@ -492,6 +499,7 @@ starved node asks again anyway.
 | `DEFAULT_BUSY` | 50% | of a leaf's time, past which it takes no default route |
 | `ADDRESS_AFTER` | 3 | announces that carry the address after a neighbour is found |
 | `ADDRESS_EVERY` | 8 | announces of which at least one carries it |
+| `NUMBER_SAVE` | 256 | announce numbers a node stores ahead |
 
 ## Conformance
 
@@ -763,6 +771,19 @@ already listens for each frame to be passed on, gives up neighbours
 that do not, and takes another way, and only a message's destination
 can [acknowledge](forwarding.md#messages) it; what else routing does
 about such a node is [not yet specified](#not-yet-specified).
+
+**Numbers that survive a restart.** A signature says who sent an
+announce, not when. Before announces were signed, a node that started
+again began its numbers anywhere, and its neighbours took an announce
+that said it was starting whatever its number. A recorded one, sent
+again later, would then make every neighbour drop every route through
+its sender, as often as anyone cared to send it. With numbers that only
+rise, a restart is a newer announce like any other, and a recorded one
+is late. Storing a number ahead costs one write in `NUMBER_SAVE`
+announces and one a restart, and a node that stops without warning
+loses at most `NUMBER_SAVE` numbers. Numbers are sixteen bits, so a
+recording comes to look newer again once its sender has sent 32768
+announces after it, or restarted 128 times: days at the least.
 
 ## What an observer learns
 

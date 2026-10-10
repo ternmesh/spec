@@ -159,13 +159,11 @@ def withdrawn(named, number, round_):
 
 
 def numbering(last, number, promise_passed, starting, was_starting):
-    """What a node does with an announce from a neighbour it knows."""
-    if starting:
-        return "take" if was_starting else "again"
-    gap = (number - last) % 65536
-    if gap == 0 or gap >= 0x8000:
+    """What a node does with an announce from a neighbour it knows. Numbers survive a restart, so
+    a starting announce is late or a recording unless it is newer, as any other is."""
+    if not newer(number, last):
         return "again" if promise_passed else "discard"
-    return "take"
+    return "again" if starting and not was_starting else "take"
 
 
 def link_cost(sf, bw):
@@ -267,8 +265,9 @@ def self_check():
     assert numbering(5, 6, False, False, False) == "take"
     assert numbering(5, 4, False, False, False) == "discard"
     assert numbering(5, 4, True, False, False) == "again"
-    assert numbering(5, 4, False, True, False) == "again"
-    assert numbering(5, 4, False, True, True) == "take"
+    assert numbering(5, 4, False, True, False) == "discard"  # a recorded starting announce
+    assert numbering(5, 6, False, True, False) == "again"
+    assert numbering(5, 6, False, True, True) == "take"
     assert not withdrawn(10, 18, 1) and withdrawn(10, 19, 1) and withdrawn(0xFFFF, 8, 0)
     two = [{"floor_sixteenths": 0, "up": False}, {"floor_sixteenths": 160, "up": True}]
     assert place(two, -96) == 0 and place(two, -95) is None
@@ -388,12 +387,13 @@ def build():
         key = None if held is None else signers[held]
         got = announce_read(f, own, key)
         assert (got is not None) == takes, (which, held)
+        holds = got if got is not None else key  # a discarded frame changes nothing
         verified.append(
             {
                 "announce": which,
                 "held_address": None if key is None else key.hex(),
                 "takes": takes,
-                "holds_address": None if got is None else got.hex(),
+                "holds_address": None if holds is None else holds.hex(),
             }
         )
 
