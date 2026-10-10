@@ -259,10 +259,12 @@ equal floors, any. It MUST NOT:
 
 The relay's own route takes the frame on. A relay never takes a default
 route, so no frame can go back to a leaf but the one it is for, and none
-can loop. Where [forwarding](forwarding.md) and
-[first contact](first-contact.md) say what a node with no route does,
-a leaf that may take a default route has one. For the frame's [waits](forwarding.md), the route's metric is
-`DEFAULT_HOPS` times `LINK_COST`, never more than `0xFFFE`.
+can loop. Where [forwarding](forwarding.md) and [first
+contact](first-contact.md) say what a node with no route does, a leaf
+that takes default routes and has a nearest relay it may hand the frame
+to has a route; a leaf that takes none, or has no such relay, has none,
+and asks for one. For the frame's [waits](forwarding.md), the route's
+metric is `DEFAULT_HOPS` times `LINK_COST`, never more than `0xFFFE`.
 
 ### Selecting a route
 
