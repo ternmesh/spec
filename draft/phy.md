@@ -78,6 +78,8 @@ frequency, with its bandwidth and spreading factor.
 |---|---|---|---|---|---|
 | `US915` | 921.250 MHz | 500 kHz | 9 | 36 dBm EIRP | no limit |
 | `EU868` | 869.475 MHz | 125 kHz | 7 | 29 dBm EIRP | 10% of any hour |
+| `AU915` | 921.250 MHz | 500 kHz | 9 | 30 dBm EIRP | no limit |
+| `NZ915` | 921.250 MHz | 500 kHz | 9 | 36 dBm EIRP | no limit |
 
 **Power.** A node MUST NOT radiate more than its profile allows, antenna
 gain included. `US915` also limits what the transmitter may put into the
@@ -181,6 +183,35 @@ stays 12.5 kHz inside the lower edge, misses MeshCore's channel by
 
 **`EU868`: SF7 at 125 kHz** is the simulator's setting itself.
 
+**`AU915` and `NZ915`: `US915`'s channel and modulation.** Australia's
+class licence for low interference potential devices (2025, Schedule 1,
+Table 8, item 6 and clause 43) allows a digitally modulated transmitter
+1 W EIRP anywhere in 915–928 MHz, if its radiated peak power spectral
+density is at most 25 mW in any 3 kHz. New Zealand's general user
+licence for short range devices (2022, notice 2022-go3100) allows 0 dBW
+EIRP in 915–928 MHz, and 6 dBW in 920–928 MHz to a transmitter that
+uses digital modulation (special condition 13). Neither has a floor on
+bandwidth or a limit on transmitting, so either could take a narrower
+channel; the one `US915` uses serves both, for three reasons:
+
+* At 30 dBm, 500 kHz puts about 6 mW in 3 kHz, a quarter of
+  Australia's limit; 125 kHz would put 24 mW there, at it.
+* 921.250 MHz lies in 920–928 MHz, where New Zealand allows 6 dB more,
+  and below 923.05 MHz, where LoRaWAN's AU915 downlinks begin (RP002).
+  The uplink channels it overlaps, 921.0 to 921.4 MHz, are in the
+  plan's fourth sub-band, not the second (916.8–918.2 MHz) that The
+  Things Network and most networks in Australia use. Meshtastic's `ANZ` presets fall, by the
+  same slot rule as in the US, at 915.6875, 918.3125, 918.875, 919.875,
+  920.625, 921.750, 926.125, 926.750 and 927.875 MHz, and the nearest of
+  them, 500 kHz wide, begins where this channel ends. MeshCore's
+  Australian presets sit near 915.8 MHz.
+* A board built for the 915 MHz band works in all three countries on the
+  same channel, so it does not need a fourth.
+
+They are two profiles, not one, because what each country allows a node
+to radiate is different, and a node in New Zealand would lose 6 dB to
+Australia's limit.
+
 **Radiated power, as EIRP.** 500 mW ERP is 27 dBm ERP, which is 29 dBm
 EIRP rounded down. The US limit is 30 dBm into an antenna of up to
 6 dBi.
@@ -208,15 +239,28 @@ then the values above stand on the published sources.
 * **Power spectral density at full power**, against 15.247(e)'s 8 dBm in
   any 3 kHz. Spread evenly over 500 kHz, 30 dBm is 7.8 dBm in 3 kHz, so
   there is little to spare at the limit, and 8 dB at the SX1262's
-  22 dBm.
+  22 dBm. Australia's limit is on *peak* density, 25 mW (14 dBm) in any
+  3 kHz; a chirp sweeps its band rather than filling it at once, so how
+  far its peak stands above its average, at 500 kHz and SF9, is to be
+  measured.
 
 ## Not yet specified
 
-* **Other regions.** Australia and New Zealand (915–928 MHz, no 500 kHz
-  floor), Japan and Korea (listen before talk, and at most 4 s a
-  transmission), India (at most 200 kHz), China, and the AS923
-  countries each need a profile, and some need rules of kinds this
-  draft has no field for.
+* **Other regions.** Each needs a profile, and some need rules of kinds
+  this draft has no field for:
+  * **India.** The 2021 rules for 865–868 MHz (G.S.R. 853(E), Table II)
+    allow 500 mW ERP in at most 200 kHz, with adaptive power control,
+    and a limit on transmitting that depends on the node: 10% for a
+    network access point and 2.5% otherwise. A profile would need a
+    limit for each role, and the routing design has not been simulated
+    at 2.5%.
+  * **Brazil.** 915–928 MHz is used there as in Australia, and
+    LoRaWAN's AU915 plan with it; Anatel's conditions (Ato 14.448 of
+    2017) are to be read before `AU915`'s channel is named for it.
+  * **Japan and Korea** (listen before talk, and at most 4 s a
+    transmission), **China** (470–510 MHz), the **AS923** countries and
+    **433 MHz** (EU433, 10 mW ERP) need boards for other bands, listen
+    before talk, a dwell limit, or more power than the band allows.
 * **Links on other settings.** A scheduled MAC can put a link on a
   faster or slower spreading factor than the profile's. The range it
   may choose from belongs with the MAC.

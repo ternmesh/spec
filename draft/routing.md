@@ -434,7 +434,7 @@ starved node asks again anyway.
 | `POWER_K` | 8 | neighbours a frame for all should reach |
 | `POWER_MARGIN` | 10 dB | |
 | `REF_LEN` | 32 bytes | the frame the metric is reckoned in |
-| `LINK_COST` | 70 ms on `US915`, 81 ms on `EU868` | |
+| `LINK_COST` | 70 ms on `US915`, `AU915` and `NZ915`, 81 ms on `EU868` | |
 | `ROUTES_KEPT` | 4 | for each destination |
 | `HYSTERESIS` | 1/10 | |
 | `CHANGE` | 1/4 | |
