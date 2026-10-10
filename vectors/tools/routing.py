@@ -19,9 +19,17 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import cards  # noqa: E402
 import phy  # noqa: E402
-from first_contact import valid_address  # noqa: E402
+
+
+def _crypto():
+    """cards.py, for Ed25519, and first contact's address check: imported only to sign or check
+    an announce, so that the generators that import this file for its other rules need nothing
+    outside the standard library."""
+    import cards
+    from first_contact import valid_address
+
+    return cards, valid_address
 
 OUT = Path(__file__).resolve().parent.parent / "routing.json"
 
@@ -86,6 +94,7 @@ def announce(a, seed):
         len(a["neighbours"]),
         len(a["routes"]),
     )
+    cards, _ = _crypto()
     if a["carries_address"]:
         out += cards.address(seed)
     for n in a["neighbours"]:
@@ -109,6 +118,7 @@ def announce_read(frame, own, held):
     sender = struct.unpack(">I", frame[1:5])[0]
     if flags & ~(FLAG_RELAY | FLAG_STARTING | FLAG_ADDRESS) or sender in (0, EVERYONE, own):
         return None
+    cards, valid_address = _crypto()
     key = held
     if carries:
         key = frame[17:49]
@@ -251,7 +261,7 @@ def default_metric(cost):
 
 
 def self_check():
-    cards.self_check()
+    _crypto()[0].self_check()
     assert newer(1, 0) and newer(0, 0xFFFF) and not newer(0, 0) and not newer(0, 1)
     assert newer(0x7FFF, 0) and not newer(0x8000, 0)
     assert promise_code(32767) == 32767 and promise_code(32768) == 0x8000 | 547
@@ -282,6 +292,7 @@ def build():
     addresses = [bytes([i]) * 32 for i in (0x00, 0x11, 0xA5)] + [bytes(range(32))]
     a, b, c, d = (rid(x) for x in addresses)
 
+    cards, _ = _crypto()
     seeds = cards.seeds()
     signers = [cards.address(x) for x in seeds]
     sa, sb, sc = (rid(x) for x in signers)
