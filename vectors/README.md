@@ -24,6 +24,7 @@ Everything in this directory is dedicated to the public domain under
 Each file is the output of its generator, and CI fails if the two
 disagree. To change a vector, change the generator and run it with
 `generate`; `check` confirms the file matches. The first two generators,
-`tools/groups.py`, `tools/positions.py` and `tools/cards.py` also need the Python `cryptography` package, and check it against published
-RFC vectors before computing anything. `tools/phy.py`, `tools/routing.py`,
-`tools/forwarding.py`, `tools/flooding.py`, `tools/companion.py` and `tools/sharing.py` need nothing, and check their arithmetic against values worked by hand.
+`tools/groups.py`, `tools/positions.py`, `tools/cards.py` and `tools/routing.py` also need the Python `cryptography` package, and check it against published
+RFC vectors before computing anything. `tools/phy.py`,
+`tools/forwarding.py`, `tools/flooding.py`, `tools/companion.py` and `tools/sharing.py` need nothing, and check their arithmetic against values worked by hand;
+`tools/forwarding.py` and `tools/companion.py` use `tools/routing.py`'s rules, but not its signatures.

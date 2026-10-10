@@ -40,7 +40,9 @@ produced by [`vectors/tools/routing.py`](../vectors/tools/routing.py).
 
 As in [unicast-security.md](unicast-security.md#notation). Every number
 on the air is big-endian. In frame layouts, `u8`, `u16` and `u32` are
-unsigned and `i8` is a signed byte.
+unsigned and `i8` is a signed byte. `Sign` and `Verify` are Ed25519 as
+[Presence cards](cards.md#notation) has them, under the node's
+[identity key](first-contact.md#addresses).
 
 Sequence numbers are 16 bits and wrap. `a` is **newer** than `b` if
 `(a - b) mod 2^16` is between 1 and `0x7FFF`.
@@ -84,23 +86,75 @@ A node's one periodic frame:
 | 1 | 4 | `sender` | the sender's routing id |
 | 5 | 2 | `number` | counts the sender's announces |
 | 7 | 2 | `seq` | the sequence number of the sender's route to itself |
-| 9 | 1 | `flags` | bit 0: the sender is a relay. Bit 1: it is [starting](#starting). The rest are 0 |
+| 9 | 1 | `flags` | bit 0: the sender is a relay. Bit 1: it is [starting](#starting). Bit 2: the address follows. The rest are 0 |
 | 10 | 2 | `promise` | the longest the sender may go before its next |
 | 12 | 2 | `round` | announces it takes the sender to name every neighbour |
 | 14 | 1 | `power` | what this frame was sent at, `i8` dBm, rounded up |
 | 15 | 1 | `h` | how many neighbours follow |
 | 16 | 1 | `r` | how many routes follow |
-| 17 | 5`h` | neighbours | each `id` `u32`, `margin` `u8` |
-| 17 + 5`h` | 8`r` | routes | each `destination` `u32`, `seq` `u16`, `metric` `u16` |
+| 17 | 32`a` | `address` | the sender's [address](first-contact.md#addresses), if bit 2 of `flags` is set |
+| 17 + 32`a` | 5`h` | neighbours | each `id` `u32`, `margin` `u8` |
+| 17 + 32`a` + 5`h` | 8`r` | routes | each `destination` `u32`, `seq` `u16`, `metric` `u16` |
+| then | 64 | `sig` | |
 
 `hdr` has format `01` (draft 0), type `011` (routing) and flags `001`
-(announce). The frame is exactly `17 + 5h + 8r` bytes, and at most 255.
-A receiver MUST discard one of any other length, one whose `sender` is
+(announce). `a` is 1 if bit 2 of `flags` is set and 0 otherwise. The
+frame is exactly `81 + 32a + 5h + 8r` bytes, and at most 255. A
+receiver MUST discard one of any other length, one whose `sender` is
 its own id or a reserved id, and one whose `flags` has an unknown bit
 set.
 
-**`number`** starts at a random value and goes up by one with each
-announce sent.
+```
+M    = "tern v0 announce" || the frame up to sig
+sig  = Sign(sk, M)
+```
+
+### Signed
+
+An announce is signed by its sender, and a node takes nothing from one
+it cannot check. For each neighbour a node keeps that neighbour's
+address, once it has one, and forgets it with the neighbour. On
+hearing an announce, after the checks above, a node:
+
+1. if the announce carries an address, MUST discard it unless the
+   address is [valid](first-contact.md#addresses), `rid` of it is
+   `sender`, and it is the address the node holds for `sender`, if it
+   holds one. This comes before the signature, as for a
+   [card](cards.md#receiving);
+2. MUST discard it if it carries no address and the node holds none for
+   `sender`: there is nothing to check it with;
+3. MUST discard it unless `Verify(address, M, sig)` passes, with the
+   address carried or held;
+4. takes the announce as the rest of this section says, and holds the
+   address with `sender`'s entry only if that leaves it a neighbour.
+   An announce discarded or not taken later, out of order or with no
+   room for its sender, adds no address and takes none away: one held
+   before stays held.
+
+A frame discarded here is not heard at all: it is no sample for a
+floor, no sign of life, and no inconsistency.
+
+**Carrying the address.** A node MUST carry its address in every
+announce while it is [starting](#starting); in each of the
+`ADDRESS_AFTER` announces after it finds a neighbour, which may not
+hold it; and in at least one of every `ADDRESS_EVERY` announces, for a
+neighbour that missed those. It MAY carry it in any other. It is 32
+bytes a frame, so a node that carries it when no neighbour needs it
+spends airtime on nothing.
+
+Requests are not signed: see [Not yet specified](#not-yet-specified).
+
+**`number`** goes up by one with each announce sent, across restarts
+too: a node MUST NOT send an announce whose `number` is not newer than
+that of the last announce it sent with its address, before a restart
+or since. So it keeps a number `kept` where a restart does not lose it.
+It never sends an announce numbered `kept` or newer: before it would,
+it stores a later one in its place, `NUMBER_SAVE` later once an
+announce has gone on the air since it started, and one later until
+then. On starting it numbers its first announce `kept`. A node MUST keep `kept` for as long as it keeps its identity key,
+and lose them together. A node that has never kept one starts from a
+random value; its neighbours from before, if it had any, may discard
+its announces until they [forget](#links) it.
 
 **`promise`** is in seconds up to 32767; with the top bit set, the low
 15 bits are minutes, up to 32766; `0xFFFF` is no promise. It is rounded
@@ -169,12 +223,18 @@ it to be one. What tells of a neighbour that has gone is
 [frames sent to it and lost](forwarding.md#hops).
 
 **Numbers out of order.** An announce whose `number` is not newer than
-the last from the same sender is a copy or is late, and is discarded
-whole, unless it says its sender is [starting](#starting), or nothing
-has been heard from that sender for one of its promises. In that last
-case the sender started again unheard: the node forgets it, and every
-route through it, and takes the frame as from a neighbour it has just
-found.
+the last from the same sender is a copy, is late, or is recorded and
+sent again, and is discarded whole, however long the sender has been
+silent. That an announce says its sender is [starting](#starting) does
+not excuse its number.
+
+**Neighbours forgotten.** Forgetting a neighbour forgets its last
+`number`, and with it what would tell a recording of it from a new
+announce. So a node SHOULD keep, for at least the last `FORGOTTEN_KEPT`
+neighbours it forgot, the routing id and the last `number`, and MUST
+discard an announce from one of them that is not newer than that
+number, as from a neighbour it keeps. One that is newer is taken as
+from a neighbour just found, and its entry dropped.
 
 **A full table.** A node keeps as many neighbours as it has room for,
 and where there are more nodes to hear than that, which ones it keeps
@@ -311,9 +371,10 @@ So for its first `START_ANNOUNCES` announces a node is **starting**:
 * it selects no route but one whose neighbour is the destination;
 * its announces are not suppressed, and its interval does not double.
 
-A node that hears a neighbour say it is starting, when that neighbour's
-last announce did not, forgets the neighbour and every route through
-it, and takes the frame as from a neighbour it has just found. It MUST
+A node that hears a neighbour say it is starting, in an announce whose
+`number` is newer than the last, when that neighbour's last announce
+did not say so, forgets the neighbour and every route through it, and
+takes the frame as from a neighbour it has just found. It MUST
 ignore routes listed in an announce that says its sender is starting.
 
 ### Starving, and asking
@@ -448,6 +509,10 @@ starved node asks again anyway.
 | `LEAF_PLACES` | 32 | the fewest a leaf may keep |
 | `DEFAULT_HOPS` | 6 | a default route's metric, in links |
 | `DEFAULT_BUSY` | 50% | of a leaf's time, past which it takes no default route |
+| `ADDRESS_AFTER` | 3 | announces that carry the address after a neighbour is found |
+| `ADDRESS_EVERY` | 8 | announces of which at least one carries it |
+| `NUMBER_SAVE` | 256 | announce numbers a node stores ahead |
+| `FORGOTTEN_KEPT` | 64 | forgotten neighbours whose numbers a node keeps |
 
 ## Conformance
 
@@ -459,8 +524,13 @@ An implementation conforms to this section if, for
 * **promises:** it encodes `seconds` as `code`, and reads `code` as
   `read_seconds` (`null` for no promise);
 * **announces** and **requests:** it builds `frame` from the fields
-  given, and reads the fields from `frame`;
-* **rejected:** it discards each `frame`;
+  given, an announce signed with `seed`, and reads the fields from
+  `frame`;
+* **rejected:** it discards each `frame`, whether or not it holds the
+  sender's address;
+* **verified:** holding `held_address` for the sender of the announce
+  given (`null` for none), it takes the announce or discards it as
+  `takes` says, and then holds `holds_address`;
 * **floors:** hearing announces at each `power` and `snr_quarter_db` in
   turn, at `spreading_factor`, it holds each `floor_sixteenths`, and
   with `full_power` names the neighbour with each `margin`;
@@ -475,8 +545,7 @@ An implementation conforms to this section if, for
 * **numbering:** hearing an announce numbered `number` from a
   neighbour whose last was `last`, it does as `does` says: `take` it,
   `discard` it, or forget the neighbour and take it as found `again`.
-  `promise_passed` says whether nothing was heard from the neighbour
-  for one of its promises, `starting` whether the announce says so, and
+  `starting` says whether the announce says its sender is starting, and
   `was_starting` whether the neighbour's last did;
 * **costs:** for each profile, a link costs `link_cost`;
 * **feasible:** with the feasibility distance given (`null` for none),
@@ -556,10 +625,13 @@ means nothing by itself: it may be suppressed. The promise says how
 long silence is still ordinary.
 
 **Four-byte routing ids.** A route costs eight bytes in an announce,
-and a frame holds 29. With the 32-byte address it would hold six. A
-hash of the address rather than its first bytes, so that the id gives
-away nothing of an address an observer does not already have. Two
-nodes in four billion pairs share one; see below.
+and a signed frame holds 21. With the 32-byte address it would hold
+four. A hash of the address rather than its first bytes, so that a
+route names a destination without giving its address away. A node's
+own address does go on the air, to its neighbours: see
+[Signed](#signed) and [What an
+observer learns](#what-an-observer-learns). Two nodes in four billion
+pairs share an id; see below.
 
 **Big-endian**, as the rest of the specification is. The simulator's
 frames are little-endian.
@@ -643,6 +715,112 @@ place for every node does (28.5%), with four times its broadcasts
 `SF7` rows are the closer to this specification's profiles, whose
 symbols are as long.
 
+**Signed announces, not a network key.** Unsigned, any radio can send
+an announce in another node's name: list routes it does not have, claim
+to be a destination and draw its frames, say a neighbour is
+[starting](#starting) so that every route through it is dropped, or
+name a node with a margin it never gave. With a signature, only the
+holder of an address can say anything as the routing id made from it,
+and a node takes no announce it cannot check. Meshtastic signs none of
+its routing; MeshCore signs its adverts with Ed25519 and carries the
+public key in each.
+
+The alternatives considered:
+
+* **A key the network shares**, as Meshtastic's channels have, keeps
+  out radios without it and no one with it, and Tern has no network to
+  share one: anyone may join.
+* **A key for each neighbour**, from the X25519 key every address
+  gives, authenticates frames sent to one node. An announce is for
+  every neighbour, and a tag for each would cost more than a signature.
+* **Keys disclosed later** (TESLA, a chain of hashes that each announce
+  reveals one more of), at 16 to 32 bytes a frame, cost almost as much
+  airtime as a signature in the runs below, and hold every route an
+  announce brings until the next announce, up to `I_MAX` later.
+
+A signature costs 64 bytes a frame. In the simulator, a thousand nodes
+with 200 relays, relays of 1024 places and leaves of 32 with the
+default route (two seeds), adding that many bytes to every announce
+and request:
+
+| Bytes added | SF7 unicast | SF7 broadcast | SF8 unicast | SF8 broadcast |
+|---|---|---|---|---|
+| 0 | 93.0% | 80.9% | 24.5% | 13.5% |
+| 16 | 90.9% | 81.6% | 22.6% | 15.2% |
+| 32 | 88.5% | 80.1% | 21.4% | 21.0% |
+| 64 | 90.7% | 81.6% | 18.1% | 27.5% |
+| 96 | 86.3% | 79.5% | 13.3% | 31.6% |
+| signed, as here | 90.1% | 80.4% | 14.6% | 32.3% |
+
+The last row is the firmware's router, signing as this section says,
+with the address carried by `ADDRESS_AFTER` and `ADDRESS_EVERY`. At
+SF7 the difference between seeds is as large as the cost of a
+signature. At SF8 on 62.5 kHz, where the channel is full, signing costs
+two fifths of the unicasts delivered, and the broadcasts gain the
+airtime routes lose; there a full table of neighbours changes often,
+and each neighbour found costs `ADDRESS_AFTER` addresses. Carrying the
+address in every frame (96) cost more than that at SF7. Carrying it
+while any neighbour gave no margin carried it almost always, since in a
+crowd most nodes a node hears do not hear it back: 87.1% and 13.1% of
+unicasts.
+
+**Your address to your neighbours.** A signature is checked with the
+signer's public key, and a Tern node's public key is its address. So a
+node's neighbours, and anyone listening near it, learn its address,
+which is what [first contact](first-contact.md) needs to reach it, and
+which a node that has not turned [cards](cards.md) on otherwise keeps
+to itself. A key of its own for routing would keep the address back,
+but nothing would tie that key to the routing id, and a node could
+then claim the id of any destination its neighbours had not heard
+from. That a routing id is tied to the one address that makes it is
+what lets a node trust a route to a destination it knows only by its
+address, so the address is given up.
+
+**What a signature does not stop.** A node with an address of its own
+can still announce routes it does not have, at metrics it does not
+have, and draw frames to drop them. [Forwarding](forwarding.md#hops)
+already listens for each frame to be passed on, gives up neighbours
+that do not, and takes another way, and only a message's destination
+can [acknowledge](forwarding.md#messages) it; what else routing does
+about such a node is [not yet specified](#not-yet-specified).
+
+**Numbers that survive a restart.** A signature says who sent an
+announce, not when. Before announces were signed, a node that started
+again began its numbers anywhere, and its neighbours took an announce
+that said it was starting whatever its number. A recorded one, sent
+again later, would then make every neighbour drop every route through
+its sender, as often as anyone cared to send it. With numbers that only
+rise, a restart is a newer announce like any other, and a recorded one
+is late. Storing a number ahead costs one write in `NUMBER_SAVE`
+announces, and a node that stops without warning loses at most
+`NUMBER_SAVE` numbers; one that restarts and stops again before an
+announce goes on the air loses one, since until then it stores only one
+ahead. Numbers are sixteen bits, so a recording comes to look newer
+again once its sender has sent 32768 announces after it, or restarted
+128 times having sent some: days at the least.
+
+A neighbour forgotten (for its silence, for a nearer node, or for
+frames lost) would otherwise come back with any announce of it that was
+ever recorded, its routes and the margin it gave with it, and draw
+frames to a node that is not there until they were lost enough times to
+forget it again. Keeping its number costs six bytes, and
+`FORGOTTEN_KEPT` is as many as the firmware's boards keep neighbours.
+
+## What an observer learns
+
+Announces are sent in clear. From them a listener learns:
+
+* each nearby node's routing id, role, the power it sent at, and the
+  neighbours it names, so the shape of the network around it;
+* the routes relays list: which destinations they reach and how far;
+* the address of each node that carries it, so which addresses are
+  near it, and which routing id each has. Anyone who already knew an
+  address could find its routing id before; now anyone near can learn
+  the address from the id.
+
+A routing id does not change, so a node can be followed by its
+announces, as before: see [Not yet specified](#not-yet-specified).
+
 ## Not yet measured
 
 * **Any of the parameters, on radios.** Each is the simulator's
@@ -651,6 +829,11 @@ symbols are as long.
   floor well enough, frame to frame, for a 3 dB band.
 * **Memory and time** for a table of `RELAY_PLACES` destinations on
   the nRF52840, whose 256 kilobytes `RELAY_PLACES` takes a quarter of.
+* **`ADDRESS_AFTER` and `ADDRESS_EVERY`**, which were set and not swept.
+* **The time to check a signature** on the boards Tern runs on, against
+  how many announces a relay hears in a crowd. The firmware's own
+  Ed25519 checks one in 2.6 ms on a desktop processor; a board is tens
+  of times slower.
 * **A leaf's busy share on radios**, against what the simulator gave.
 * **Why a crowded network with small tables does not always settle.**
   With 32 or 64 places at SF7, six hours on, some seeds still sent
@@ -661,11 +844,34 @@ symbols are as long.
 * **Closing the wait.** A starting node that knew which neighbours had
   heard it could select through those at once, and would never select
   through one that had not.
-* **Authentication.** Nothing here is signed. A node can announce a
-  route it does not have, claim another's routing id, or raise
-  another's sequence number. A signature is 64 bytes, a quarter of a
-  frame.
-* **Two nodes with one routing id.**
+* **Nodes that lie.** A node with an address of its own can announce
+  routes it does not have, or a destination's `seq` one newer than the
+  destination gave, and starve every node that takes it until the
+  destination is asked. A destination could sign each `seq` it takes,
+  and a relay carry that signature with the route only when the `seq`
+  changes; and a node could stop using a neighbour whose frames are not
+  acknowledged.
+* **Signed requests.** A request names no sender, and anyone may send
+  one. The most it can do is make a node take a newer `seq`, or send a
+  request on, within the requests' share of [the cap](#the-cap).
+* **Two nodes with one routing id.** A node holds the address of the
+  first it hears and discards the other's announces, so the second has
+  no neighbour that holds the first; elsewhere either may be taken.
+  This need not be an accident. A routing id is four bytes, so making
+  keys until one has a chosen node's id takes about 2^32 tries, a day
+  or so on one desktop processor. A node that holds the real address
+  discards the copy, but one that does not yet hold it may take the
+  copy's routes in the real node's name. The copy can then stop frames
+  reaching that node; it cannot read or forge them, which their own
+  encryption and signatures prevent. Eight-byte ids would put this out
+  of reach, at four more bytes in every id a frame carries; in the
+  simulator, measured as signing was under [Rationale](#rationale), that
+  took unicast on time from 90.1% to 73.8% at SF7 and from 14.6% to
+  10.3% as deployed, mostly because a frame then holds 14 routes,
+  not 21. Wider ids in announces alone cost nothing measurable but
+  close nothing, as routes and frames still name the node by its four
+  bytes. Nor would eight-byte ids stop the same harm while a node may
+  lie about its routes, above, which needs no chosen id.
 * **Rotating routing ids**, so that a node cannot be followed by its
   announces.
 * **Who is a relay.** The simulator has nodes elect themselves from
