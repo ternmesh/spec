@@ -225,6 +225,14 @@ sent again, and is discarded whole, however long the sender has been
 silent. That an announce says its sender is [starting](#starting) does
 not excuse its number.
 
+**Neighbours forgotten.** Forgetting a neighbour forgets its last
+`number`, and with it what would tell a recording of it from a new
+announce. So a node SHOULD keep, for at least the last `FORGOTTEN_KEPT`
+neighbours it forgot, the routing id and the last `number`, and MUST
+discard an announce from one of them that is not newer than that
+number, as from a neighbour it keeps. One that is newer is taken as
+from a neighbour just found, and its entry dropped.
+
 **A full table.** A node keeps as many neighbours as it has room for,
 and where there are more nodes to hear than that, which ones it keeps
 decides whether it has routes at all. On hearing an announce from a
@@ -501,6 +509,7 @@ starved node asks again anyway.
 | `ADDRESS_AFTER` | 3 | announces that carry the address after a neighbour is found |
 | `ADDRESS_EVERY` | 8 | announces of which at least one carries it |
 | `NUMBER_SAVE` | 256 | announce numbers a node stores ahead |
+| `FORGOTTEN_KEPT` | 64 | forgotten neighbours whose numbers a node keeps |
 
 ## Conformance
 
@@ -786,6 +795,13 @@ announce goes on the air loses one, since until then it stores only one
 ahead. Numbers are sixteen bits, so a recording comes to look newer
 again once its sender has sent 32768 announces after it, or restarted
 128 times having sent some: days at the least.
+
+A neighbour forgotten (for its silence, for a nearer node, or for
+frames lost) would otherwise come back with any announce of it that was
+ever recorded, its routes and the margin it gave with it, and draw
+frames to a node that is not there until they were lost enough times to
+forget it again. Keeping its number costs six bytes, and
+`FORGOTTEN_KEPT` is as many as the firmware's boards keep neighbours.
 
 ## What an observer learns
 
