@@ -227,8 +227,11 @@ the node holds another route to its destination that is
 [feasible](routing.md#selecting-a-route), through a neighbour it may
 use and has not given this frame up at, it sends the frame there, with
 its retries anew: the best such route, up to `SALVAGE` times a frame.
-Feasible routes cannot lead back. An acknowledgement is not sent
-another way.
+Feasible routes cannot lead back. A leaf with no such route that may
+take [a default route](routing.md#a-leafs-default-route) sends the frame
+to its nearest relay it has not given this frame up at, in the same way
+and within the same `SALVAGE`. An acknowledgement is not sent another
+way.
 
 ## Messages
 
@@ -292,8 +295,9 @@ by then it starts the message again — the same frame, with `hops` at
 copy before, and [not at once](#hops) — up to `RETRIES` times. After the last wait it gives the
 message up and tells the application.
 
-A source with no route asks for one, as a relay does, and counts that
-as a try, waiting `ACK_WAIT`.
+A source with no route, and none it may take
+[by default](routing.md#a-leafs-default-route), asks for one, as a
+relay does, and counts that as a try, waiting `ACK_WAIT`.
 
 Once a message is acknowledged or given up, nothing of it goes on the
 air from its source again.

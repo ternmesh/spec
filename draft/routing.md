@@ -259,7 +259,9 @@ equal floors, any. It MUST NOT:
 
 The relay's own route takes the frame on. A relay never takes a default
 route, so no frame can go back to a leaf but the one it is for, and none
-can loop. For the frame's [waits](forwarding.md), the route's metric is
+can loop. Where [forwarding](forwarding.md) and
+[first contact](first-contact.md) say what a node with no route does,
+a leaf that may take a default route has one. For the frame's [waits](forwarding.md), the route's metric is
 `DEFAULT_HOPS` times `LINK_COST`, never more than `0xFFFE`.
 
 ### Selecting a route
@@ -482,12 +484,13 @@ An implementation conforms to this section if, for
   it selects `selects`;
 * **kept:** with four routes held and `selected` among them, offered
   `offered`, it replaces `replaces` (`null` for none);
-* **defaults:** with the `neighbours` given, each a relay or not and
-  each with its floor and whether its link is up, as a leaf or not
-  (`leaf`), starting or not, with the busy share `busy_ppm`, and with
-  the neighbours `tried` already tried at, it hands a frame with no
-  route to `next` (`null` for none), with a route metric of `metric` on
-  a profile whose links cost `link_cost`.
+* **defaults**, for an implementation that takes default routes: with
+  the `neighbours` given, each a relay or not and each with its floor
+  and whether its link is up, as a leaf or not (`leaf`), starting or
+  not, with the busy share `busy_ppm`, and with the neighbours `tried`
+  already tried at, it hands a frame with no route to `next` (`null` for
+  none), with a route metric of `metric` on a profile whose links cost
+  `link_cost`.
 
 When announces go, and what a node does on a request, depend on random
 times and cannot be checked by vectors. They are checked by running
