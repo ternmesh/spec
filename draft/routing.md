@@ -148,7 +148,10 @@ or since. So it keeps a number `kept` where a restart does not lose it.
 It never sends an announce numbered `kept` or newer: before it would,
 it stores `kept + NUMBER_SAVE` in its place. On starting it numbers its
 first announce `kept`, and stores `kept + NUMBER_SAVE` before it sends
-it. A node that has never kept one starts from a random value.
+it. A node MUST keep `kept` for as long as it keeps its identity key,
+and lose them together. A node that has never kept one starts from a
+random value; its neighbours from before, if it had any, may discard
+its announces until they [forget](#links) it.
 
 **`promise`** is in seconds up to 32767; with the top bit set, the low
 15 bits are minutes, up to 32766; `0xFFFF` is no promise. It is rounded
@@ -218,13 +221,9 @@ it to be one. What tells of a neighbour that has gone is
 
 **Numbers out of order.** An announce whose `number` is not newer than
 the last from the same sender is a copy, is late, or is recorded and
-sent again, and is discarded whole. That an announce says its sender is
-[starting](#starting) does not excuse its number. If nothing has been
-heard from that sender for one of its promises, though, the node also
-forgets the sender, and every route through it, and takes nothing from
-the frame: a sender that lost the number it kept starts from any, and
-is taken as found at its next announce, while a recording can do no
-more than drop a neighbour already silent past what it promised.
+sent again, and is discarded whole, however long the sender has been
+silent. That an announce says its sender is [starting](#starting) does
+not excuse its number.
 
 **A full table.** A node keeps as many neighbours as it has room for,
 and where there are more nodes to hear than that, which ones it keeps
@@ -533,10 +532,8 @@ An implementation conforms to this section if, for
   replaces `replaces` (`null` for none);
 * **numbering:** hearing an announce numbered `number` from a
   neighbour whose last was `last`, it does as `does` says: `take` it,
-  `discard` it, forget the neighbour and take it as found `again`, or
-  `forget` the neighbour and take nothing from it.
-  `promise_passed` says whether nothing was heard from the neighbour
-  for one of its promises, `starting` whether the announce says so, and
+  `discard` it, or forget the neighbour and take it as found `again`.
+  `starting` says whether the announce says its sender is starting, and
   `was_starting` whether the neighbour's last did;
 * **costs:** for each profile, a link costs `link_cost`;
 * **feasible:** with the feasibility distance given (`null` for none),

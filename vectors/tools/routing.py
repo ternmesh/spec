@@ -158,11 +158,12 @@ def withdrawn(named, number, round_):
     return (number - named) % 65536 >= allowed
 
 
-def numbering(last, number, promise_passed, starting, was_starting):
+def numbering(last, number, starting, was_starting):
     """What a node does with an announce from a neighbour it knows. Numbers survive a restart, so
-    a starting announce is late or a recording unless it is newer, as any other is."""
+    an announce that is not newer is a copy, late or a recording, starting or not, however long
+    the neighbour has been silent."""
     if not newer(number, last):
-        return "forget" if promise_passed else "discard"
+        return "discard"
     return "again" if starting and not was_starting else "take"
 
 
@@ -262,12 +263,11 @@ def self_check():
     assert f == -22 * 16 and margin_byte(22, f) == 128 + 44
     # Heard exactly at the floor, the sample is the power: (3 * -15 + 0) / 4 = -11.25, down to -12.
     assert floor_next(-15, 0, -50, 9) == -12
-    assert numbering(5, 6, False, False, False) == "take"
-    assert numbering(5, 4, False, False, False) == "discard"
-    assert numbering(5, 4, True, False, False) == "forget"
-    assert numbering(5, 4, False, True, False) == "discard"  # a recorded starting announce
-    assert numbering(5, 6, False, True, False) == "again"
-    assert numbering(5, 6, False, True, True) == "take"
+    assert numbering(5, 6, False, False) == "take"
+    assert numbering(5, 4, False, False) == "discard"
+    assert numbering(5, 4, True, False) == "discard"  # a recorded starting announce
+    assert numbering(5, 6, True, False) == "again"
+    assert numbering(5, 6, True, True) == "take"
     assert not withdrawn(10, 18, 1) and withdrawn(10, 19, 1) and withdrawn(0xFFFF, 8, 0)
     two = [{"floor_sixteenths": 0, "up": False}, {"floor_sixteenths": 160, "up": True}]
     assert place(two, -96) == 0 and place(two, -95) is None
@@ -435,18 +435,15 @@ def build():
 
     numbered = [
         {
-            "last": last, "number": number, "promise_passed": passed, "starting": starting,
-            "was_starting": was, "does": numbering(last, number, passed, starting, was),
+            "last": last, "number": number, "starting": starting, "was_starting": was,
+            "does": numbering(last, number, starting, was),
         }
-        for last, number, passed, starting, was in [
-            (10, 11, False, False, False), (10, 10, False, False, False),
-            (10, 10, True, False, False), (10, 9, False, False, False),
-            (10, 9, True, False, False), (10, 11, False, True, False),
-            (10, 9, False, True, False), (10, 10, False, True, False),
-            (10, 11, False, True, True), (10, 9, False, True, True),
-            (10, 11, False, False, True), (0xFFFF, 0, False, False, False),
-            (0, 0x7FFF, False, False, False), (0, 0x8000, False, False, False),
-            (0, 0x8000, True, False, False),
+        for last, number, starting, was in [
+            (10, 11, False, False), (10, 10, False, False), (10, 9, False, False),
+            (10, 11, True, False), (10, 9, True, False), (10, 10, True, False),
+            (10, 11, True, True), (10, 9, True, True), (10, 11, False, True),
+            (0xFFFF, 0, False, False), (0, 0x7FFF, False, False), (0, 0x8000, False, False),
+            (0, 0x8000, True, False),
         ]
     ]
 
