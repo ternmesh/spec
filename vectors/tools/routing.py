@@ -31,6 +31,8 @@ NAMED_ROUNDS = 8
 LINK_MARGIN, LINK_BAND = 0, 3 * 16  # sixteenths of a dB
 ROUTES_KEPT = 4
 REPLACE_BAND = 6 * 16
+DEFAULT_HOPS = 6
+DEFAULT_BUSY = 500000
 
 
 def rid(address):
@@ -192,6 +194,23 @@ def place(neighbours, floor):
     return at if floor + REPLACE_BAND <= worst else None
 
 
+def default_next(leaf, starting, busy_ppm, neighbours, tried):
+    """The neighbour a leaf hands a frame with no route to: the nearest relay it may use, or None."""
+    if not leaf or starting or busy_ppm >= DEFAULT_BUSY:
+        return None
+    ok = [(n["floor_sixteenths"], i) for i, n in enumerate(neighbours)
+          if n["relay"] and n["up"] and i not in tried]
+    if not ok:
+        return None
+    best = min(ok)
+    assert [f for f, _ in ok].count(best[0]) == 1, "the vectors leave no tie to break"
+    return best[1]
+
+
+def default_metric(cost):
+    return min(DEFAULT_HOPS * cost, INF - 1)
+
+
 def self_check():
     assert newer(1, 0) and newer(0, 0xFFFF) and not newer(0, 0) and not newer(0, 1)
     assert newer(0x7FFF, 0) and not newer(0x8000, 0)
@@ -212,6 +231,10 @@ def self_check():
     assert not withdrawn(10, 18, 1) and withdrawn(10, 19, 1) and withdrawn(0xFFFF, 8, 0)
     two = [{"floor_sixteenths": 0, "up": False}, {"floor_sixteenths": 160, "up": True}]
     assert place(two, -96) == 0 and place(two, -95) is None
+    r = [{"floor_sixteenths": -100, "up": True, "relay": True},
+         {"floor_sixteenths": -300, "up": True, "relay": False}]
+    assert default_next(True, False, 0, r, []) == 0 and default_next(False, False, 0, r, []) is None
+    assert default_metric(70) == 420 and default_metric(20000) == INF - 1
 
 
 def build():
@@ -420,6 +443,29 @@ def build():
         ]
     ]
 
+    def nb(*triples):
+        return [{"floor_sixteenths": f, "up": u, "relay": r} for f, u, r in triples]
+
+    near = nb((-320, True, True), (-80, True, True), (-480, True, False), (-200, False, True))
+    defaults = [
+        {
+            "neighbours": t, "leaf": leaf, "starting": starting, "busy_ppm": busy, "tried": tried,
+            "next": default_next(leaf, starting, busy, t, tried), "link_cost": cost,
+            "metric": default_metric(cost),
+        }
+        for t, leaf, starting, busy, tried, cost in [
+            (near, True, False, 0, [], 70),  # the nearest relay: not the nearer leaf, nor a link down
+            (near, True, False, 499999, [], 81),
+            (near, True, False, 500000, [], 81),  # busy: none
+            (near, True, True, 0, [], 70),  # starting: none
+            (near, False, False, 0, [], 70),  # a relay takes no default route
+            (near, True, False, 0, [0], 70),  # given up at the nearest: the next
+            (near, True, False, 0, [0, 1], 70),  # and at both relays whose links are up: none
+            (nb((-100, True, False)), True, False, 0, [], 70),  # no relay
+            (near, True, False, 0, [], 11000),  # a metric past 0xFFFE is 0xFFFE
+        ]
+    ]
+
     return {
         "description": "Routing, draft 0 (draft/routing.md). Routing ids, sequence numbers, "
         "promise codes and metrics are numbers; addresses and frames are hex. In floors, powers "
@@ -432,7 +478,9 @@ def build():
         "floor_sixteenths is the floor an announce from a node not in it gives, and replaces is "
         "an index into neighbours. In selection and kept, "
         "each route's metric is the one its neighbour announced, every link costs link_cost, and "
-        "selected, selects and replaces are indexes into routes.",
+        "selected, selects and replaces are indexes into routes. In defaults, tried and next are "
+        "indexes into neighbours, busy_ppm is the leaf's busy share in millionths, and metric is "
+        "the default route's.",
         "generator": "vectors/tools/routing.py",
         "ids": [{"address": x.hex(), "id": rid(x)} for x in addresses],
         "newer": [
@@ -458,6 +506,7 @@ def build():
         "feasible": feas,
         "selection": selection,
         "kept": kept,
+        "defaults": defaults,
     }
 
 

@@ -259,8 +259,9 @@ the `source` of the copy just received, whatever the first named, and
 `message_4` where it went before. Two frames are the same message if
 they are equal from `ctag_n` on, `source` left out.
 
-A responder with no route for its reply asks for one and sends nothing:
-the initiator's next try brings the frame again.
+A responder with no route for its reply, and none it takes
+[by default](routing.md#a-leafs-default-route), asks for one and sends
+nothing: the initiator's next try brings the frame again.
 
 A responder holds a handshake, and after `message_4` what it needs to
 send `message_4` again, until `CONTACT_HOLD` has passed with no frame

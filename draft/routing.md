@@ -231,6 +231,41 @@ lower metric.
 Routes do not expire. A route lasts until its neighbour retracts it or
 is forgotten.
 
+### How many destinations
+
+A relay can pass a frame on only toward a destination it keeps routes
+for, so a network can be no larger than its relays' tables. A relay
+SHOULD have places for `RELAY_PLACES` destinations. A leaf passes no
+frame on, and needs places only for the destinations it sends to when it
+takes [a default route](#a-leafs-default-route); a leaf MAY have as few
+as `LEAF_PLACES`. With more destinations than places, a node keeps the
+first it is told of and is told of the rest again when they change. A
+network of more nodes than `RELAY_PLACES` is not specified yet (see [Not
+yet specified](#not-yet-specified)).
+
+### A leaf's default route
+
+A leaf that has no route it may use to a destination MAY hand a frame
+for it to its **nearest relay**: of the relay neighbours it may use
+whose links are up, the one with the lowest floor, and of those with
+equal floors, any. It MUST NOT:
+
+* while it is [starting](#starting);
+* while its busy share, as [flooding](flooding.md#a-busy-relay) has a
+  relay's, is `DEFAULT_BUSY` or more. A leaf keeps the share as a relay
+  does;
+* to a neighbour the frame has been given up at, when it looks for
+  [another way](forwarding.md#hops).
+
+The relay's own route takes the frame on. A relay never takes a default
+route, so no frame can go back to a leaf but the one it is for, and none
+can loop. Where [forwarding](forwarding.md) and [first
+contact](first-contact.md) say what a node with no route does, a leaf
+that takes default routes and has a nearest relay it may hand the frame
+to has a route; a leaf that takes none, or has no such relay, has none,
+and asks for one. For the frame's [waits](forwarding.md), the route's
+metric is `DEFAULT_HOPS` times `LINK_COST`, never more than `0xFFFE`.
+
 ### Selecting a route
 
 For each destination a node keeps a **feasibility distance**: the best
@@ -409,6 +444,10 @@ starved node asks again anyway.
 | `REQUEST_TRIES` | 5 | |
 | `HOP_MAX` | 32 | |
 | `JITTER` | 2 | airtimes |
+| `RELAY_PLACES` | 1024 | destinations a relay keeps routes for |
+| `LEAF_PLACES` | 32 | the fewest a leaf may keep |
+| `DEFAULT_HOPS` | 6 | a default route's metric, in links |
+| `DEFAULT_BUSY` | 50% | of a leaf's time, past which it takes no default route |
 
 ## Conformance
 
@@ -446,7 +485,14 @@ An implementation conforms to this section if, for
   use, and `selected` naming the one selected before (`null` for none),
   it selects `selects`;
 * **kept:** with four routes held and `selected` among them, offered
-  `offered`, it replaces `replaces` (`null` for none).
+  `offered`, it replaces `replaces` (`null` for none);
+* **defaults**, for an implementation that takes default routes: with
+  the `neighbours` given, each a relay or not and each with its floor
+  and whether its link is up, as a leaf or not (`leaf`), starting or
+  not, with the busy share `busy_ppm`, and with the neighbours `tried`
+  already tried at, it hands a frame with no route to `next` (`null` for
+  none), with a route metric of `metric` on a profile whose links cost
+  `link_cost`.
 
 When announces go, and what a node does on a request, depend on random
 times and cannot be checked by vectors. They are checked by running
@@ -549,14 +595,63 @@ relays, or keeping half the places for them, held fewer routes than
 taking no account of role: 23% and 84% at SF7 with 32 places, against
 88%, on one seed.
 
+**How many destinations, and a leaf's default route.** A network's size
+is its relays' tables. The simulator, measured as a
+board runs the firmware (its tables read from the firmware's source),
+gave every node of a thousand-node region 128 places, as the firmware's
+boards had them: 12% of pairs of nodes held routes that arrived, at SF7
+and at SF8 on 62.5 kHz alike, and 12.5% of unicast messages arrived on
+time, against 96% at SF7 with a place for every node. A node with 512
+places reached 49% of the others, and 256 reached 25%: with more nodes
+than places, a node reaches as many as it has places for. Limiting each
+node to four peers changed nothing, since a relay passes on frames for
+everyone's peers.
+
+Relays alone need the places. With 200 relays among the thousand, at
+SF7 (two seeds, a quarter of messages broadcast), relays of 1024 places
+and leaves of 128 delivered 30% of unicasts on time, the leaves reaching
+only what their own tables held; with the default route, leaves of 128
+delivered 92.4% and leaves of 32, 93.0%, against 93.7% with 1024 places
+everywhere. Relays of 512 delivered 49%. A relay's place is 64 bytes in
+the firmware, so `RELAY_PLACES` is 64 kilobytes, and a leaf's
+`LEAF_PLACES` two.
+
+On a full channel the default route did harm. At SF8 on 62.5 kHz, where
+every design the simulator ran lost most of what it sent, leaves of 32
+places with the default route delivered 12.5% of unicasts on time and
+0.5% of broadcasts, against 15.5% and 40% without it. With leaves of 128
+(seed 1) they sent 4.2 times the data frames, and gave up as many
+messages. The waste is in the retries of messages that
+cannot arrive, not in trying a second relay, which changed nothing.
+Holding the default route back while a leaf's radio is busy, relays of
+1024 places and leaves of 32 (two seeds):
+
+| `DEFAULT_BUSY` | SF7 unicast | SF7 broadcast | SF8 unicast | SF8 broadcast |
+|---|---|---|---|---|
+| none taken | 22.9% | 84.7% | 15.5% | 40.0% |
+| 10% | 35.8% | 84.8% | 15.6% | 38.2% |
+| 20% | 60.6% | 82.1% | 17.8% | 33.9% |
+| 30% | 80.0% | 81.6% | 20.1% | 29.2% |
+| 50% | 92.6% | 80.0% | 24.0% | 14.5% |
+| always | 93.0% | 81.2% | 12.5% | 0.5% |
+
+Leaves at SF7 among a thousand nodes are busy a fifth to a half of the
+time, so a share much under a half costs them their routes. At a half
+it costs them nothing, and at SF8 it delivers 84% of the unicasts that a
+place for every node does (28.5%), with four times its broadcasts
+(3.6%). `RELAY_PLACES` covers the thousand nodes these runs had; the
+`SF7` rows are the closer to this specification's profiles, whose
+symbols are as long.
+
 ## Not yet measured
 
 * **Any of the parameters, on radios.** Each is the simulator's
   default, chosen over sweeps of a simulated channel.
 * **Whether signal-to-noise ratio as the SX1262 reports it** tracks the
   floor well enough, frame to frame, for a 3 dB band.
-* **Memory and time** for a table of a thousand destinations on the
-  nRF52840.
+* **Memory and time** for a table of `RELAY_PLACES` destinations on
+  the nRF52840, whose 256 kilobytes `RELAY_PLACES` takes a quarter of.
+* **A leaf's busy share on radios**, against what the simulator gave.
 * **Why a crowded network with small tables does not always settle.**
   With 32 or 64 places at SF7, six hours on, some seeds still sent
   requests and five times the announces of the others.
@@ -579,3 +674,10 @@ taking no account of role: 23% and 84% at SF7 with 32 places, against
   there.
 * **The airtime budget** shared between nodes, of which this section's
   cap is one part.
+* **Networks of more nodes than `RELAY_PLACES`**: routes kept within a
+  region, and frames between regions by flooding or through nodes that
+  join them.
+* **A relay that has no route** for a frame taken by a default route
+  saying so, so that the leaf stops trying it.
+* **Which destinations a full table keeps.** It keeps the first it is
+  told of, not those its node sends to.
