@@ -141,10 +141,10 @@ spends airtime on nothing.
 
 Requests are not signed: see [Not yet specified](#not-yet-specified).
 
-**`number`** goes up by one with each announce sent, and never comes
-back, across restarts too: a node MUST NOT send an announce whose
-`number` is not newer than that of every announce it has sent with its
-address. So it keeps a number `kept` where a restart does not lose it.
+**`number`** goes up by one with each announce sent, across restarts
+too: a node MUST NOT send an announce whose `number` is not newer than
+that of the last announce it sent with its address, before a restart
+or since. So it keeps a number `kept` where a restart does not lose it.
 It never sends an announce numbered `kept` or newer: before it would,
 it stores `kept + NUMBER_SAVE` in its place. On starting it numbers its
 first announce `kept`, and stores `kept + NUMBER_SAVE` before it sends
