@@ -382,7 +382,7 @@
     },
     {
       "why": "an announce from the receiver's own routing id",
-      "frame": "591d224f6fffff00000202580000160000ca5f64eb5ba8686505a44ddf56819c6ec512c7b738e43642460940277b5d19a95ea77a4ad8826d0739c1bc488028d27e59e20302091af9f5644b71ee9efceb0a"
+      "frame": "5968757e77ffff000002025800001600005ac31ac662687de500e12d26181c4244fa234c693c1a15a0d4aa292c1bd64b9dd9fcafec27379856facea09f22b10058b90d99bd803fd8b28889dd709afa600d"
     },
     {
       "why": "an announce whose signature is not its sender's",

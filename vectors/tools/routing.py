@@ -337,7 +337,7 @@ def build():
     good = bytes.fromhex(announces[1]["frame"])  # carries no address
     full = bytes.fromhex(announces[3]["frame"])  # carries it
     ask = request(requests[1])
-    mine = announce({**announces[0], "carries_address": False}, seeds[0])
+    mine = announce({**announces[0], "sender": d, "carries_address": False}, seeds[0])
     small = cards.ORDER_8
     stranger = announce({**announces[3], "sender": rid(small)}, seeds[1])
     stranger = stranger[:17] + small + stranger[49:]
@@ -366,14 +366,13 @@ def build():
         {"why": "a request a byte long", "frame": (ask + b"\x00").hex()},
         {"why": "a request with nothing in it", "frame": (ask[:5] + b"\x00").hex()},
     ]
-    own = d
+    own = d  # the receiver's routing id, the last of ids
     for x in rejected:
         f = bytes.fromhex(x["frame"])
         if f[0] == HDR_ANNOUNCE:
             sender = struct.unpack(">I", f[1:5])[0] if len(f) >= 5 else 0
             for held in (None, signers[signer[sender]] if sender in signer else None):
-                ownid = sa if x["frame"] == mine.hex() else own
-                assert announce_read(f, ownid, held) is None, x["why"]
+                assert announce_read(f, own, held) is None, x["why"]
 
     # Whether a node takes an announce depends on the address it holds for the sender.
     verified = []
