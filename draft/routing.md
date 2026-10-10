@@ -128,7 +128,8 @@ hearing an announce, after the checks above, a node:
 4. takes the announce as the rest of this section says, and holds the
    address with `sender`'s entry only if that leaves it a neighbour.
    An announce discarded or not taken later, out of order or with no
-   room for its sender, leaves no address held.
+   room for its sender, adds no address and takes none away: one held
+   before stays held.
 
 A frame discarded here is not heard at all: it is no sample for a
 floor, no sign of life, and no inconsistency.
