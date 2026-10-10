@@ -854,6 +854,15 @@ announces, as before: see [Not yet specified](#not-yet-specified).
 * **Two nodes with one routing id.** A node holds the address of the
   first it hears and discards the other's announces, so the second has
   no neighbour that holds the first; elsewhere either may be taken.
+  This need not be an accident. A routing id is four bytes, so making
+  keys until one has a chosen node's id takes about 2^32 tries, a day
+  or so on one desktop processor. A node that holds the real address
+  discards the copy, but one that does not yet hold it may take the
+  copy's routes in the real node's name. The copy can then stop frames
+  reaching that node; it cannot read or forge them, which their own
+  encryption and signatures prevent. Eight-byte ids would put this out
+  of reach and cost four more bytes in every id a frame carries; what
+  that costs in delivery is not yet measured.
 * **Rotating routing ids**, so that a node cannot be followed by its
   announces.
 * **Who is a relay.** The simulator has nodes elect themselves from
