@@ -9,8 +9,8 @@ vectors. It is the definition of the protocol; implementations live
 elsewhere.
 
 **Status:** pre-draft. Routing is being decided by simulation
-([ternmesh/sim](https://github.com/ternmesh/sim)) before any of it is
-specified.
+([ternmesh/sim](https://github.com/ternmesh/sim)); until it is, its
+draft is a strawman.
 
 * [GOVERNANCE.md](GOVERNANCE.md) — who decides, what is promised, and when the project moves
 * [CONTRIBUTING.md](CONTRIBUTING.md) — DCO sign-off and how to write spec text
