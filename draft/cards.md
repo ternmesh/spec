@@ -261,9 +261,9 @@ Each row is the mean of three seeds, with the spread between them;
 message's destinations, reached on time; **seen** is the cards a node
 received in the hour, on average.
 
-The simulator's `routing.card_hops` stands in for `CARD_HOPS`, which
-the firmware does not have yet: it sets what a card's flood starts
-with, and nothing else. A card is a 123-byte frame, a name of 20 bytes;
+The simulator's `routing.card_hops` is `CARD_HOPS`, as the firmware's
+`tern/flood.h` has it: it sets what a card's flood starts with, and
+nothing else. A card is a 123-byte frame, a name of 20 bytes;
 a room's line is 67.
 
 At 5 dBm, 15 dB below the deployed power, where a node has about 75
@@ -317,4 +317,5 @@ it should deliver.
   once its receivers have forgotten its number is taken as new, saying
   what it said then. It cannot say anything its sender did not.
 * **Sending a card on asking.** A node that has just been turned on
-  could ask those near it for theirs, rather than wait up to an hour.
+  could ask those near it for theirs, rather than wait up to
+  `3 × CARD_EVERY / 2`, three hours.
