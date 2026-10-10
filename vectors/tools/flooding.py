@@ -270,7 +270,8 @@ def build():
         })
 
     waits = []
-    for _, _, bw, sf, _, _, _ in phy.PROFILES:
+    # Each modulation once: profiles that share one, as the 915 MHz ones do, wait alike.
+    for bw, sf in dict.fromkeys((bw, sf) for _, _, bw, sf, _, _, _ in phy.PROFILES):
         for length in (GROUP_MIN, 67, 255):
             waits.append({"spreading_factor": sf, "bandwidth_hz": bw, "length": length,
                           "airtime_ns": phy.airtime_ns(sf, bw, length),

@@ -26,6 +26,8 @@ CODING_RATE = 1  # 4/5
 PROFILES = [
     ("US915", 921_250_000, 500_000, 9, 36, 1_000_000, 3600),
     ("EU868", 869_475_000, 125_000, 7, 29, 100_000, 3600),
+    ("AU915", 921_250_000, 500_000, 9, 30, 1_000_000, 3600),
+    ("NZ915", 921_250_000, 500_000, 9, 36, 1_000_000, 3600),
 ]
 
 # Frame lengths: the smallest unicast frame, the four first-contact frames, and the largest frame.
