@@ -461,7 +461,7 @@ Departing from RFC 6206:
 ## The cap
 
 Announces and requests together take no more than `CAP` of a node's
-time, and a relay whose routes are changing no more than the learning
+time, and a relay in its first `LEARN_FOR` no more than the learning
 allowance below besides: `REQUEST_SHARE` of the cap for requests, the
 rest for announces. Each
 is a token bucket, which fills at its share and holds `CAP_WINDOW` of
@@ -477,14 +477,14 @@ A relay also keeps a third bucket, the learning allowance, which fills
 at `LEARN_SHARE` of the announces' share and holds `CAP_WINDOW` of it,
 or one 255-byte frame if that is more, and starts full. When the
 announces' bucket does not hold the airtime of the longest frame the
-next announce could come to, a relay that is not
-[starting](#starting) and has changed routes waiting MAY build it
-anyway if the learning allowance holds that airtime, and charges the
-learning allowance what the frame actually takes; the announce carries
-the changed routes first, as any announce does. Nothing else is paid
-for from it. A node whose routes have settled has none waiting, so the
-allowance is spent only while the network is learning. With the values
-below, a relay's routing then takes up to 1.375 times `CAP`.
+next announce could come to, a relay that started less than
+`LEARN_FOR` ago, is not [starting](#starting) and has changed routes
+waiting MAY build it anyway if the learning allowance holds that
+airtime, and charges the learning allowance what the frame actually
+takes; the announce carries the changed routes first, as any announce
+does. Nothing else is paid for from it, and nothing at all once
+`LEARN_FOR` has passed. With the values below, a relay's routing takes
+up to 1.375 times `CAP` in its first `LEARN_FOR`, and `CAP` after.
 
 A request frame the requests' bucket cannot pay for is dropped. A
 starved node asks again anyway.
@@ -502,6 +502,7 @@ starved node asks again anyway.
 | `CAP_WINDOW` | 60 s | |
 | `BURST` | 4 | announces at one time, at most |
 | `LEARN_SHARE` | 1/2 | of the announces' share, for changed routes, beyond the cap |
+| `LEARN_FOR` | 6 h | after a node starts, that it may spend the learning allowance |
 | `NAMED_MAX` | 8 | neighbours named in a frame |
 | `NAMED_ROUNDS` | 8 | rounds a margin outlasts |
 | `LINK_MARGIN` | 0 dB | |
@@ -809,9 +810,33 @@ settings spent seven to eleven times the airtime once settled. At one
 share, two seeds in four at SF7 spent a quarter and a half again what
 the cap alone did once settled. At half a share no seed spent more than
 11% more, and the slowest setting still learns faster and holds
-more routes once settled. The rest of the time
-that setting needs is the cap's own, which the airtime budget, when it
-is specified, may replace.
+more routes once settled.
+
+Changed routes are not only those a network is learning, though. In
+the simulator's town, 200 nodes 8 km across all of them relays, routes
+move on often enough once settled that an allowance for any changed
+route went on being spent, and its announces moved more of them: eight
+hours on, the busiest node spent 0.59 to 0.64% of its time against
+0.42 to 0.44% with the cap alone, and the network a quarter to four
+fifths more airtime (three seeds). Asking for routes to destinations
+not announced before halved that, since a route that goes and comes
+back is one; asking for a table larger than any before stopped it, and
+gave up most of what the allowance was for: at SF8 on 62.5 kHz, 51.6%
+held after 6 hours. A time is what is left. With
+`LEARN_FOR` of 6 hours (two seeds; the town eight):
+
+| | SF8: 6 h | SF8: 12 h | SF7: 12 h | SF9: 12 h | town: busiest node, 8 h |
+|---|---|---|---|---|---|
+| the cap alone | 49.9% | 94.1%, 5377 s | 772 s | 618 s | 0.50% |
+| for any changed route | 65.0% | 96.6%, 5886 s | 806 s | 575 s | 0.64% |
+| for `LEARN_FOR` | 65.0% | 96.0%, 5377 s | 809 s | 570 s | 0.51% |
+
+So a network that starts together learns as fast as with no limit on
+when, and once settled spends what it would with none. A node that
+joins a settled network learns its routes within its own `LEARN_FOR`,
+but its neighbours, long started, pass them on within the cap. The
+rest of the time the slowest setting needs is the cap's own, which the
+airtime budget, when it is specified, may replace.
 
 How often the address goes, swept with signed announces: carrying it
 in almost no announce after a neighbour is found (`ADDRESS_EVERY` 255)
