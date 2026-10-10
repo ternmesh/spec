@@ -132,12 +132,12 @@ A frame discarded here is not heard at all: it is no sample for a
 floor, no sign of life, and no inconsistency.
 
 **Carrying the address.** A node MUST carry its address in every
-announce while it is [starting](#starting), and in every announce while
-it keeps a neighbour that gives it no margin: one that has never named
-it, or whose margin is [withdrawn](#links). A neighbour that names a
-node has checked its announces, and so holds its address. A node MAY
-carry it in any other announce. It is 32 bytes a frame, so a node that
-carries it when no neighbour needs it spends airtime on nothing.
+announce while it is [starting](#starting); in each of the
+`ADDRESS_AFTER` announces after it finds a neighbour, which may not
+hold it; and in at least one of every `ADDRESS_EVERY` announces, for a
+neighbour that missed those. It MAY carry it in any other. It is 32
+bytes a frame, so a node that carries it when no neighbour needs it
+spends airtime on nothing.
 
 Requests are not signed: see [Not yet specified](#not-yet-specified).
 
@@ -490,6 +490,8 @@ starved node asks again anyway.
 | `LEAF_PLACES` | 32 | the fewest a leaf may keep |
 | `DEFAULT_HOPS` | 6 | a default route's metric, in links |
 | `DEFAULT_BUSY` | 50% | of a leaf's time, past which it takes no default route |
+| `ADDRESS_AFTER` | 3 | announces that carry the address after a neighbour is found |
+| `ADDRESS_EVERY` | 8 | announces of which at least one carries it |
 
 ## Conformance
 
@@ -728,13 +730,19 @@ and request:
 | 32 | 88.5% | 80.1% | 21.4% | 21.0% |
 | 64 | 90.7% | 81.6% | 18.1% | 27.5% |
 | 96 | 86.3% | 79.5% | 13.3% | 31.6% |
+| signed, as here | 90.1% | 80.4% | 14.6% | 32.3% |
 
-At SF7 the difference between seeds is as large as the cost of 64
-bytes. At SF8 on 62.5 kHz, where the channel is full, a signature costs
-a quarter of the unicasts delivered, and the broadcasts gain the
-airtime their routes lose. Carrying the address in every frame as well
-(96) costs half as much again; so a node carries it only while a
-neighbour may not hold it.
+The last row is the firmware's router, signing as this section says,
+with the address carried by `ADDRESS_AFTER` and `ADDRESS_EVERY`. At
+SF7 the difference between seeds is as large as the cost of a
+signature. At SF8 on 62.5 kHz, where the channel is full, signing costs
+two fifths of the unicasts delivered, and the broadcasts gain the
+airtime routes lose; there a full table of neighbours changes often,
+and each neighbour found costs `ADDRESS_AFTER` addresses. Carrying the
+address in every frame (96) cost more than that at SF7. Carrying it
+while any neighbour gave no margin carried it almost always, since in a
+crowd most nodes a node hears do not hear it back: 87.1% and 13.1% of
+unicasts.
 
 **Your address to your neighbours.** A signature is checked with the
 signer's public key, and a Tern node's public key is its address. So a
@@ -779,6 +787,7 @@ announces, as before: see [Not yet specified](#not-yet-specified).
   floor well enough, frame to frame, for a 3 dB band.
 * **Memory and time** for a table of `RELAY_PLACES` destinations on
   the nRF52840, whose 256 kilobytes `RELAY_PLACES` takes a quarter of.
+* **`ADDRESS_AFTER` and `ADDRESS_EVERY`**, which were set and not swept.
 * **The time to check a signature** on the boards Tern runs on, against
   how many announces a relay hears in a crowd. The firmware's own
   Ed25519 checks one in 2.6 ms on a desktop processor; a board is tens
