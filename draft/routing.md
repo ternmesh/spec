@@ -471,6 +471,16 @@ waits until it does. The frame is charged what it actually takes. When
 its time comes, a node may send up to `BURST` announces, one after
 another, while changed routes remain and the bucket allows.
 
+A relay also keeps a third bucket, the learning allowance, which fills
+at `LEARN_SHARE` of the announces' share and holds `CAP_WINDOW` of it,
+or one 255-byte frame if that is more, and starts full. An announce the
+announces' bucket cannot pay for MAY be paid for from the learning
+allowance instead, if the node is a relay, is not
+[starting](#starting), and has changed routes waiting; the announce
+then carries them first, as any announce does. Nothing else is paid for
+from it. A node whose routes have settled has none waiting, so the
+allowance is spent only while the network is learning.
+
 A request frame the requests' bucket cannot pay for is dropped. A
 starved node asks again anyway.
 
@@ -486,6 +496,7 @@ starved node asks again anyway.
 | `REQUEST_SHARE` | 1/4 | of the cap, for requests |
 | `CAP_WINDOW` | 60 s | |
 | `BURST` | 4 | announces at one time, at most |
+| `LEARN_SHARE` | 1/2 | of the announces' share, for changed routes, beyond the cap |
 | `NAMED_MAX` | 8 | neighbours named in a frame |
 | `NAMED_ROUNDS` | 8 | rounds a margin outlasts |
 | `LINK_MARGIN` | 0 dB | |
@@ -764,6 +775,45 @@ while any neighbour gave no margin carried it almost always, since in a
 crowd most nodes a node hears do not hear it back: 87.1% and 13.1% of
 unicasts.
 
+**A learning allowance, not a larger cap.** Signed, an announce lists
+21 routes where it listed 29, and a relay with a table of a thousand
+destinations is held to the cap whenever it has anything to say. Where
+a full announce takes over two seconds, as at SF8 on 62.5 kHz, the cap
+allows about six an hour, and a network of a thousand nodes started
+together takes more than six hours to learn its routes. In the
+simulator, a thousand nodes with 200 relays and room for every
+destination, the share of pairs holding a route after 6 and 12 hours,
+and the network's seconds on the air in the hour after (two to four
+seeds):
+
+| | SF8, 62.5 kHz: 6 h | 12 h | SF7, 125 kHz: 12 h | SF9, 500 kHz: 12 h |
+|---|---|---|---|---|
+| the cap alone | 49.9% | 94.1%, 5377 s | 97.0%, 772 s | 97.3%, 618 s |
+| `LEARN_SHARE` 1/2 | 65.0% | 96.6%, 5886 s | 97.0%, 806 s | 97.3%, 575 s |
+| `LEARN_SHARE` 1 | 78.1% | 96.9%, 5692 s | 97.1%, 936 s | 97.2%, 609 s |
+| `LEARN_SHARE` 2 | 91.3% | 97.2%, 5912 s | 97.4%, 5154 s | 97.5%, 7398 s |
+| the cap doubled | 91.3% | | 6436 s at 6 h | 6388 s at 6 h |
+
+A larger cap is spent whether routes change or not, by every relay
+whose table is larger than a few frames: doubled, it cost three to
+eight times the airtime on the faster settings. The learning allowance
+is spent only on changed routes, but it has a limit of its own: at
+twice the announces' share the extra announces change enough links and
+routes to keep relays announcing changes for good, and the faster
+settings spent seven to eleven times the airtime once settled. At one
+share, two seeds in four at SF7 spent a quarter and a half again what
+the cap alone did once settled. At half a share no seed spent more than
+11% more, and the slowest setting still learns faster and holds
+more routes once settled. The rest of the time
+that setting needs is the cap's own, which the airtime budget, when it
+is specified, may replace.
+
+How often the address goes, swept with signed announces: carrying it
+in almost no announce after a neighbour is found (`ADDRESS_EVERY` 255)
+saved nothing once settled at SF7, 856 s against 759 s on the same two
+seeds, and held fewer routes, 96.6% against 97.3%. `ADDRESS_AFTER` and
+`ADDRESS_EVERY` stay as they are.
+
 **Your address to your neighbours.** A signature is checked with the
 signer's public key, and a Tern node's public key is its address. So a
 node's neighbours, and anyone listening near it, learn its address,
@@ -829,7 +879,6 @@ announces, as before: see [Not yet specified](#not-yet-specified).
   floor well enough, frame to frame, for a 3 dB band.
 * **Memory and time** for a table of `RELAY_PLACES` destinations on
   the nRF52840, whose 256 kilobytes `RELAY_PLACES` takes a quarter of.
-* **`ADDRESS_AFTER` and `ADDRESS_EVERY`**, which were set and not swept.
 * **The time to check a signature** on the boards Tern runs on, against
   how many announces a relay hears in a crowd. The firmware's own
   Ed25519 checks one in 2.6 ms on a desktop processor; a board is tens
