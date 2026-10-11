@@ -6,7 +6,8 @@ next two write down the design the simulator measured, for that
 decision to be made on; the two after carry a frame to every node and
 say what a group's is; the last is the link between a node and the
 client driving it, which never goes over LoRa. Positions travel in
-the frames that carry messages. Each is a
+the frames that carry messages, and the airtime budget says what a
+node may spend on all of them. Each is a
 **strawman**: complete enough to implement and test against, written to
 be argued with, and not yet frozen. They move into the specification
 proper when v0 is assembled.
@@ -23,4 +24,5 @@ proper when v0 is assembled.
 | [companion.md](companion.md) | The companion protocol: how a phone or computer drives a node over USB serial, TCP or Bluetooth LE. Its frames, framing on a byte stream, the GATT profile, starting, syncing, versions, firmware updates, turning a node's cards on and showing who is about, and showing and joining from a group's join code. Never on the air | [`vectors/companion.json`](../vectors/companion.json) |
 | [positions.md](positions.md) | Positions: where a user is, as a cell of a grid as coarse as they choose, sent only to the contacts and groups they choose, inside the frames that carry messages, and when | [`vectors/positions.json`](../vectors/positions.json) |
 | [cards.md](cards.md) | Presence cards: a signed card with an address and a name that a node whose user turns it on floods with two hops every two hours, so people nearby can find each other without a public channel, and what that was measured to cost | [`vectors/cards.json`](../vectors/cards.json) |
+| [airtime.md](airtime.md) | The airtime budget: what a node may spend sending, in three parts for routing, its own frames and those it passes on, what becomes of a frame when its part is spent, and what a client is told | [`vectors/airtime.json`](../vectors/airtime.json) |
 | [sharing.md](sharing.md) | Sharing an address off the air: how it is written down, the `ternmesh.org` link a QR code holds, and the short code two people compare. Never on the air | [`vectors/sharing.json`](../vectors/sharing.json) |
