@@ -36,6 +36,10 @@ PROFILES = [
 ]
 
 # Frame lengths: the smallest unicast frame, the four first-contact frames, and the largest frame.
+# The least a node may radiate (dBm EIRP), for a profile whose limit on transmitting holds only
+# from some power up: TH920's 10% is for 50 mW and above.
+MIN_EIRP = {"TH920": 17}
+
 LENGTHS = [16, 17, 45, 53, 73, 255]
 
 
@@ -148,6 +152,7 @@ def build():
                 "bandwidth_hz": bw,
                 "spreading_factor": sf,
                 "max_eirp_dbm": eirp,
+                "min_eirp_dbm": MIN_EIRP.get(name),
                 "duty_cycle_ppm": ppm,
                 "duty_window_s": window,
                 "low_data_rate_optimisation": ldro(sf, bw),
@@ -161,7 +166,8 @@ def build():
         "description": "Radio settings, draft 0 (draft/phy.md). An implementation MUST use "
         "sync_word, in the form its radio takes (sync_word_sx126x for the SX126x family), with "
         "preamble_symbols, coding rate 4/coding_rate_denominator, an explicit header and a CRC. "
-        "For each profile it MUST use frequency_hz, bandwidth_hz and spreading_factor, and MUST "
+        "For each profile it MUST use frequency_hz, bandwidth_hz and spreading_factor, MUST NOT "
+        "radiate more than max_eirp_dbm or, where min_eirp_dbm is not null, less than it, and MUST "
         "compute, for a frame of each length, the time on air ns, in nanoseconds. It MUST NOT "
         "transmit for more than duty_cycle_ppm millionths of any duty_window_s seconds; "
         "1000000 means the profile sets no limit. sync_word and sync_word_sx126x are hex. Each "

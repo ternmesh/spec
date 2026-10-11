@@ -129,7 +129,8 @@ An implementation conforms to this section if, for
   not as `crc` says, and IQ inverted or not as `iq_inverted` says;
 * for each profile it implements, it uses `frequency_hz`, `bandwidth_hz`
   and `spreading_factor`, with low data rate optimisation on or off as
-  `low_data_rate_optimisation` says;
+  `low_data_rate_optimisation` says, and radiates no more than
+  `max_eirp_dbm` and, where `min_eirp_dbm` is not null, no less than it;
 * for each profile and each `length`, it computes the time on air `ns`;
 * given the times at which it is asked to send frames, it sends none
   that would take its time on air past `duty_cycle_ppm` millionths of
@@ -263,8 +264,9 @@ conditions of use.
 **`CL915`: `US915`'s channel at 500 mW.** Subtel Exempt Resolution
 1985 of 2017, article 1 j.3 and k, allows 500 mW in 915–928 MHz to
 equipment that shares the band by spread spectrum or other digital
-modulation, with no limit on transmitting; Exempt Resolution 1249 of
-2026 made every power in it EIRP. 500 mW is 26 dBm EIRP rounded down.
+modulation, with no limit on transmitting; Exempt Resolution 1247 of
+2026 (printed as 1249, and corrected in the Diario Oficial of 17 July
+2026) made every power in it EIRP. 500 mW is 26 dBm EIRP rounded down.
 Article 1 j.4 allows 1 W in 913–919 MHz, where a channel at 914.250 MHz
 would clear every LoRaWAN AU915 channel and gain 4 dB; this draft keeps
 the one channel the other 915 MHz profiles use.
