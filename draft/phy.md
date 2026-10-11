@@ -28,8 +28,9 @@ Test vectors: [`vectors/phy.json`](../vectors/phy.json), produced by
 4. **Where the simulation was run.** A profile's modulation is the one,
    or the equal of the one, that the routing design was measured at.
 5. **One answer for time on air.** Every implementation computes the
-   same time on air for a frame, to the nanosecond, because the airtime
-   budget and the routing metric are both measured in it.
+   same time on air for a frame, to the nanosecond, because the
+   [airtime budget](airtime.md) and the routing metric are both
+   measured in it.
 
 ## Settings every frame uses
 
@@ -118,9 +119,10 @@ node's transmissions that begin in any period of the length given MUST
 NOT exceed that share of the period. A node that would exceed it by
 sending a frame MUST NOT send the frame until it would not. A period
 includes the instant it starts at and not the instant it ends at. This is the
-regulator's limit, the same for every node. The airtime budget, which
-divides the channel between nodes, is a separate and smaller allowance,
-and is not specified yet.
+regulator's limit, the same for every node. The
+[airtime budget](airtime.md) is a separate and smaller allowance, on
+every profile, and a node is held to both
+([Profiles](airtime.md#profiles)).
 
 ## Conformance
 
@@ -378,4 +380,3 @@ then the values above stand on the published sources.
 * **More than one channel**, and hopping. In the US, hopping over 50
   channels of 125 kHz is the other lawful way to use the band.
 * **Listen before talk.**
-* **The airtime budget.**
