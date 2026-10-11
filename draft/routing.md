@@ -32,7 +32,9 @@ produced by [`vectors/tools/routing.py`](../vectors/tools/routing.py).
 4. **Quiet when nothing changes.** A network at rest announces rarely;
    one that is changing announces soon.
 5. **Links that work both ways.** LoRa links are often one-way. A node
-   uses a neighbour only once each has shown it hears the other.
+   uses a neighbour only once each has shown it hears the other, but
+   for a leaf's last resort (see [a leaf's default
+   route](#a-leafs-default-route)).
 6. **A few kilobytes.** A node keeps at most four routes for each node
    it knows of, and no timer for any of them.
 
