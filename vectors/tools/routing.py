@@ -244,11 +244,15 @@ def place(neighbours, floor):
 
 
 def default_next(leaf, starting, busy_ppm, neighbours, tried):
-    """The neighbour a leaf hands a frame with no route to: the nearest relay it may use, or None."""
+    """The neighbour a leaf hands a frame with no route to: the nearest relay it may use, or with
+    none, the nearest relay it hears; or None."""
     if not leaf or starting or busy_ppm >= DEFAULT_BUSY:
         return None
     ok = [(n["floor_sixteenths"], i) for i, n in enumerate(neighbours)
           if n["relay"] and n["up"] and i not in tried]
+    if not ok:
+        ok = [(n["floor_sixteenths"], i) for i, n in enumerate(neighbours)
+              if n["relay"] and i not in tried]
     if not ok:
         return None
     best = min(ok)
@@ -567,7 +571,10 @@ def build():
             (near, True, True, 0, [], 70),  # starting: none
             (near, False, False, 0, [], 70),  # a relay takes no default route
             (near, True, False, 0, [0], 70),  # given up at the nearest: the next
-            (near, True, False, 0, [0, 1], 70),  # and at both relays whose links are up: none
+            (near, True, False, 0, [0, 1], 70),  # and at both relays whose links are up: the other
+            (near, True, False, 0, [0, 1, 3], 70),  # and at every relay: none
+            # no link to a relay up: the nearest relay heard, not the nearer leaf
+            (nb((-100, False, True), (-300, False, True), (-480, True, False)), True, False, 0, [], 70),
             (nb((-100, True, False)), True, False, 0, [], 70),  # no relay
             (near, True, False, 0, [], 11000),  # a metric past 0xFFFE is 0xFFFE
         ]

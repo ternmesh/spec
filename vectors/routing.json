@@ -1754,7 +1754,68 @@
         0,
         1
       ],
+      "next": 3,
+      "link_cost": 70,
+      "metric": 420
+    },
+    {
+      "neighbours": [
+        {
+          "floor_sixteenths": -320,
+          "up": true,
+          "relay": true
+        },
+        {
+          "floor_sixteenths": -80,
+          "up": true,
+          "relay": true
+        },
+        {
+          "floor_sixteenths": -480,
+          "up": true,
+          "relay": false
+        },
+        {
+          "floor_sixteenths": -200,
+          "up": false,
+          "relay": true
+        }
+      ],
+      "leaf": true,
+      "starting": false,
+      "busy_ppm": 0,
+      "tried": [
+        0,
+        1,
+        3
+      ],
       "next": null,
+      "link_cost": 70,
+      "metric": 420
+    },
+    {
+      "neighbours": [
+        {
+          "floor_sixteenths": -100,
+          "up": false,
+          "relay": true
+        },
+        {
+          "floor_sixteenths": -300,
+          "up": false,
+          "relay": true
+        },
+        {
+          "floor_sixteenths": -480,
+          "up": true,
+          "relay": false
+        }
+      ],
+      "leaf": true,
+      "starting": false,
+      "busy_ppm": 0,
+      "tried": [],
+      "next": 1,
       "link_cost": 70,
       "metric": 420
     },

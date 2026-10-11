@@ -74,7 +74,8 @@ frames and announce other nodes' routes. A leaf announces itself, and
 what it hears, and nothing else. Which a node is, is its owner's choice
 for now. A node may **use** a neighbour as the next hop to a
 destination only if the link to it is [up](#links), and the neighbour
-is a relay or is the destination itself.
+is a relay or is the destination itself; a leaf's [default
+route](#a-leafs-default-route) is the one exception.
 
 ## Announces
 
@@ -307,8 +308,9 @@ yet specified](#not-yet-specified)).
 
 A leaf that has no route it may use to a destination MAY hand a frame
 for it to its **nearest relay**: of the relay neighbours it may use
-whose links are up, the one with the lowest floor, and of those with
-equal floors, any. It MUST NOT:
+whose links are up, the one with the lowest floor; if there is none, of
+the relay neighbours it hears, the one with the lowest floor; and of
+those with equal floors, any. It MUST NOT:
 
 * while it is [starting](#starting);
 * while its busy share, as [flooding](flooding.md#a-busy-relay) has a
@@ -731,6 +733,25 @@ place for every node does (28.5%), with four times its broadcasts
 (3.6%). `RELAY_PLACES` covers the thousand nodes these runs had; the
 `SF7` rows are the closer to this specification's profiles, whose
 symbols are as long.
+
+**A relay that is heard, when none is up.** A relay names each of its
+neighbours once in every `round` of its announces, and sends them
+[as loud as its nearest](#power-for-every-neighbour) need. A leaf
+further out than those may hear only some of them, and none that names
+it, so its links to its relays never come up, though each relay hears
+the leaf, has the margin it gave, and holds the link to it up. In the
+simulator, the firmware's core with 128 neighbours, relays of 1024
+destinations and leaves of 128, two thirds of the unicasts lost on
+US915's settings (36 of 54, seed 1) were sent by such a leaf: no route
+of its own, and no relay it might hand them to. Taking the nearest relay
+it hears in that case delivered 97.1% of unicasts on time on EU868's
+settings and 99.2% on US915's (three seeds), against 94.1% and 96.4%, on
+a little less airtime, and broadcasts as before. Sending each announce
+loud enough for the neighbours it names instead delivered 83.7% and
+89.9%: louder announces cost more than the links they bring up. A relay
+that does not hear the leaf passes nothing on, and the leaf gives the
+frame up there and tries [another way](forwarding.md#hops), as from any
+relay.
 
 **Signed announces, not a network key.** Unsigned, any radio can send
 an announce in another node's name: list routes it does not have, claim
