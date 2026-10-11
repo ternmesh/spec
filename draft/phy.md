@@ -82,7 +82,7 @@ frequency, with its bandwidth and spreading factor.
 | `NZ915` | 921.250 MHz | 500 kHz | 9 | 36 dBm EIRP | no limit |
 | `CL915` | 921.250 MHz | 500 kHz | 9 | 26 dBm EIRP | no limit |
 | `MY919` | 920.250 MHz | 500 kHz | 9 | 26 dBm EIRP | no limit |
-| `TH920` | 921.250 MHz | 500 kHz | 9 | 36 dBm EIRP | 10% of any hour |
+| `TH920` | 921.250 MHz | 500 kHz | 9 | 36 dBm EIRP, and at least 17 | 10% of any hour |
 | `RU868` | 868.775 MHz | 125 kHz | 7 | 22 dBm EIRP | 10% of any hour |
 | `KZ863` | 864.375 MHz | 125 kHz | 7 | 13 dBm EIRP | no limit |
 
@@ -105,7 +105,9 @@ A country not listed has no profile yet ([Not yet specified](#not-yet-specified)
 
 **Power.** A node MUST NOT radiate more than its profile allows, antenna
 gain included. `US915` also limits what the transmitter may put into the
-antenna, to 30 dBm.
+antenna, to 30 dBm. A node set to `TH920` MUST NOT radiate less than
+17 dBm EIRP, antenna gain included, since the profile's limit on
+transmitting is only for that power and above.
 
 **Transmitting.** Where a profile limits it, the time on air of all a
 node's transmissions that begin in any period of the length given MUST
@@ -279,8 +281,11 @@ LoRaWAN's AS923-1 channels and The Things Network's Malaysian plan
 **`TH920`: `US915`'s channel, at 10%.** NBTC technical standard
 1033-2560 (2017), 2.1 and 2.3.1, allows 4 W EIRP in 920–925 MHz to a
 transmitter of at most 500 kHz that transmits for at most 10% of each
-hour. 921.250 MHz lies below LoRaWAN's AS923-1 default channels
-(923.2 and 923.4 MHz) and between Meshtastic's `TH` presets.
+hour. Below 50 mW the standard allows 1%, which a relay cannot live on,
+so a node on this profile radiates at least 17 dBm EIRP (50.1 mW) and
+keeps the 10%, rather than the profile carry a second limit. 921.250 MHz
+lies below LoRaWAN's AS923-1 default channels (923.2 and 923.4 MHz) and
+between Meshtastic's `TH` presets.
 
 **`RU868`: 100 mW ERP at 10%.** State Radio Frequency Commission
 decision 07-20-03-001 (2018 edition), Annex 11, allows 868.7–869.2 MHz
