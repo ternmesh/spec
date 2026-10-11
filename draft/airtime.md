@@ -169,13 +169,15 @@ Reason 4 takes in the bucket for the node's own floods, as it did
 before this section: a group message waits for that bucket and the own
 part together.
 
-Its `wait`, for reason 4, SHOULD be how long until every bucket that
-pays for its frame has taken in that frame's airtime, and the airtime
-of every frame of the node's own waiting ahead of it that the same
-bucket pays for, if nothing else is charged to them meanwhile: in
-seconds, rounded up, and at most `0xFFFF`. For reason 3, as Radio
-settings gives it, the same way rounded. The frames ahead go as the
-buckets fill, so what they need may be more than a bucket holds.
+Its `wait`, for reason 4, SHOULD be how long until it goes if nothing
+else is charged to its buckets meanwhile: the frames of the node's own
+waiting go in order, each when every bucket that pays for it holds its
+airtime and not before the frame ahead of it, and each is charged to
+its buckets as it goes. In seconds, rounded up, and at most `0xFFFF`.
+For reason 3, as Radio settings gives it, the same way rounded. A frame
+held up by a bucket it does not pay from, such as a message behind a
+group message waiting for the flood bucket, waits as long as the frame
+ahead of it.
 
 ## Parameters
 

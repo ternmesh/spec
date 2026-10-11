@@ -11,6 +11,7 @@ arithmetic against values worked by hand.
 Like everything under vectors/, this file is dedicated to the public domain (CC0-1.0).
 """
 
+import copy
 import json
 import sys
 from pathlib import Path
@@ -102,8 +103,7 @@ class Bucket:
         self.level = max(0, self.level - airtime_ns * 1_000_000)
 
     def wait_ns(self, at, need_ns):
-        """How long until the bucket has taken in need_ns of airtime, counting what it holds: the
-        frames that need it go as it fills, so it is never full meanwhile."""
+        """How long until the bucket holds need_ns of airtime."""
         self.fill(at)
         short = need_ns * 1_000_000 - self.level
         return 0 if short <= 0 else -(-short // self.ppm)
@@ -138,19 +138,19 @@ class Node:
         return air, sent
 
     def waits_s(self, at, waiting):
-        """For each of the node's own frames waiting, in order, the seconds until every bucket that
-        pays for it has taken in its airtime and that of each frame ahead of it it pays for."""
-        need = {}
+        """For each of the node's own frames waiting, in order, the seconds until it goes: when
+        every bucket that pays for it holds its airtime, and not before the frame ahead of it, each
+        frame charged as it goes. Works on copies; the node's buckets are left as they are."""
+        b = {name: copy.copy(bucket) for name, bucket in self.b.items()}
+        t = at
         out = []
         for hdr, length in waiting:
             air = phy.airtime_ns(self.sf, self.bw, length)
-            longest = 0
-            for name in (part(hdr, True), flood_bucket(hdr, True)):
-                if name is None:
-                    continue
-                need[name] = need.get(name, 0) + air
-                longest = max(longest, self.b[name].wait_ns(at, need[name]))
-            out.append((air, min(WAIT_MAX, -(-longest // NS))))
+            names = [n for n in (part(hdr, True), flood_bucket(hdr, True)) if n is not None]
+            t += max(b[n].wait_ns(t, air) for n in names)
+            for n in names:
+                b[n].charge(t, air)
+            out.append((air, min(WAIT_MAX, -(-(t - at) // NS))))
         return out
 
 
@@ -253,6 +253,7 @@ def build():
         ("group-behind-message", "relay", EU868, [(0, G, True, 255)] * 7 + [(0, M, True, 255)] * 6,
          0, [(M, 255), (G, 255), (G, 120)]),
         ("us915", "relay", US915, [(0, M, True, 255)] * 18, 0, [(M, 23)] * 4),
+        ("message-behind-group", "relay", EU868, [(0, G, True, 255)] * 7, 0, [(G, 255), (M, 255)]),
     ]:
         node = Node(role, profile)
         for offer in spent:
@@ -266,6 +267,11 @@ def build():
                         for (h, n), (air, w) in zip(waiting, rows)],
         })
     assert [w["wait_s"] for w in estimates[0]["waiting"]] == [12, 25, 66]
+    # A frame never goes before the one ahead of it, even when its own buckets could pay sooner.
+    for e in estimates:
+        waits = [w["wait_s"] for w in e["waiting"]]
+        assert waits == sorted(waits), e["name"]
+    assert estimates[-1]["waiting"][1]["wait_s"] == estimates[-1]["waiting"][0]["wait_s"]
 
     reasons = []
     for route, session, region, budget in [
@@ -292,8 +298,9 @@ def build():
         "(vectors/phy.json), and sent says whether it goes then; a frame that goes is charged to "
         "every bucket that pays for it, and one that does not to none. In estimates, the frames "
         "spent go as in spends, and at at_ns the node's own frames waiting go in the order "
-        "given; wait_s is how many seconds, rounded up, until every bucket that pays for one has "
-        "taken in its airtime and that of every frame ahead of it that the bucket pays for. In "
+        "given; wait_s is how many seconds, rounded up, until it goes: when every bucket that pays "
+        "for it holds its airtime, and not before the frame ahead of it, each frame charged to "
+        "its buckets as it goes. In "
         "reasons, a message of the node's own waits with or without a route and a session, and "
         "for the region's limit and the budget as long as given, in seconds; reason and wait are "
         "what the companion protocol shows.",
