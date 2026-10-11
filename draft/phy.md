@@ -107,7 +107,11 @@ A country not listed has no profile yet ([Not yet specified](#not-yet-specified)
 gain included. `US915` also limits what the transmitter may put into the
 antenna, to 30 dBm. A node set to `TH920` MUST NOT radiate less than
 17 dBm EIRP, antenna gain included, since the profile's limit on
-transmitting is only for that power and above.
+transmitting is only for that power and above. So a node's **lowest
+power**, the least that [power control](routing.md#power-for-every-neighbour),
+[forwarding](forwarding.md#sending) and [flooding](flooding.md#sending) send any
+frame at, is the least its radio gives or, on a profile with a minimum,
+that minimum less its antenna's gain, whichever is more.
 
 **Transmitting.** Where a profile limits it, the time on air of all a
 node's transmissions that begin in any period of the length given MUST
