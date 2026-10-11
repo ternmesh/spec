@@ -261,8 +261,11 @@ state:
 | 1 | a route to its destination |
 | 2 | a session: [first contact](first-contact.md) is under way |
 | 3 | the region's limit on transmitting ([Profiles](phy.md#profiles)) |
-| 4 | the node's airtime budget |
+| 4 | the node's [airtime budget](airtime.md) |
 | 5 | the radio: other frames go first |
+
+[The airtime budget](airtime.md#what-a-client-is-told) says which of 3
+and 4 a message waiting for both is given.
 
 `wait` is the node's estimate, in seconds, of how long until it goes,
 0 if it has none, and at most `0xFFFF`.
@@ -320,7 +323,8 @@ SHOULD NOT show it as proved. `time`, `flags` and `text` are as for a
 
 A group message this node wrote is **waiting** until it has gone on the
 air, with `reason` 4 while it waits for
-[the node's allowance](flooding.md#the-allowance), and **sent** from
+[the node's allowance](flooding.md#the-allowance) or its
+[budget](airtime.md#what-a-client-is-told), and **sent** from
 then on. It is never delivered: nothing answers a flood, and a writer
 does not learn who received it. It is **not delivered** only if its
 group is [left](#the-requests) while it still waits. One received is
@@ -1240,8 +1244,10 @@ and a node needs a way to say it cannot be updated at all.
 
 * **Who is in a group.** A node does not know, and nor does a client:
   it sees the routing ids that have written.
-* **The airtime budget**: `reason` 4 names it, and `AIRTIME` gives only
-  the region's limit. The budget's fields come with its section.
+* **What is left of the airtime budget**: `reason` 4 names
+  [the budget](airtime.md), and `AIRTIME` gives only the region's
+  limit. Fields for what is left are
+  [proposed there](airtime.md#not-yet-specified), not yet added.
 * **What a message carries on the air**: its text, its time, whether it
   is UTF-8. This section's `text` is what the user wrote, and the limit
   of 128 bytes is provisional until that is said.

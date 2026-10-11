@@ -493,6 +493,10 @@ up to 1.375 times `CAP` in its first `LEARN_FOR`, and `CAP` after.
 A request frame the requests' bucket cannot pay for is dropped. A
 starved node asks again anyway.
 
+The cap and the learning allowance are the routing part of the
+[airtime budget](airtime.md#the-parts), and nothing else there pays for
+announces or requests.
+
 ## Parameters
 
 | Name | Value | |
@@ -859,7 +863,8 @@ when, and once settled spends what it would with none. A node that
 joins a settled network learns its routes within its own `LEARN_FOR`,
 but its neighbours, long started, pass them on within the cap. The
 rest of the time the slowest setting needs is the cap's own, which the
-airtime budget, when it is specified, may replace.
+[airtime budget](airtime.md#the-parts) keeps as it is, as its routing
+part.
 
 How often the address goes, swept with signed announces: carrying it
 in almost no announce after a neighbour is found (`ADDRESS_EVERY` 255)
@@ -980,8 +985,6 @@ announces, as before: see [Not yet specified](#not-yet-specified).
   what they hear. Here it is configured.
 * **Leaves that move**: finding a new relay, and moving the routes
   there.
-* **The airtime budget** shared between nodes, of which this section's
-  cap is one part.
 * **Networks of more nodes than `RELAY_PLACES`**: routes kept within a
   region, and frames between regions by flooding or through nodes that
   join them.

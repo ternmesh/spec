@@ -197,6 +197,11 @@ sent.
 * A frame to be passed on whose airtime the second bucket does not hold
   when its wait ends MUST be dropped.
 
+Each bucket is inside a part of the [airtime budget](airtime.md#the-parts),
+which pays for the same frames: a node's own floods from its own part,
+and those it passes on from its relayed part. A frame is sent only if
+both pay for it.
+
 This is beside what a [profile](phy.md#profiles) allows a node to
 transmit at all, which bounds these and everything else it sends.
 
@@ -341,10 +346,9 @@ full, and broadcast there went from 27.5% of destinations to 6.3%.
 Sending a node's routed frames ahead of its flooded ones was tried
 first and changed nothing: a relay seldom holds both, and what they
 contend for is the air between nodes. A relay's own writing is not
-dropped: its own bucket bounds that. What this does not do is divide
-the air between nodes, which is
-[not yet specified](forwarding.md#not-yet-specified), or keep floods
-from going everywhere.
+dropped: its own bucket bounds that. What this does not do is bound
+all that a node sends, which the [airtime budget](airtime.md) does, or
+keep floods from going everywhere.
 
 **An id from the bytes.** A flood's id could be a field its writer
 fills. A node that heard a frame could then send rubbish under the same
@@ -473,6 +477,7 @@ its time, are together allowed five channels.
 * **A flood when routes are stale**, for a message given up at a leaf
   that has moved ([Frames that follow routes](forwarding.md#not-yet-specified)).
 * **Priority** between flooded frames, and between them and frames that
-  follow routes, beyond the two buckets.
+  follow routes, beyond the two buckets and the
+  [budget's parts](airtime.md#the-parts).
 * **Announces of a node to every other**, such as its name: nothing
   here is sent unasked.

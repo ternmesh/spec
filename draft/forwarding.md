@@ -113,6 +113,10 @@ radio. The nodes that heard the same frame would otherwise answer at
 the same instant. A node with several frames ready sends
 acknowledgements first, then frames it is passing on, then its own.
 
+**Paid for.** Every frame here is paid for from the node's
+[airtime budget](airtime.md#spending), which says when a frame of the
+node's own waits and when one it would pass on is dropped.
+
 ## Listening first
 
 A node MUST NOT start to send a frame while its radio is **receiving**
@@ -559,7 +563,9 @@ dead found sooner.
 * **A flood when the routes are stale.** The simulator floods a message
   given up at a leaf that has moved, through relays, a few hops. It
   would be [a flood](flooding.md) of a kind not yet defined.
-* **A share of the air** for each node, where the channel is full.
+* **Sharing a full channel.** The [airtime budget](airtime.md) bounds
+  what each node sends, not what a mesh's nodes send together where
+  the channel is full.
 * **Frames for every node** are [their own section](flooding.md), and
   follow no route.
 * **Fragments**: a message is one frame.

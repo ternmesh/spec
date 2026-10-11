@@ -422,8 +422,10 @@ anyone made it answer.
 can send it a `message_1` naming a third node as `source`, and
 `message_2`, 60 bytes, goes to that node across the mesh. That is no
 more than the stranger could do by sending the third node a frame
-itself: relays pass on what they are given. Limits on that belong with
-[a share of the air](forwarding.md#not-yet-specified).
+itself: relays pass on what they are given. The
+[airtime budget](airtime.md#the-parts) limits it: `message_2` is the
+responder's own frame, and waits for its own part, and each relay
+passes it on from its relayed part.
 
 **`message_4` always.** EDHOC needs `message_4` when the responder sends
 nothing protected afterwards. Without it, an initiator
