@@ -80,6 +80,28 @@ frequency, with its bandwidth and spreading factor.
 | `EU868` | 869.475 MHz | 125 kHz | 7 | 29 dBm EIRP | 10% of any hour |
 | `AU915` | 921.250 MHz | 500 kHz | 9 | 30 dBm EIRP | no limit |
 | `NZ915` | 921.250 MHz | 500 kHz | 9 | 36 dBm EIRP | no limit |
+| `CL915` | 921.250 MHz | 500 kHz | 9 | 26 dBm EIRP | no limit |
+| `MY919` | 920.250 MHz | 500 kHz | 9 | 26 dBm EIRP | no limit |
+| `TH920` | 921.250 MHz | 500 kHz | 9 | 36 dBm EIRP | 10% of any hour |
+| `RU868` | 868.775 MHz | 125 kHz | 7 | 22 dBm EIRP | 10% of any hour |
+| `KZ863` | 864.375 MHz | 125 kHz | 7 | 13 dBm EIRP | no limit |
+
+A profile is named for a band, not a country, and serves every country
+whose rules allow it as written:
+
+| Profile | Where |
+|---|---|
+| `US915` | the United States, Canada, Mexico, Brazil, Argentina, Peru |
+| `EU868` | the European Union and EEA, the United Kingdom, Ukraine, South Africa |
+| `AU915` | Australia |
+| `NZ915` | New Zealand |
+| `CL915` | Chile |
+| `MY919` | Malaysia |
+| `TH920` | Thailand |
+| `RU868` | Russia |
+| `KZ863` | Kazakhstan |
+
+A country not listed has no profile yet ([Not yet specified](#not-yet-specified)).
 
 **Power.** A node MUST NOT radiate more than its profile allows, antenna
 gain included. `US915` also limits what the transmitter may put into the
@@ -212,6 +234,73 @@ They are two profiles, not one, because what each country allows a node
 to radiate is different, and a node in New Zealand would lose 6 dB to
 Australia's limit.
 
+**`US915` in Canada, Mexico, Brazil, Argentina and Peru.** The first four
+have the rule 47 CFR 15.247 has, in their own words: a digitally
+modulated transmitter in the band whose 6 dB bandwidth is at least
+500 kHz may put 1 W into the antenna and radiate 4 W EIRP, at most
+8 dBm in any 3 kHz, with no limit on transmitting. Canada: RSS-247
+Issue 4 (2025), 6.3.1 and 6.3.2. Mexico: IFT-008-2015, 4.3.1 to 4.3.3
+and Table 1. Brazil: Anatel Ato 14.448 of 2017, 10.3.1 to 10.3.3 and
+10.5, as amended by Ato 14.158 of 2025, which revoked the exemption
+from the 500 kHz floor; so Brazil follows the US's rule, not
+Australia's. Argentina: ENACOM Resolution 4653/2019, Annex, 2.1.1.1,
+2.1.2.1 and 2.1.3.1. Peru (Ministerial Resolution 777-2005-MTC/03,
+Annex, article 3, as amended in 2013 and 2024) allows 36 dBm EIRP in
+916–928 MHz, and 1 W into an antenna of at most 6 dBi, with no floor
+on bandwidth; it asks whoever imports equipment for a sworn declaration,
+and whoever runs one outdoors to report it within a month.
+
+**`EU868` in the United Kingdom, Ukraine and South Africa.** Each
+allows 500 mW ERP in 869.40–869.65 MHz at 10%: Ofcom IR 2030 (v1.15,
+2023), IR2030/1/19; Ukraine's spectrum plan (Cabinet of Ministers
+Resolution 1340 of 2023, as amended by Resolution 262 of 2026); and
+ICASA's Radio Frequency Spectrum Regulations, Annexure B (2021), which
+make SANS 300 220 and ERC Recommendation 70-03, and with them its 10%,
+conditions of use.
+
+**`CL915`: `US915`'s channel at 500 mW.** Subtel Exempt Resolution
+1985 of 2017, article 1 j.3 and k, allows 500 mW in 915–928 MHz to
+equipment that shares the band by spread spectrum or other digital
+modulation, with no limit on transmitting; Exempt Resolution 1249 of
+2026 made every power in it EIRP. 500 mW is 26 dBm EIRP rounded down.
+Article 1 j.4 allows 1 W in 913–919 MHz, where a channel at 914.250 MHz
+would clear every LoRaWAN AU915 channel and gain 4 dB; this draft keeps
+the one channel the other 915 MHz profiles use.
+
+**`MY919`: 920.250 MHz, at 500 mW.** MCMC Class Assignment No. 2 of
+2025, Second Schedule, Table 2-1, item 10, allows 500 mW EIRP in
+919–923 MHz with no further condition; the bands either side require 1%
+or listen before talk. 921.250 MHz is lawful there too, but overlaps
+Meshtastic's `MY_919` MediumFast channel (921.125 MHz, 250 kHz) by its
+slot rule; 920.250 MHz overlaps none of its presets, and is below
+LoRaWAN's AS923-1 channels and The Things Network's Malaysian plan
+(922.0–923.4 MHz).
+
+**`TH920`: `US915`'s channel, at 10%.** NBTC technical standard
+1033-2560 (2017), 2.1 and 2.3.1, allows 4 W EIRP in 920–925 MHz to a
+transmitter of at most 500 kHz that transmits for at most 10% of each
+hour. 921.250 MHz lies below LoRaWAN's AS923-1 default channels
+(923.2 and 923.4 MHz) and between Meshtastic's `TH` presets.
+
+**`RU868`: 100 mW ERP at 10%.** State Radio Frequency Commission
+decision 07-20-03-001 (2018 edition), Annex 11, allows 868.7–869.2 MHz
+at 100 mW ERP with 10% or listen before talk, or at 25 mW ERP with no
+limit. 100 mW ERP is 22 dBm EIRP rounded down. 868.775 MHz stays
+12.5 kHz inside the band, and ends where LoRaWAN's RU864 default channel
+at 868.9 MHz begins. Meshtastic's `RU` default (LongFast, 869.075 MHz)
+is clear; in a band 500 kHz wide its other presets cannot all be. The
+decision asks that base stations of telemetry networks be registered;
+whether a relay is one is a reading this draft does not make.
+
+**`KZ863`: 25 mW EIRP.** The rules approved by Order No. 34 of 2015,
+Appendix 1, item 22, exempt LPWAN equipment in 863–868 MHz at 25 mW
+EIRP and at most 500 kHz, with no limit on transmitting, except within
+airports and aerodromes: a place no profile can name, and whoever
+operates a node keeps it out of them. 25 mW is 13 dBm EIRP rounded
+down, the lowest of any profile; the band allows no more without a limit
+on transmitting. 864.375 MHz is clear of every preset of Meshtastic's
+`KZ_863` and of the RFID channels from 865.7 MHz.
+
 **Radiated power, as EIRP.** 500 mW ERP is 27 dBm ERP, which is 29 dBm
 EIRP rounded down. The US limit is 30 dBm into an antenna of up to
 6 dBi.
@@ -254,9 +343,20 @@ then the values above stand on the published sources.
     network access point and 2.5% otherwise. A profile would need a
     limit for each role, and the routing design has not been simulated
     at 2.5%.
-  * **Brazil.** 915–928 MHz is used there as in Australia, and
-    LoRaWAN's AU915 plan with it; Anatel's conditions (Ato 14.448 of
-    2017) are to be read before `AU915`'s channel is named for it.
+  * **Singapore, Vietnam and Indonesia** limit transmitting by role,
+    as India does (10% for an access point, 1% otherwise), or require
+    listen before talk; Singapore's general row asks for "suitable
+    mitigation techniques" without a number.
+  * **Hong Kong** requires hopping with a dwell limit, and **Israel**
+    sets a different limit on each channel and names LoRaWAN; both are
+    read from secondary sources only.
+  * **The Philippines** allows 25 mW ERP in 868.7–869.2 MHz to
+    type-approved, registered equipment; its amendments since 2007 are
+    to be read before a profile is named for it. Its 915–918 MHz band is
+    licence-free indoors only.
+  * **Colombia, Taiwan and Nepal.** Colombia's 915–928 MHz conditions
+    (ANE Resolution 105 of 2020, Annex 1) and Taiwan's (NCC LP0002) are
+    to be read; Nepal's 2023 policy opens 865–868 MHz without a power.
   * **Japan and Korea** (listen before talk, and at most 4 s a
     transmission), **China** (470–510 MHz), the **AS923** countries and
     **433 MHz** (EU433, 10 mW ERP) need boards for other bands, listen

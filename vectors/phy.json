@@ -282,6 +282,443 @@
         }
       ],
       "duty": []
+    },
+    {
+      "name": "CL915",
+      "frequency_hz": 921250000,
+      "bandwidth_hz": 500000,
+      "spreading_factor": 9,
+      "max_eirp_dbm": 26,
+      "duty_cycle_ppm": 1000000,
+      "duty_window_s": 3600,
+      "low_data_rate_optimisation": false,
+      "airtime_ns": [
+        {
+          "length": 16,
+          "ns": 49408000
+        },
+        {
+          "length": 17,
+          "ns": 49408000
+        },
+        {
+          "length": 45,
+          "ns": 85248000
+        },
+        {
+          "length": 53,
+          "ns": 90368000
+        },
+        {
+          "length": 73,
+          "ns": 115968000
+        },
+        {
+          "length": 255,
+          "ns": 320768000
+        }
+      ],
+      "duty": []
+    },
+    {
+      "name": "MY919",
+      "frequency_hz": 920250000,
+      "bandwidth_hz": 500000,
+      "spreading_factor": 9,
+      "max_eirp_dbm": 26,
+      "duty_cycle_ppm": 1000000,
+      "duty_window_s": 3600,
+      "low_data_rate_optimisation": false,
+      "airtime_ns": [
+        {
+          "length": 16,
+          "ns": 49408000
+        },
+        {
+          "length": 17,
+          "ns": 49408000
+        },
+        {
+          "length": 45,
+          "ns": 85248000
+        },
+        {
+          "length": 53,
+          "ns": 90368000
+        },
+        {
+          "length": 73,
+          "ns": 115968000
+        },
+        {
+          "length": 255,
+          "ns": 320768000
+        }
+      ],
+      "duty": []
+    },
+    {
+      "name": "TH920",
+      "frequency_hz": 921250000,
+      "bandwidth_hz": 500000,
+      "spreading_factor": 9,
+      "max_eirp_dbm": 36,
+      "duty_cycle_ppm": 100000,
+      "duty_window_s": 3600,
+      "low_data_rate_optimisation": false,
+      "airtime_ns": [
+        {
+          "length": 16,
+          "ns": 49408000
+        },
+        {
+          "length": 17,
+          "ns": 49408000
+        },
+        {
+          "length": 45,
+          "ns": 85248000
+        },
+        {
+          "length": 53,
+          "ns": 90368000
+        },
+        {
+          "length": 73,
+          "ns": 115968000
+        },
+        {
+          "length": 255,
+          "ns": 320768000
+        }
+      ],
+      "duty": [
+        {
+          "why": "nothing sent",
+          "sent": [],
+          "at_ns": 0,
+          "length": 255,
+          "must_refuse": false
+        },
+        {
+          "why": "one frame short of the limit",
+          "sent": [
+            {
+              "first_at_ns": 0,
+              "count": 1121,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 1122000000000,
+          "length": 255,
+          "must_refuse": false
+        },
+        {
+          "why": "at the limit",
+          "sent": [
+            {
+              "first_at_ns": 0,
+              "count": 1122,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 1122000000000,
+          "length": 255,
+          "must_refuse": true
+        },
+        {
+          "why": "at the limit, the first frame a nanosecond short of leaving the window",
+          "sent": [
+            {
+              "first_at_ns": 0,
+              "count": 1122,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 3599999999999,
+          "length": 255,
+          "must_refuse": true
+        },
+        {
+          "why": "at the limit, as the first frame leaves the window",
+          "sent": [
+            {
+              "first_at_ns": 0,
+              "count": 1122,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 3600000000000,
+          "length": 255,
+          "must_refuse": false
+        },
+        {
+          "why": "the limit used just before the hour, asked just after it",
+          "sent": [
+            {
+              "first_at_ns": 2478000000000,
+              "count": 1122,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 3601000000000,
+          "length": 255,
+          "must_refuse": true
+        },
+        {
+          "why": "the same, as the first of them leaves the window",
+          "sent": [
+            {
+              "first_at_ns": 2478000000000,
+              "count": 1122,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 6078000000000,
+          "length": 255,
+          "must_refuse": false
+        },
+        {
+          "why": "the limit used across the hour",
+          "sent": [
+            {
+              "first_at_ns": 3039000000000,
+              "count": 561,
+              "every_ns": 1000000000,
+              "length": 255
+            },
+            {
+              "first_at_ns": 3600000000000,
+              "count": 561,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 4722000000000,
+          "length": 255,
+          "must_refuse": true
+        },
+        {
+          "why": "long silence after the limit",
+          "sent": [
+            {
+              "first_at_ns": 0,
+              "count": 1122,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 18000000000000,
+          "length": 255,
+          "must_refuse": false
+        }
+      ]
+    },
+    {
+      "name": "RU868",
+      "frequency_hz": 868775000,
+      "bandwidth_hz": 125000,
+      "spreading_factor": 7,
+      "max_eirp_dbm": 22,
+      "duty_cycle_ppm": 100000,
+      "duty_window_s": 3600,
+      "low_data_rate_optimisation": false,
+      "airtime_ns": [
+        {
+          "length": 16,
+          "ns": 59648000
+        },
+        {
+          "length": 17,
+          "ns": 59648000
+        },
+        {
+          "length": 45,
+          "ns": 100608000
+        },
+        {
+          "length": 53,
+          "ns": 110848000
+        },
+        {
+          "length": 73,
+          "ns": 141568000
+        },
+        {
+          "length": 255,
+          "ns": 407808000
+        }
+      ],
+      "duty": [
+        {
+          "why": "nothing sent",
+          "sent": [],
+          "at_ns": 0,
+          "length": 255,
+          "must_refuse": false
+        },
+        {
+          "why": "one frame short of the limit",
+          "sent": [
+            {
+              "first_at_ns": 0,
+              "count": 881,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 882000000000,
+          "length": 255,
+          "must_refuse": false
+        },
+        {
+          "why": "at the limit",
+          "sent": [
+            {
+              "first_at_ns": 0,
+              "count": 882,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 882000000000,
+          "length": 255,
+          "must_refuse": true
+        },
+        {
+          "why": "at the limit, the first frame a nanosecond short of leaving the window",
+          "sent": [
+            {
+              "first_at_ns": 0,
+              "count": 882,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 3599999999999,
+          "length": 255,
+          "must_refuse": true
+        },
+        {
+          "why": "at the limit, as the first frame leaves the window",
+          "sent": [
+            {
+              "first_at_ns": 0,
+              "count": 882,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 3600000000000,
+          "length": 255,
+          "must_refuse": false
+        },
+        {
+          "why": "the limit used just before the hour, asked just after it",
+          "sent": [
+            {
+              "first_at_ns": 2718000000000,
+              "count": 882,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 3601000000000,
+          "length": 255,
+          "must_refuse": true
+        },
+        {
+          "why": "the same, as the first of them leaves the window",
+          "sent": [
+            {
+              "first_at_ns": 2718000000000,
+              "count": 882,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 6318000000000,
+          "length": 255,
+          "must_refuse": false
+        },
+        {
+          "why": "the limit used across the hour",
+          "sent": [
+            {
+              "first_at_ns": 3159000000000,
+              "count": 441,
+              "every_ns": 1000000000,
+              "length": 255
+            },
+            {
+              "first_at_ns": 3600000000000,
+              "count": 441,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 4482000000000,
+          "length": 255,
+          "must_refuse": true
+        },
+        {
+          "why": "long silence after the limit",
+          "sent": [
+            {
+              "first_at_ns": 0,
+              "count": 882,
+              "every_ns": 1000000000,
+              "length": 255
+            }
+          ],
+          "at_ns": 18000000000000,
+          "length": 255,
+          "must_refuse": false
+        }
+      ]
+    },
+    {
+      "name": "KZ863",
+      "frequency_hz": 864375000,
+      "bandwidth_hz": 125000,
+      "spreading_factor": 7,
+      "max_eirp_dbm": 13,
+      "duty_cycle_ppm": 1000000,
+      "duty_window_s": 3600,
+      "low_data_rate_optimisation": false,
+      "airtime_ns": [
+        {
+          "length": 16,
+          "ns": 59648000
+        },
+        {
+          "length": 17,
+          "ns": 59648000
+        },
+        {
+          "length": 45,
+          "ns": 100608000
+        },
+        {
+          "length": 53,
+          "ns": 110848000
+        },
+        {
+          "length": 73,
+          "ns": 141568000
+        },
+        {
+          "length": 255,
+          "ns": 407808000
+        }
+      ],
+      "duty": []
     }
   ]
 }
