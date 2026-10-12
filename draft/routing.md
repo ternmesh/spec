@@ -295,9 +295,14 @@ through a different neighbour: that neighbour's latest `seq` and
 A retraction removes the route through that neighbour. A route to the
 node's own id is ignored.
 
-A node takes a destination to be a **leaf** if the destination's own
-last announce said it is not a relay, or if the last route a relay
-listed for it said so, and lists its own route to it as one to a leaf.
+A node takes a destination to be a **leaf** as the destination's own
+last announce said, if it keeps the destination as a neighbour;
+otherwise as the neighbour of its selected route listed it; and with
+neither, as it last took it. It lists its own route to the destination
+as one to a leaf or not accordingly. What other neighbours list does
+not count, so what a node lists comes only from the destination itself,
+along routes that cannot loop, and a node that takes up the relay's
+role is soon taken for one everywhere.
 
 With no room for a new route, it replaces the least worth keeping of
 those not selected, if it is worth more: a route the node could select
@@ -375,7 +380,8 @@ above the neighbour's, it announces that metric again.
 A route has **changed**, and goes first in the next announce, when it
 is first selected; when its `seq` is newer than the last announced;
 when its metric differs from the last announced by more than `CHANGE`
-of it; and when it is lost.
+of it; when it is lost; and when whether its destination is a leaf
+differs from what was last announced.
 
 A node that loses its selected route to a destination it has announced
 retracts it. A retraction lost on the air would leave a neighbour with
@@ -770,6 +776,11 @@ An implementation conforms to this section if, for
   before or not, it does as `does` says: `settled`, asks `again`,
   `waits`, has `moved`, or `reattaches`; and then holds `doubt_after`
   and `unanswered_after`;
+* **leaves:** with the destination's own last announce saying it is a
+  relay or not (`relay`, `null` if it is not kept as a neighbour), the
+  routes held to it each listed as to a leaf or not (`listed`), the one
+  selected (`selected`, `null` for none) and what it took before
+  (`was`), it takes the destination to be a leaf or not as `leaf` says;
 * **defaults**, for an implementation that takes default routes: with
   the `neighbours` given, each a relay or not and each with its floor,
   whether its link is up and whether it is out of use (`out_of_use`),

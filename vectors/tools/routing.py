@@ -339,6 +339,18 @@ def place(neighbours, floor):
     return at if floor + REPLACE_BAND <= worst else None
 
 
+def leaf_of(relay, listed, selected, was):
+    """Whether a node takes a destination to be a leaf: relay is what the destination's own last
+    announce said, or None if the node does not keep it as a neighbour; listed is, for each route
+    the node holds to it, whether its neighbour listed it as a leaf; selected an index into listed,
+    or None; was what it took before."""
+    if relay is not None:
+        return not relay
+    if selected is not None:
+        return listed[selected]
+    return was
+
+
 def default_next(leaf, starting, busy_ppm, neighbours, tried):
     """The neighbour a leaf hands a frame with no route to: the nearest relay it may use, or with
     none, the nearest relay it hears that is not out of use; or None."""
@@ -771,6 +783,21 @@ def build():
         ]
     ]
 
+    leaves = [
+        {"relay": relay, "listed": listed_, "selected": sel, "was": was,
+         "leaf": leaf_of(relay, listed_, sel, was)}
+        for relay, listed_, sel, was in [
+            (False, [True], 0, False),  # its own announce says it is a leaf
+            # it has taken up the relay's role: its own announce outweighs a stale listed bit
+            (True, [True, True], 0, True),
+            (True, [], None, True),
+            (None, [False, True], 0, True),  # not a neighbour: as the selected route lists it
+            (None, [False, True], 1, False),
+            (None, [True, True], None, False),  # no route selected: as it took it before
+            (None, [], None, True),
+        ]
+    ]
+
     listed = []
     for field in [0x0036, 0x8036, 0x7FFE, 0xFFFE, 0x0000, 0x8000, 0xFFFF, 0x7FFF]:
         got = listed_read(field)
@@ -879,7 +906,11 @@ def build():
         "or null for none; asked_heard and others_heard whether it heard from that relay and "
         "from any other in SOLICIT_WAIT; anchor_now whether its anchor now is the one it last "
         "re-attached to, another, or null for none; attached_before whether it has re-attached "
-        "before; does is settled, again, waits, moved or reattaches.",
+        "before; does is settled, again, waits, moved or reattaches. In leaves, relay is what the "
+        "destination's own last announce said of its role (null if the node does not keep it as "
+        "a neighbour), listed whether each route the node holds to it was listed as one to a "
+        "leaf, selected an index into listed (null for none), was what the node took before, and "
+        "leaf what it takes now.",
         "generator": "vectors/tools/routing.py",
         "ids": [{"address": x.hex(), "id": rid(x)} for x in addresses],
         "newer": [
@@ -913,6 +944,7 @@ def build():
         "anchors": anchors,
         "answering": answering_,
         "answered": answered_,
+        "leaves": leaves,
     }
 
 
