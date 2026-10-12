@@ -343,6 +343,32 @@ routes *to relays* went through; a node here is not told which far
 nodes are relays, so it reaches every relay it routes through, which is
 those and now and then one more.
 
+**Sending again.** A node's own frame went once, and a relay that
+missed it could not know. Where every relay in reach was receiving
+another frame at that moment, the flood never began: on the
+simulator's metro workload, 80 of some 640 broadcasts in an hour
+reached no relay at all, and those 80 were three quarters of every
+delivery missed. A frame was in reach of 20 to 50 relays, and lost at
+each to another frame it could not have heard. A relay passing a frame
+on is heard by the node that sent it, so the node can tell, at the
+cost of listening. Managed flooding's sender listens the same way. One
+more send took local broadcasts on that workload from 82–86% to 91–94%
+and alerts to every node from about 80% to about 90%; the frames sent
+again were some 240 in the hour, a few seconds of airtime.
+
+What it costs is that the floods now reach everyone: the relays'
+airtime that carries them takes the air from frames that follow
+routes. [What was measured](#what-was-measured) has it: messages to
+one node lose up to three points where the channel has room, and more
+where it has none. A second send gained a point or two of broadcast
+for as much again of that loss, so `FLOOD_RESENDS` is 1. A longer
+`FLOOD_ECHO` heard no more copies (at 32 and 64 airtimes, as many
+frames went again): where a copy is not heard, it is because none was
+sent, a busy relay having dropped it, and a frame sent again into the
+same air is dropped again. That is why a busy node gives it up as a
+busy relay would. A frame with `hops` 0 or 1 is not listened for: in a
+crowd nothing passes it on.
+
 **What it costs.** The channel is one. In the simulator's deployed
 region, floods at that power took unicast messages on time from
 29.0–41.3% to 24.6–31.6%, and broadcast from 1.1–16.3% to 11.7–34.9%.
@@ -483,6 +509,27 @@ That load is more than the channel holds, allowance or none: unicast
 on time falls from 92.0, 98.0 and 96.1% to 28.0, 23.6 and 39.2%. No
 node is near its own bucket. A thousand of them, each allowed 0.5% of
 its time, are together allowed five channels.
+
+**Sending again.** The same three rows on the firmware as it is now,
+its own frames sent once and with [sending again](#sending), at −5,
+0, 5, 10 and 20 dBm. The firmware has moved on since the first table,
+so its once-sent row is not that table's:
+
+| | | Unicast | Broadcast |
+|---|---|---|---|
+| SF7, 200 relays | once | 60.6, 88.4, 94.2, 94.0, 93.9% | 39.1, 62.7, 71.0, 78.6, 80.4% |
+| | again | 60.7, 85.9, 93.5, 92.9, 93.1% | 40.5, 67.0, 76.9, 85.3, 87.9% |
+| SF8 at 62.5 kHz, the channel full | once | 18.4, 21.2, 17.0, 13.3, 12.0% | 17.9, 23.2, 28.6, 28.2, 10.9% |
+| | again | 17.3, 20.1, 15.3, 11.8, 10.3% | 19.3, 26.2, 32.9, 31.6, 13.3% |
+| SF9, every node a relay | once | 26.1, 25.2, 20.7, 20.1, 24.0% | 29.9, 35.9, 40.1, 40.9, 40.8% |
+| | again | 25.5, 24.1, 18.8, 17.3, 20.6% | 31.5, 37.6, 42.3, 43.4, 44.2% |
+
+Broadcast gains 1.4 to 7.5 points in every case, and unicast gives up
+as many as 3.4, but for the first row at −5 dBm, where it is even.
+Deliveries per second of airtime rise in every case: in the first row
+at 20 dBm, from 33.8 to 35.1.
+
+WORKLOAD_TABLE
 
 ## Not yet measured
 
