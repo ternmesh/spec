@@ -234,10 +234,11 @@ def answered(asked, doubt, unanswered, asked_heard, others_heard, anchor_now, at
     return ("reattaches" if moves else "moved"), False, 0, False
 
 
-def out_after(moved, up, out, heard):
+def out_after(moved, up, out, heard, heard_first=False):
     """Whether a relay neighbour is out of use once a leaf's solicit's answers are in: one heard is
-    in use again; one it may use and did not hear goes out of use if the leaf has moved."""
-    if heard:
+    in use again; one it may use and did not hear, in this solicit or in the first of the pair,
+    goes out of use if the leaf has moved."""
+    if heard or heard_first:
         return False
     return out or (moved and up)
 
@@ -895,6 +896,16 @@ def build():
         ]
     ]
 
+    # Anything heard from a neighbour out of use brings it back into use; a frame discarded is not
+    # heard at all.
+    again = [
+        {"heard": h, "out_of_use": True, "out_of_use_after": not taken}
+        for h, taken in [
+            ("announce taken", True), ("announce discarded", False), ("frame passed on", True),
+            ("solicit", True), ("answer", True),
+        ]
+    ]
+
     listed = []
     for field in [0x0036, 0x8036, 0x7FFE, 0xFFFE, 0x0000, 0x8000, 0xFFFF, 0x7FFF]:
         got = listed_read(field)
@@ -950,7 +961,7 @@ def build():
         ("anchor", True, 0, False, True, "attached", True),  # to where it last moved: no new seq
         ("anchor", True, 0, False, True, None, True),
         ("anchor", True, 1, False, False, "other", True),  # twice, and none answered: waits
-        ("another", True, 0, False, True, "other", True),  # not its anchor: no new seq
+        ("another", True, 0, False, True, "other", True, True),  # not its anchor: no new seq
         (None, False, 0, False, True, "other", True),  # no anchor, then one answered
         (None, False, 0, False, True, "other", False),  # its first: no new seq
         (None, False, 1, False, False, None, False),
@@ -978,22 +989,31 @@ def build():
         # it was asked after for hops given up there - one other heard if any was, one it may use
         # and did not hear, one it did not hear and had taken out of use, and one whose link is
         # down.
+        assert asked != "another" or anchor_heard is not None, "another relay: say of the anchor"
+        assert asked == "another" or anchor_heard is None, "the anchor is asked after, or none"
+        second = asked is not None and doubt  # this solicit is the second of a pair
         relays = []
-        if asked is not None:
-            relays.append({"up": True, "out_of_use": asked == "another", "heard": asked_heard})
+        if asked is not None:  # silent in the first of a pair, or it would have settled
+            relays.append({"up": True, "out_of_use": asked == "another", "heard": asked_heard,
+                           "heard_first": False})
         if anchor_heard is not None:
-            relays.append({"up": True, "out_of_use": False, "heard": anchor_heard})
+            relays.append({"up": True, "out_of_use": False, "heard": anchor_heard,
+                           "heard_first": bool(anchor_first)})
         if others_heard:
-            relays.append({"up": True, "out_of_use": False, "heard": True})
+            relays.append({"up": True, "out_of_use": False, "heard": True, "heard_first": False})
             # one out of use, given up on earlier, that answered: in use again
-            relays.append({"up": True, "out_of_use": True, "heard": True})
+            relays.append({"up": True, "out_of_use": True, "heard": True, "heard_first": False})
+        if second:
+            # one that answered the first of the pair, and whose answer to the second was lost
+            relays.append({"up": True, "out_of_use": False, "heard": False, "heard_first": True})
         relays += [
-            {"up": True, "out_of_use": False, "heard": False},
-            {"up": True, "out_of_use": True, "heard": False},
-            {"up": False, "out_of_use": False, "heard": False},
+            {"up": True, "out_of_use": False, "heard": False, "heard_first": False},
+            {"up": True, "out_of_use": True, "heard": False, "heard_first": False},
+            {"up": False, "out_of_use": False, "heard": False, "heard_first": False},
         ]
         for x in relays:
-            x["out_of_use_after"] = out_after(moved, x["up"], x["out_of_use"], x["heard"])
+            x["out_of_use_after"] = out_after(moved, x["up"], x["out_of_use"], x["heard"],
+                                              x["heard_first"])
         answered_.append(
             {"asked": asked, "doubt": doubt, "unanswered": unanswered, "asked_heard": asked_heard,
              "others_heard": others_heard, "anchor_now": anchor_now, "attached_before": before,
@@ -1143,7 +1163,11 @@ def build():
         "after a relay that was not its anchor, says whether it heard from the relay that was "
         "(null where there was none, or the anchor is the one asked after), and that relay is "
         "among relays; anchor_heard_first whether it heard that anchor in the first solicit of "
-        "the pair, which the leaf keeps for the second as anchor_heard_first_after.",
+        "the pair, which the leaf keeps for the second as anchor_heard_first_after; each relay's "
+        "heard_first says whether the leaf heard from it in the first solicit of the pair. In "
+        "in_use_again, a node keeps a neighbour out of use and hears from it what heard says: an "
+        "announce it takes, one it discards (as a copy, by its number), a frame the neighbour "
+        "passed on, a solicit or an answer; out_of_use_after is whether it is then out of use.",
         "generator": "vectors/tools/routing.py",
         "ids": [{"address": x.hex(), "id": rid(x)} for x in addresses],
         "newer": [
@@ -1182,6 +1206,7 @@ def build():
         "given_up": given,
         "elsewhere": elsewhere,
         "samples": samples,
+        "in_use_again": again,
     }
 
 

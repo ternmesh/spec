@@ -575,13 +575,14 @@ the leaf asks again at the next `SOLICIT_GAP`. Then:
    moved.
 4. Otherwise, if it heard from no relay, it waits for the next
    `SOLICIT_GAP`.
-5. Otherwise it has moved. Every relay neighbour it may use and did
-   not hear from goes out of use. If the relay it asked after was its
+5. Otherwise it has moved. Every relay neighbour it may use that it has
+   not heard from since the solicit went, or since the first of the
+   pair went if this was the second, goes out of use: one lost answer
+   takes no relay out of use. If the relay it asked after was its
    anchor when it asked, or it asked after none, or its anchor when it
-   asked is among those it did not hear and did not hear in the first
-   solicit of the pair either, and it has an anchor now, it
-   **re-attaches** to it: it raises
-   its `seq` by one, and its next announce comes within the shortest
+   asked is among those that went out of use, and it has an anchor now
+   among the relays it may still use, it **re-attaches** to it: it
+   raises its `seq` by one, and its next announce comes within the shortest
    interval, at full power, carrying its address, and is not suppressed.
    It does not re-attach to the anchor it last re-attached to; and
    having asked after none and never re-attached, it takes its anchor
@@ -789,8 +790,13 @@ An implementation conforms to this section if, for
   asked after), and in the first solicit of the pair or not
   (`anchor_heard_first`), it does as `does` says: `settled`, asks `again`,
   `waits`, has `moved`, or `reattaches`; and then holds `doubt_after`,
-  `unanswered_after` and `anchor_heard_first_after`, and each of its `relays`, heard from or not,
-  is out of use or not as `out_of_use_after` says;
+  `unanswered_after` and `anchor_heard_first_after`, and each of its
+  `relays`, heard from in this solicit or not (`heard`) and in the first
+  of the pair or not (`heard_first`), is out of use or not as
+  `out_of_use_after` says;
+* **in use again:** keeping a neighbour out of use and hearing from it
+  what `heard` says, it holds it out of use or not as
+  `out_of_use_after` says;
 * **given up:** as a leaf with the `relays` given, as in **anchors**,
   having given `hops` hops up in a row at the one `at`, it holds each
   out of use or not as `out_of_use_after` says, and asks after the one
