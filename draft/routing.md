@@ -982,7 +982,9 @@ driving at 5 to 20 m/s 59.2% and 65.4%, 75.7% and 86.3%; with relays
 going down and coming back, unchanged. With nothing moving, deliveries
 per second of airtime stayed within 5% of what they were without it.
 Routes held once settled, with no traffic, went from 97.2% of pairs to
-99.6%.
+99.6%, but that counts a leaf's way to the relay it solicited as a
+route, as a [default route](#a-leafs-default-route) is: it is what a
+leaf with no relay up gains.
 
 **Only where few relays are heard.** Where a network is dense, every
 relay in earshot answers a solicit, some 24 of them at 20 dBm, and the
@@ -999,6 +1001,16 @@ less of both. Counting relays the leaf has heard from within two of
 their promises, and not every relay whose link is up, is what lets a
 walker solicit where it needs to: links to relays it passed long ago
 stay up until hops are given up there.
+
+**Measured of the firmware.** The reference implementation's core, with
+this section's rules and the default route, run in the simulator on the
+same fast preset (three seeds, 255 neighbours a node): with a quarter of
+the leaves walking, unicast on time was 91.2% against 86.8% without
+re-attachment, for 8% fewer deliveries per second of airtime; with
+nothing moving, 99.2% against 99.3%, and with 32 neighbours a node 85.1%
+against 80.5%. On the deployed preset, SF8 at 62.5 kHz, routes settled
+sooner: 77.6% of pairs held one six hours on, against 64.8%, on a tenth
+less airtime, and 95% either way at twelve.
 
 **Signed announces, not a network key.** Unsigned, any radio can send
 an announce in another node's name: list routes it does not have, claim
