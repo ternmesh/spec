@@ -211,24 +211,27 @@ def answering(own, asked):
 
 
 def answered(asked, doubt, unanswered, asked_heard, others_heard, anchor_now, attached_before,
-             anchor_heard=None):
-    """What a leaf does once its solicit's SOLICIT_WAIT is over, and then its doubt and count of
-    solicits wholly unanswered. asked is "anchor", "another" or None; anchor_now is "attached",
-    "other" or None; anchor_heard, with asked "another", whether the leaf heard from the relay
-    that was its anchor when it asked (None for none)."""
+             anchor_heard=None, anchor_heard_first=False):
+    """What a leaf does once its solicit's SOLICIT_WAIT is over, and then its doubt, its count of
+    solicits wholly unanswered, and whether it heard its anchor in the first of a pair. asked is
+    "anchor", "another" or None; anchor_now is "attached", "other" or None; anchor_heard, with
+    asked "another", whether the leaf heard from the relay that was its anchor when it asked
+    (None for none), and anchor_heard_first whether it did in the first solicit of the pair."""
     if asked is not None and asked_heard:
-        return "settled", False, 0
+        return "settled", False, 0, False
     # A solicit another relay answered had an answer: the streak of those with none is broken.
     unanswered = unanswered + 1 if not others_heard else 0
     if asked is not None and not doubt:
-        return ("again" if unanswered < SOLICIT_TRIES else "waits"), True, unanswered
+        return (("again" if unanswered < SOLICIT_TRIES else "waits"), True, unanswered,
+                anchor_heard is True)
     if not others_heard:
-        return "waits", False, unanswered
+        return "waits", False, unanswered, False
     first = asked is None and not attached_before  # takes its anchor without raising its seq
-    # Re-attached to, too, when the anchor it had when it asked has gone silent with the rest.
-    silent = asked in ("anchor", None) or anchor_heard is False
+    # Re-attached to, too, when the anchor it had when it asked has gone silent with the rest, in
+    # both solicits of the pair: one lost answer moves no leaf.
+    silent = asked in ("anchor", None) or (anchor_heard is False and not anchor_heard_first)
     moves = silent and anchor_now not in (None, "attached") and not first
-    return ("reattaches" if moves else "moved"), False, 0
+    return ("reattaches" if moves else "moved"), False, 0, False
 
 
 def out_after(moved, up, out, heard):
@@ -463,9 +466,9 @@ def self_check():
     assert select(None, 54, [{"seq": 6, "metric": 100}, {"seq": 5, "metric": 10}], 0) == 1
     assert listed_read(0xFFFF) is None and listed_read(0x7FFF) is None
     assert listed_read(0x8036) == (True, 54) and listed_write(True, 54) == 0x8036
-    assert answered("anchor", False, 0, False, True, "other", True) == ("again", True, 0)
-    assert answered("anchor", True, 0, False, True, "other", True) == ("reattaches", False, 0)
-    assert answered(None, False, 0, False, True, "other", False) == ("moved", False, 0)
+    assert answered("anchor", False, 0, False, True, "other", True)[:3] == ("again", True, 0)
+    assert answered("anchor", True, 0, False, True, "other", True)[:3] == ("reattaches", False, 0)
+    assert answered(None, False, 0, False, True, "other", False)[:3] == ("moved", False, 0)
     assert answering(-1, True) == (False, None, None) and answering(0, False) == (True, 16, True)
 
 
@@ -958,12 +961,18 @@ def build():
         # too: it has moved from its anchor, and re-attaches.
         ("another", True, 0, False, True, "other", True, False),
         ("another", True, 0, False, True, "other", True, True),  # its anchor answered: no
+        # The first of the pair: whether it heard its anchor is kept for the second.
+        ("another", False, 0, False, True, "other", True, True),
+        ("another", False, 0, False, True, "other", True, False),
+        # Its anchor answered the first of the pair, and its answer to the second was lost: no
+        ("another", True, 0, False, True, "other", True, False, True),
         # The relay asked after, out of use for the hops given up there, answers: in use again.
         ("another", False, 0, True, False, "attached", True, True),
     ]:
-        case = case + (None,) * (8 - len(case))
-        does, doubt_after, unanswered_after = answered(*case)
-        asked, doubt, unanswered, asked_heard, others_heard, anchor_now, before, anchor_heard = case
+        case = case + (None,) * (8 - len(case)) + (False,) * (9 - max(len(case), 8))
+        does, doubt_after, unanswered_after, first_after = answered(*case)
+        (asked, doubt, unanswered, asked_heard, others_heard, anchor_now, before, anchor_heard,
+         anchor_first) = case
         moved = does in ("moved", "reattaches")
         # The relay neighbours it has: the one asked after, first, if any - out of use already if
         # it was asked after for hops given up there - one other heard if any was, one it may use
@@ -988,8 +997,9 @@ def build():
         answered_.append(
             {"asked": asked, "doubt": doubt, "unanswered": unanswered, "asked_heard": asked_heard,
              "others_heard": others_heard, "anchor_now": anchor_now, "attached_before": before,
-             "anchor_heard": anchor_heard, "relays": relays, "does": does,
-             "doubt_after": doubt_after,
+             "anchor_heard": anchor_heard, "anchor_heard_first": anchor_first, "relays": relays,
+             "does": does, "doubt_after": doubt_after,
+             "anchor_heard_first_after": first_after,
              "unanswered_after": unanswered_after}
         )
 
@@ -1132,7 +1142,8 @@ def build():
         "after: heard from, it is in use again. In answered, anchor_heard, where the leaf asked "
         "after a relay that was not its anchor, says whether it heard from the relay that was "
         "(null where there was none, or the anchor is the one asked after), and that relay is "
-        "among relays.",
+        "among relays; anchor_heard_first whether it heard that anchor in the first solicit of "
+        "the pair, which the leaf keeps for the second as anchor_heard_first_after.",
         "generator": "vectors/tools/routing.py",
         "ids": [{"address": x.hex(), "id": rid(x)} for x in addresses],
         "newer": [

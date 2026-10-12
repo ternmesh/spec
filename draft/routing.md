@@ -483,12 +483,15 @@ out of the `POWER_K` it sends frames for every neighbour to reach.
 |---|---|---|---|
 | 0 | 1 | `hdr` | `0x5B` |
 | 1 | 4 | `sender` | the leaf's routing id |
-| 5 | 2 | `id` | counts the leaf's solicits |
+| 5 | 2 | `id` | counts the leaf's solicits, from a random value |
 | 7 | 4 | `after` | the relay it asks after, or `0xFFFFFFFF` for none |
 | 11 | 1 | `power` | what this frame was sent at, `i8` dBm, rounded up |
 
 A **solicit**. `hdr` has type `011` and flags `011` (solicit). The frame
-is exactly 12 bytes.
+is exactly 12 bytes. A leaf SHOULD give the first solicit it sends after
+it starts a random `id`, and each after it one more: a relay answers a
+solicit only once, by `sender` and `id`, and may remember those it
+answered before the leaf restarted.
 
 | Offset | Bytes | Field | |
 |---|---|---|---|
@@ -575,7 +578,8 @@ the leaf asks again at the next `SOLICIT_GAP`. Then:
 5. Otherwise it has moved. Every relay neighbour it may use and did
    not hear from goes out of use. If the relay it asked after was its
    anchor when it asked, or it asked after none, or its anchor when it
-   asked is among those it did not hear, and it has an anchor now, it
+   asked is among those it did not hear and did not hear in the first
+   solicit of the pair either, and it has an anchor now, it
    **re-attaches** to it: it raises
    its `seq` by one, and its next announce comes within the shortest
    interval, at full power, carrying its address, and is not suppressed.
@@ -782,9 +786,10 @@ An implementation conforms to this section if, for
   the one it last re-attached to, another, or none, having re-attached
   before or not, and having heard from the relay that was its anchor
   when it asked or not (`anchor_heard`, `null` for none or the one
-  asked after), it does as `does` says: `settled`, asks `again`,
-  `waits`, has `moved`, or `reattaches`; and then holds `doubt_after`
-  and `unanswered_after`, and each of its `relays`, heard from or not,
+  asked after), and in the first solicit of the pair or not
+  (`anchor_heard_first`), it does as `does` says: `settled`, asks `again`,
+  `waits`, has `moved`, or `reattaches`; and then holds `doubt_after`,
+  `unanswered_after` and `anchor_heard_first_after`, and each of its `relays`, heard from or not,
   is out of use or not as `out_of_use_after` says;
 * **given up:** as a leaf with the `relays` given, as in **anchors**,
   having given `hops` hops up in a row at the one `at`, it holds each
