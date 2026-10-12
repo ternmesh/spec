@@ -2,7 +2,8 @@
 
 **Status:** strawman, draft 0. Not frozen. Open for review under the
 seven-day rule in [GOVERNANCE.md](../GOVERNANCE.md). Every number in it
-is **provisional**, and nothing in it is measured.
+is **provisional**. Only `POSITION_HOPS` is measured, and only in the
+simulator ([below](#rationale)); nothing in it is measured on radios.
 
 A user may let chosen contacts, or a group, see where they are, so
 that a phone app can show them on a map. This section defines what a
@@ -67,10 +68,11 @@ plaintext. It takes the session's next counter, follows a route, and is
 
 **To a group**, in a [group frame](groups.md#the-frame) whose `hdr` is
 `0x61`: the group frame with its flag [`node`](groups.md#the-frame)
-set. `content` is the position. It is sealed with the group's keys,
-[flooded](flooding.md#sending) and charged to the node's own
-[allowance](flooding.md#the-allowance) as a group's message is, and
-nothing answers it.
+set. `content` is the position. It is sealed with the group's keys and
+[flooded](flooding.md#sending) with `hops` set to `POSITION_HOPS`, not
+`FLOOD_HOPS`: a position is for the members near enough to meet. It is
+charged to the node's own [allowance](flooding.md#the-allowance) as a
+group's message is, and nothing answers it.
 
 In each, the first byte of what is sealed says what it is, as
 [for an invite](groups.md#invites): `0x02` is a position. A node MUST
@@ -308,6 +310,7 @@ send the message first.
 | `POSITION_REFRESH` | 3600 s | an unchanged position is sent again after this |
 | `POSITION_STALE` | 3600 s | a fix older than this is not sent |
 | `POSITION_KEEP` | 24 h | a received position is forgotten after this |
+| `POSITION_HOPS` | 2 | what a position's flood to a group starts with |
 
 ## Conformance
 
@@ -445,6 +448,32 @@ fifteenth of the 0.5% of its time a node may
 [flood](flooding.md#the-allowance) with, and the rule on the allowance
 leaves a message room whatever a group's positions have spent.
 
+**`POSITION_HOPS`.** A group's words are for every member; where a
+member is matters to the ones nearby. A position flooded as far as words
+go spends most of its airtime on nodes too far away to use it. The
+simulator ([ternmesh/sim](https://github.com/ternmesh/sim),
+`docs/workload.md`) ran the firmware's own flooding under the traffic
+measured meshes carry: presence, position and telemetry about 80% of it
+and text under 1%. Every broadcast went to all, and each local kind was
+wanted within 5 km of its sender, or 1.5 km at an event. Three seeds
+each:
+
+| Mix | Local kinds started at | Delivered within reach | Chat | Alerts | Airtime |
+|---|---|---|---|---|---|
+| metro, 1000 nodes over 18 km | `FLOOD_HOPS` | 85-87% | 85% | 80% | 11.6 ks |
+| | 2 | 87-89% | 94% | 95% | 6.0 ks |
+| | 1 | 62-65% | 97% | 97% | 4.0 ks |
+| event, 1000 nodes over 4 km | `FLOOD_HOPS` | 43-49% | 43% | 53% | 16.0 ks |
+| | 2 | 60-61% | 75% | 81% | 8.6 ks |
+| | 1 | 35% | 96% | 96% | 2.9 ks |
+
+At 2, the local kinds arrive at least as well as at `FLOOD_HOPS`, and
+everything else better, on half the airtime. At 1, a relay in a crowd
+passes none on, too few for a reach of a few kilometres. A card is the
+same kind of frame, and [`CARD_HOPS`](cards.md#parameters) is 2 for the
+same reason. A sender's rule is enough: a relay that holds a frame of
+this kind to it is [not yet specified](#not-yet-specified).
+
 **Positions do not make first contact.** First contact is four frames,
 one of them 80 bytes, to carry one of about thirty; and a contact that
 has not answered may not want to.
@@ -491,5 +520,20 @@ up as little as it can.
   that has taken nothing later from the writer shows where they were.
 * **What became of a position**: a client sees when it shares and
   what it receives, not which positions went or arrived.
-* **Measured cost**: on radios, and in the simulator with positions in
-  its workload.
+* **Measured cost on radios.** The simulator's is
+  [above](#rationale).
+* **A wider reach for a group** whose members are spread out, chosen
+  per group up to `FLOOD_HOPS` as `interval` is, which `SHARE_GROUP`
+  would carry.
+* **Relays holding a position to `POSITION_HOPS`**, as they hold a
+  card to `CARD_HOPS`. The flag `node` is in clear, so a relay could;
+  it would also hold any other kind for the node a group frame comes to
+  carry.
+* **A reach by place**, not by hops. The simulator measured one, with
+  the sender's position and a radius on the air: at an event every
+  kind of traffic rose (chat from 44% to 68%), and on the metro it
+  delivered 96% within reach on half the airtime the firmware's flood
+  spent at `POSITION_HOPS`. It
+  puts a position on the air in clear, which goal 1 forbids, so a cell
+  coarse enough to say nothing, such as a region, is what to measure
+  next.
