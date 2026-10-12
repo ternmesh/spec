@@ -54,6 +54,7 @@ LEAF_BIT = 0x8000
 JITTER = 2
 SOLICIT_SPARSE = 4
 SOLICIT_TRIES = 3
+SOLICIT_HOPS = 3
 ANSWER_WINDOW = 16
 SOLICIT_LEN, ANSWER_LEN = 12, 13
 
@@ -224,6 +225,43 @@ def answered(asked, doubt, unanswered, asked_heard, others_heard, anchor_now, at
     first = asked is None and not attached_before  # takes its anchor without raising its seq
     moves = (asked in ("anchor", None)) and anchor_now not in (None, "attached") and not first
     return ("reattaches" if moves else "moved"), False, 0
+
+
+def out_after(moved, up, out, heard):
+    """Whether a relay neighbour is out of use once a leaf's solicit's answers are in: one heard is
+    in use again; one it may use and did not hear goes out of use if the leaf has moved."""
+    if heard:
+        return False
+    return out or (moved and up)
+
+
+def given_up(relays, at, hops):
+    """A leaf gives `hops` hops up in a row at relays[at]: whether each relay is then out of use,
+    whether it asks, after which relay (an index, or None) and whether that was its anchor."""
+    sparse, anchor, _ = solicit_view(relays)
+    n = relays[at]
+    if hops >= SOLICIT_HOPS and sparse and n["relay"] and n["up"] and not n["out_of_use"]:
+        outs = [x["out_of_use"] or i == at for i, x in enumerate(relays)]
+        return outs, True, at, anchor == at
+    return [x["out_of_use"] for x in relays], False, None, False
+
+
+def heard_elsewhere(up, out, relay, own_seq, offered_seq, retracts):
+    """Whether a node takes a neighbour out of use when another neighbour offers a route to it: it
+    is a leaf whose link is up, and the route's seq is newer than its own announce gave."""
+    if out:
+        return True
+    return up and not relay and not retracts and newer(offered_seq, own_seq)
+
+
+def sample(kind, leaf, relay, floor, theirs, up, full, power, snr, margin, sf=9):
+    """A node's state for a neighbour it keeps after hearing a solicit or an answer from it: the
+    floor, the margin it gave, and whether the link is up. An answer for this node (kind
+    "answer to me") from a relay, heard by a leaf, gives the margin."""
+    floor = floor_next(floor, power, snr, sf)
+    if kind == "answer to me" and leaf and relay:
+        theirs = margin
+    return floor, theirs, link_next(up, 16 * full - floor, theirs)
 
 
 def snr_floor_quarters(sf):
@@ -915,10 +953,93 @@ def build():
     ]:
         does, doubt_after, unanswered_after = answered(*case)
         asked, doubt, unanswered, asked_heard, others_heard, anchor_now, before = case
+        moved = does in ("moved", "reattaches")
+        # The relay neighbours it has: the one asked after, first, if any - out of use already if
+        # it was asked after for hops given up there - one other heard if any was, one it may use
+        # and did not hear, one it did not hear and had taken out of use, and one whose link is
+        # down.
+        relays = []
+        if asked is not None:
+            relays.append({"up": True, "out_of_use": asked == "another", "heard": asked_heard})
+        if others_heard:
+            relays.append({"up": True, "out_of_use": False, "heard": True})
+        relays += [
+            {"up": True, "out_of_use": False, "heard": False},
+            {"up": True, "out_of_use": True, "heard": False},
+            {"up": False, "out_of_use": False, "heard": False},
+        ]
+        for x in relays:
+            x["out_of_use_after"] = out_after(moved, x["up"], x["out_of_use"], x["heard"])
         answered_.append(
             {"asked": asked, "doubt": doubt, "unanswered": unanswered, "asked_heard": asked_heard,
              "others_heard": others_heard, "anchor_now": anchor_now, "attached_before": before,
-             "does": does, "doubt_after": doubt_after, "unanswered_after": unanswered_after}
+             "relays": relays, "does": does, "doubt_after": doubt_after,
+             "unanswered_after": unanswered_after}
+        )
+
+    given = []
+    for rs, at, hops in [
+        ([relay(True, False, 80, 10, 600), relay(True, False, 160, 10, 600)], 1, 3),  # its anchor
+        ([relay(True, False, 80, 10, 600), relay(True, False, 160, 10, 600)], 0, 3),  # another
+        ([relay(True, False, 80, 10, 600), relay(True, False, 160, 10, 600)], 1, 2),  # two: no
+        # five relays heard lately: not where it solicits, and nothing goes out of use
+        ([relay(True, False, 16 * k, 10, 600) for k in range(1, 6)], 4, 3),
+        ([relay(True, True, 80, 10, 600), relay(True, False, 160, 10, 600)], 0, 3),  # out already
+        ([relay(False, False, 80, 10, 600), relay(True, False, 160, 10, 600)], 0, 3),  # link down
+        # a neighbour that is not a relay
+        ([relay(True, False, 80, 10, 600, False), relay(True, False, 160, 10, 600)], 0, 3),
+    ]:
+        outs, asks, after, anchored = given_up(rs, at, hops)
+        given.append({"relays": rs, "at": at, "hops": hops, "out_of_use_after": outs,
+                      "asks": asks, "after": after, "anchored": anchored})
+
+    elsewhere = [
+        {"up": up, "out_of_use": out, "relay": rl, "own_seq": own, "offered_seq": off,
+         "retracts": ret, "out_of_use_after": heard_elsewhere(up, out, rl, own, off, ret)}
+        for up, out, rl, own, off, ret in [
+            (True, False, False, 5, 6, False),  # a newer seq from elsewhere: it has moved
+            (True, False, False, 5, 5, False),  # the same: it has not
+            (True, False, False, 5, 4, False),
+            (True, False, False, 0xFFFF, 0, False),  # newer across the wrap
+            (True, False, False, 5, 6, True),  # a retraction says nothing of it
+            (True, False, True, 5, 6, False),  # a relay is not taken out of use so
+            (False, False, False, 5, 6, False),  # nor is a leaf whose link is down
+            (True, True, False, 5, 4, False),  # out of use already, it stays so
+        ]
+    ]
+
+    samples = []
+    for kind, leaf, rl, floor, theirs, up, power, snr, margin in [
+        # a leaf hears its relay's answer: the margin given, and the link up at once
+        ("answer to me", True, True, 16 * -20, 0, False, 14, 0, 140),
+        ("answer to me", True, True, 16 * -20, 0, False, 14, 0, 127),  # less than none: not up
+        ("answer to me", False, True, 16 * -20, 0, False, 14, 0, 140),  # a relay takes no margin
+        ("answer to me", True, False, 16 * -20, 0, False, 14, 0, 140),  # nor from a leaf
+        ("answer to another", True, True, 16 * -20, 130, True, 14, -40, 200),  # a sample only
+        ("solicit", False, False, 16 * -20, 135, True, 22, -50, None),  # a relay hears a leaf
+        ("solicit", False, False, 16 * 30, 135, True, 22, -50, None),  # and the link goes down
+    ]:
+        f, t, u = sample(kind, leaf, rl, floor, theirs, up, 22, power, snr, margin)
+        # A relay that hears a solicit answers with the margin it gives the leaf, at the power of
+        # a frame for it, if its own margin allows.
+        answers = kind == "solicit" and not leaf and answering(16 * 22 - f, False)[0]
+        samples.append(
+            {"kind": kind, "leaf": leaf, "relay": rl, "kept": True, "floor_sixteenths": floor,
+             "their_margin": theirs, "up": up, "full_power": 22, "power": power,
+             "snr_quarter_db": snr, "margin": margin, "floor_after": f, "their_margin_after": t,
+             "up_after": u,
+             "answer_margin": margin_byte(22, f) if answers else None,
+             "answer_power": max(-9, min(22, -(-(f + 16 * POWER_MARGIN) // 16)))
+             if answers else None}
+        )
+    # From a node it does not keep, a solicit or an answer gives nothing: no neighbour, no answer.
+    for kind, leaf in [("solicit", False), ("answer to me", True)]:
+        samples.append(
+            {"kind": kind, "leaf": leaf, "relay": not leaf, "kept": False,
+             "floor_sixteenths": None, "their_margin": None, "up": None, "full_power": 22,
+             "power": 14, "snr_quarter_db": 0, "margin": 140 if kind != "solicit" else None,
+             "floor_after": None, "their_margin_after": None, "up_after": None,
+             "answer_margin": None, "answer_power": None}
         )
 
     return {
@@ -966,7 +1087,23 @@ def build():
         "neighbour the node may not use: its link is down or it is out of use. In powers, a "
         "node, a leaf or not, with the neighbours given, each with its floor and whether it is "
         "out of use, and with the lowest and full power given in dBm, sends a frame for every "
-        "neighbour at power.",
+        "neighbour at power. In answered, relays are the leaf's relay neighbours, the one asked "
+        "after first if any, each with whether its link is up, whether it was out of use, "
+        "whether the leaf heard from it in SOLICIT_WAIT, and whether it is out of use after. In "
+        "given_up, relays are a leaf's neighbours as in anchors, at the index of the one hops "
+        "hops in a row are given up at, out_of_use_after whether each is then out of use, asks "
+        "whether the leaf then asks, after the index it asks after (null for none) and anchored "
+        "whether that was its anchor. In elsewhere, a node keeps a neighbour whose link is up or "
+        "not, out of use or not and a relay or not, whose own last announce gave own_seq, and "
+        "another neighbour offers a route to it at offered_seq, a retraction or not; "
+        "out_of_use_after is whether the first is then out of use. In samples, a node, a leaf or "
+        "not, keeps a neighbour, a relay or not, with floor_sixteenths, their_margin (0 for none) "
+        "and its link up or not, and hears from it a solicit or an answer (an answer to me is "
+        "one for this node) sent at power, heard at snr_quarter_db at SF9, with margin; its full "
+        "power is full_power, and the floor, the margin and the link are then the ones after; "
+        "a relay that answers a solicit answers with answer_margin at answer_power, both null "
+        "where it does not answer. Where kept is false the node does not keep the sender, and "
+        "takes nothing from the frame: it keeps no neighbour for it and answers nothing.",
         "generator": "vectors/tools/routing.py",
         "ids": [{"address": x.hex(), "id": rid(x)} for x in addresses],
         "newer": [
@@ -1002,6 +1139,9 @@ def build():
         "answered": answered_,
         "leaves": leaves,
         "powers": powers,
+        "given_up": given,
+        "elsewhere": elsewhere,
+        "samples": samples,
     }
 
 

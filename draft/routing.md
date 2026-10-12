@@ -781,7 +781,22 @@ An implementation conforms to this section if, for
   the one it last re-attached to, another, or none, having re-attached
   before or not, it does as `does` says: `settled`, asks `again`,
   `waits`, has `moved`, or `reattaches`; and then holds `doubt_after`
-  and `unanswered_after`;
+  and `unanswered_after`, and each of its `relays`, heard from or not,
+  is out of use or not as `out_of_use_after` says;
+* **given up:** as a leaf with the `relays` given, as in **anchors**,
+  having given `hops` hops up in a row at the one `at`, it holds each
+  out of use or not as `out_of_use_after` says, and asks after the one
+  `after` (`null` for none), its anchor or not (`anchored`), or does
+  not ask (`asks`);
+* **elsewhere:** keeping a neighbour as given, whose own last announce
+  gave `own_seq`, and offered a route to it at `offered_seq` by another
+  neighbour, it holds that neighbour out of use or not as
+  `out_of_use_after` says;
+* **samples:** keeping a neighbour as given (or none, where `kept` is
+  false), and hearing from it the solicit or answer given, it holds the
+  floor, the margin it gave and the link as `floor_after`,
+  `their_margin_after` and `up_after` say, and answers a solicit with
+  `answer_margin` at `answer_power`, or not where they are `null`;
 * **leaves:** with the destination's own last announce saying it is a
   relay or not (`relay`, `null` if it is not kept as a neighbour), the
   routes held to it each listed as to a leaf or not (`listed`), the one
