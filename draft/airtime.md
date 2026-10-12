@@ -1,12 +1,13 @@
 # The airtime budget
 
 **Status:** strawman, draft 0. Not frozen. Open for review under the
-seven-day rule in [GOVERNANCE.md](../GOVERNANCE.md). The budget is not
-from the simulator: no candidate there kept one. What was measured
-that sets its numbers is [below](#what-was-measured), and what the
-budget itself does to a mesh is [not yet measured](#not-yet-measured).
-Every number here is **provisional**, and the choices the maintainer
-is asked to make are under [Not yet specified](#not-yet-specified).
+seven-day rule in [GOVERNANCE.md](../GOVERNANCE.md). The budget was
+set before the simulator kept one. What was measured that sets its
+numbers, and what keeping it then did to a mesh in the simulator, are
+[below](#what-was-measured); the second recommends changing two of its
+numbers, which this draft has not yet done. Every number here is
+**provisional**, and the choices the maintainer is asked to make are
+under [Not yet specified](#not-yet-specified).
 
 Every node shares one channel ([Radio settings](phy.md#profiles)).
 This section says how much of its time a node may spend sending, over
@@ -293,9 +294,10 @@ so a relayed part would be air it could never spend.
 allow once routing, at its largest, and the own part are taken out,
 rounded down: 9.6875% in all. It is below the most any node was
 measured sending in a whole hour, which counts every frame that node
-sent, its own and routing included. Whether it binds a relay over a
-minute, where that hour's average does not, is the first thing to
-measure.
+sent, its own and routing included. Over a minute it binds a little,
+and only where relays are busiest: the busiest relay measured dropped
+5.3% of what it was asked to pass on, and delivery did not move
+([What the budget did](#what-the-budget-did)). It began to cost at 4%.
 
 **1% for a node's own.** The simulator's workloads send a message from
 each node every half hour, or in the heaviest flooding run every five
@@ -304,7 +306,14 @@ minutes. One try of a 67-byte message frame on `EU868` takes
 a node's time; 1% is more than twenty times that. It binds a node that
 writes far more than any workload measured: a bot, a client in a loop,
 or a user who writes without pause. Ten minutes of it is 6 s of
-airtime, forty-five such frames at once.
+airtime, forty-five such frames at once. What that left out is
+retries: a message may go from its source 24 times, four tries of
+three sends each and once more [another way](forwarding.md#hops), and
+where frames are lost it does. 24 sends of a 60-byte frame take 2.9 s
+on `EU868`'s modulation and 9.7 s at SF9; one or two messages' retries
+spend the part, and in a full network every node is retrying.
+Measured, 1% held a node's frames for minutes there and made a full
+network worse; 2% did not ([What the budget did](#what-the-budget-did)).
 
 **Windows.** The own part holds ten minutes, as the own flood bucket
 does: a person writes in bursts, a few messages and then none. The
@@ -340,8 +349,10 @@ routing part's own spend, and a metric that moves with load moves
 routes, which costs announces again: in the simulator's town, an
 allowance spent on any changed route went on being spent
 ([Routes](routing.md#rationale)). A spent relay already sheds its load,
-by dropping and so being tried another way. Whether more is needed is
-for the simulator.
+by dropping and so being tried another way. In the simulator that was
+enough: a unicast that lost a frame to a spent relay arrived on time
+as often as any other, and relays spent their part rarely
+([What the budget did](#what-the-budget-did)).
 
 **What the client is told.** Reason 4 was named in the companion
 protocol before the budget was written, and was already used for the
@@ -352,8 +363,8 @@ it.
 
 ## What was measured
 
-Nothing of the budget itself. These are the figures its numbers rest
-on, each recorded where it was measured:
+First, before any simulator kept the budget, the figures its numbers
+rest on, each recorded where it was measured:
 
 * **The busiest node.** On the fast preset, SF7 at 125 kHz, a thousand
   nodes and 200 relays, the busiest node of any candidate sent 1.4 to
@@ -378,15 +389,69 @@ Those runs are SF7 at 125 kHz, the modulation of `EU868`, `RU868` and
 255-byte frame is 320.768 ms there against 407.808 ms, so a share of
 time buys at least as many frames.
 
+### What the budget did
+
+ternmesh/sim kept the budget for candidate 3's frames, as
+`vectors/airtime.json` has it, on the 200-node town at SF9 and on the
+thousand-node region's fast preset (SF7 at 125 kHz) and deployed
+preset (SF8 at 62.5 kHz, coding rate 4/8), at -5, 0 and 20 dBm, beside
+Meshtastic and MeshCore, which keep none
+([ternmesh/sim, `docs/airtime.md`](https://github.com/ternmesh/sim/blob/main/docs/airtime.md),
+MSH-92). At the comparison's traffic, a message from every node every
+half hour:
+
+* **The relayed part** dropped nothing on the fast preset or in the
+  town, where the busiest relay passed frames on for 0.7 to 2.2% of its
+  hour. On the deployed preset it dropped 0.07 to 1.2% of what relays
+  were asked to pass on, 0.4 to 3.6% at the ten busiest, 5.3% at the
+  busiest, and unicast on time moved by under a point; the busiest node
+  there, with no budget, sent for 3.7 to 6.9% of its hour, more than
+  the figure above. At 4% the ten busiest dropped up to 21% and unicast
+  fell 2.6 points; at 2%, 3 to 10 points. At 12% it dropped next to
+  nothing.
+* **The own part** held nothing on the fast preset and 4 frames an hour
+  in the town. On the deployed preset it held 3,000 to 4,500 frames an
+  hour for about two minutes each, past the 60 s deadline: unicast on
+  time did not move, the 95th-percentile delay doubled or more, to 151
+  to 291 s, and deliveries per second of airtime rose 12 to 47%, the
+  retries held back having been mostly lost anyway. At 2% it held a
+  tenth as many, for a minute, and delay was as with no budget.
+
+At six times that traffic, a message every five minutes, the town fell
+from 19.9% of unicasts on time to 5.1% with the own part at 1%, each
+held frame waiting seven minutes, and to 18.7% at 2%; at 4% nothing was
+held. The deployed preset fell from 2.1-3.7% to 0.3-0.7% at 1%, and to
+1.8-3.0% at 2%. The fast preset, whose frames are a third as long,
+held almost nothing at 1%; there, at -5 dBm, the relayed part dropped
+10% of what the busiest relay was asked, the ten busiest 2.3%, with
+delivery unchanged.
+
+Own 2% and relayed 7%, which keep a relay's budget at 9.6875% of its
+time, delivered on the deployed preset 23.1, 24.2 and 12.3% of unicasts
+on time at -5, 0 and 20 dBm, against 22.6, 22.7 and 11.5% with the
+values above and 22.5, 23.4 and 11.9% with no budget, with delay as
+with no budget.
+
+With a twentieth of the nodes writing a message every 10 seconds, the
+own part did what it is for: the other nodes' unicasts arrived on time
+36 to 70% of the time on the fast preset against 14 to 19% with no
+budget, and 10 to 18% against 3 to 10% on the deployed preset; at 2%,
+25 to 54% and 10 to 16%. The writers sent only stale messages: their
+own part let their frames go slower than they came, nothing drops a
+frame of a node's own, and every message went out behind a backlog
+minutes long.
+
 ## Not yet measured
 
-* **The budget in the simulator**: whether 8% binds the busiest relays
-  over a minute, at −5 dBm where they carry the most; whether frames
-  dropped at a spent relay go another way or are lost; and what the
-  own part costs a mesh where some nodes write without pause.
+* **The windows**: neither `BUDGET_OWN_WINDOW` nor
+  `BUDGET_RELAY_WINDOW` was varied in the simulator.
+* **The 500 kHz profiles**: every run was at 125 kHz or 62.5 kHz, where
+  a frame takes longer and the own part binds sooner.
 * **The own part against what people send**, from a workload drawn
   from the field rather than one message every half hour.
-* **Any of it through the firmware's own code, or on radios.**
+* **Any of it through the firmware's own code, or on radios.** The
+  simulator could not run its budget over the firmware's core: the
+  forwarder there has no way to drop a frame it was given to pass on.
 
 ## Not yet specified
 
@@ -398,6 +463,17 @@ Each of these is a choice for the maintainer.
   full and now, in milliseconds, and how many milliseconds until it
   holds a 255-byte frame. That is what a screen showing "what is left"
   needs, and is left out here until the parts are agreed.
+* **The own and relayed shares.** The simulator recommends
+  `BUDGET_OWN` 2% and `BUDGET_RELAY` 7%, the sum unchanged
+  ([What the budget did](#what-the-budget-did)): the own part at 1%
+  binds on retries and makes a full network worse, and the relayed
+  part has room to spare at 7%. 2% shields a mesh from a node that
+  writes without pause less than 1% does, but still one and a half to
+  three times over. Not yet adopted here.
+* **How long a frame of the node's own may wait.** Nothing drops one,
+  so a node writing faster than its own part fills sends every message
+  behind its backlog, late. A limit on how many may wait, or for how
+  long, would go with the companion protocol's reason 4.
 * **Withdrawing a frame that waits.** A client cannot take back a
   message waiting for the budget, though it can a group message by
   leaving the group.
