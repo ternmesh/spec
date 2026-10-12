@@ -2,7 +2,8 @@
 
 **Status:** strawman, draft 0. Not frozen. Open for review under the
 seven-day rule in [GOVERNANCE.md](../GOVERNANCE.md). Every number in it
-is **provisional**, and nothing in it is measured.
+is **provisional**. Only `POSITION_HOPS` is measured, and only in the
+simulator ([below](#rationale)); nothing in it is measured on radios.
 
 A user may let chosen contacts, or a group, see where they are, so
 that a phone app can show them on a map. This section defines what a
