@@ -306,8 +306,8 @@ role is soon taken for one everywhere.
 
 With no room for a new route, it replaces the least worth keeping of
 those not selected, if it is worth more: a route the node could select
-now is worth more than one it could not, then a newer `seq`, then a
-lower metric.
+now, feasible and through a neighbour it may [use](#roles), is worth
+more than one it could not, then a newer `seq`, then a lower metric.
 
 Routes do not expire. A route lasts until its neighbour retracts it or
 is forgotten.
@@ -766,7 +766,8 @@ An implementation conforms to this section if, for
   its floor and whether it is out of use, and its lowest and full
   power, it sends a frame for every neighbour at `power`;
 * **kept:** with four routes held and `selected` among them, offered
-  `offered`, it replaces `replaces` (`null` for none);
+  `offered`, each through a neighbour it may use or not (`usable`), it
+  replaces `replaces` (`null` for none);
 * **listed:** it reads each route's `metric` as a retraction, or as
   `leaf` and `metric`, and writes them back as `field`;
 * **anchors:** as a leaf, with the relay neighbours

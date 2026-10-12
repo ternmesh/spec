@@ -347,8 +347,10 @@ def select(fd, cost, routes, selected):
 
 
 def rank(fd, cost, r):
-    """What a route is worth keeping: selectable, then the newer seq, then the lower metric."""
-    return (feasible(fd, r["seq"], r["metric"]), r["seq"], total(r["metric"], cost))
+    """What a route is worth keeping: selectable - through a neighbour the node may use, and
+    feasible - then the newer seq, then the lower metric."""
+    return (r.get("usable", True) and feasible(fd, r["seq"], r["metric"]), r["seq"],
+            total(r["metric"], cost))
 
 
 def below(a, b):
@@ -769,9 +771,15 @@ def build():
         (fd, [(10, 54), (10, 55), (10, 56), (10, 57)], 2, (10, 56)),
         (None, [(1, 54), (2, 5000), (3, 9000), (4, 30000)], 0, (5, 32000)),
         (None, [(1, 54), (2, 5000), (3, 9000), (4, 30000)], 3, (1, 0)),
+        # Through a neighbour it may not use, a route cannot be selected: a usable offer, older
+        # and longer, takes its place; an unusable one takes no usable route's.
+        (fd, [(10, 54), (11, 54, False), (10, 56), (10, 57)], 0, (10, 100)),
+        (fd, [(10, 54), (11, 54), (10, 56), (10, 57)], 0, (11, 0, False)),
+        (fd, [(10, 54), (11, 54, False), (10, 56), (10, 57)], 0, (12, 0, False)),
+        (None, [(5, 54, False), (5, 60, False), (5, 70, False), (5, 80)], 3, (1, 9000)),
     ]:
-        rs = routes_of(pairs)
-        o = {"seq": off[0], "metric": off[1]}
+        rs = [{"seq": x[0], "metric": x[1], "usable": len(x) < 3 or x[2]} for x in pairs]
+        o = {"seq": off[0], "metric": off[1], "usable": len(off) < 3 or off[2]}
         kept.append(
             {
                 "feasibility_distance": f,
@@ -1137,9 +1145,10 @@ def build():
         "destination's own last announce said of its role (null if the node does not keep it as "
         "a neighbour), listed whether each route the node holds to it was listed as one to a "
         "leaf, selected an index into listed (null for none), was what the node took before, and "
-        "leaf what it takes now. In selection, a route whose usable is false goes through a "
-        "neighbour the node may not use: its link is down or it is out of use. In powers, a "
-        "node, a leaf or not, with the neighbours given, each with its floor and whether it is "
+        "leaf what it takes now. In selection and kept, a route whose usable is false goes "
+        "through a neighbour the node may not use: its link is down or it is out of use. In "
+        "powers, a node, a leaf or not, with the neighbours given, each with its floor and "
+        "whether it is "
         "out of use, and with the lowest and full power given in dBm, sends a frame for every "
         "neighbour at power. In answered, relays are the leaf's relay neighbours, the one asked "
         "after first if any, each with whether its link is up, whether it was out of use, "
