@@ -26,7 +26,8 @@ produced by
 1. **A flood costs a frame a relay at most, and where relays are many,
    far less.** A relay that hears another pass the frame on does not.
 2. **A flood stops.** It goes a few relays from where it began, and no
-   node sends one frame twice.
+   relay passes one frame on twice. Its writer sends it again only if
+   it hears no relay pass it on, and only `FLOOD_RESENDS` times.
 3. **No sender, no destination.** What this section puts in a frame
    names no node.
 4. **Floods do not take the channel.** A node spends a bounded share of
@@ -86,7 +87,8 @@ relabelled as another kind among them.
 
 A node floods a frame of its own with `hops` set to `FLOOD_HOPS`, or
 fewer where the section that defines its kind says so, and
-`power` to what it is sent at, once. It takes the frame's id as
+`power` to what it is sent at, once, and again only as
+[Sending again](#sending) below says. It takes the frame's id as
 [seen](#receiving) before it sends, and waits for
 [its allowance](#the-allowance).
 
@@ -106,13 +108,37 @@ boost plays no part.
 [Listening first](forwarding.md#listening-first) holds for flooded
 frames as for every other.
 
+**Sending again.** A frame of a node's own whose `hops` is 2 or more is
+one a relay should pass on, and the node listens for that. If it
+receives no copy of the frame within `FLOOD_ECHO` airtimes of the frame
+from when it went on the air, it SHOULD send the frame again: the same
+bytes but for `power`, which is worked out afresh. It first waits a
+random time, uniform up to `FLOOD_WAIT` airtimes, as a relay does, and
+the frame waits for its allowance as before. Each time it goes it is
+listened for again, and a node MUST NOT send a frame of its own more
+than `FLOOD_RESENDS` times beyond the first.
+
+* A copy received at any time before the frame goes again drops it.
+* When the listening ends, a node [busy](#a-busy-relay) as a relay
+  would be gives the frame up as often as such a relay drops a frame
+  it would pass on: it reckons its busy share as a relay does, leaf or
+  relay.
+* A node MAY give a frame up rather than send it again, as one with no
+  room left for a frame it has to send, or to pass on, does.
+
+A frame whose `hops` is 0 or 1 goes once: a relay in a crowd does not
+pass it on, so nothing will be heard of it.
+
 ## Receiving
 
 A node that receives a flooded frame works out its id.
 
 **A frame it has seen** is a copy. If the node is
 [waiting to pass that frame on](#passing-on), the copy counts against
-it. Otherwise the copy is ignored.
+it; if it is its own, which it is listening for or waiting to
+[send again](#sending), it is not sent again. Otherwise the copy is
+ignored. A node takes a frame of its own as seen for as long as it
+might send it again, whatever else it has seen meanwhile.
 
 **A frame it has not seen** is taken as seen, and handed to the section
 that defines its kind: every node does this, leaf or relay, whatever
@@ -180,7 +206,9 @@ with `busy` and `FLOOD_BUSY` in millionths: 0 up to `FLOOD_BUSY`, and
 drops the frame if the number is less than `drops`. A frame dropped so
 is not charged to the allowance.
 
-This holds for frames a relay passes on and not for a node's own.
+This holds for frames a relay passes on and not for a node's own, but
+for a frame of its own about to go [again](#sending), which a node
+gives up as often as this has a relay drop one, leaf or relay.
 
 ## The allowance
 
@@ -213,6 +241,8 @@ transmit at all, which bounds these and everything else it sends.
 | `FLOOD_SPARSE` | 8 | relay neighbours, at most, of a bridge |
 | `FLOOD_WAIT` | 8 | airtimes |
 | `FLOOD_COPIES` | 2 | so one more copy heard drops a waiting frame |
+| `FLOOD_RESENDS` | 1 | times a node's own frame goes again, at most |
+| `FLOOD_ECHO` | 16 | airtimes a node listens for its own frame passed on |
 | `SEEN_FOR` | 60 s | |
 | `SEEN_ROOM` | 128 | frames |
 | `FLOOD_OWN` | 0.5% | of a node's time |
@@ -316,6 +346,32 @@ routing sees them joined. The simulator reached the neighbours its
 routes *to relays* went through; a node here is not told which far
 nodes are relays, so it reaches every relay it routes through, which is
 those and now and then one more.
+
+**Sending again.** A node's own frame went once, and a relay that
+missed it could not know. Where every relay in reach was receiving
+another frame at that moment, the flood never began: on the
+simulator's metro workload, 80 of some 640 broadcasts in an hour
+reached no relay at all, and those 80 were three quarters of every
+delivery missed. A frame was in reach of 20 to 50 relays, and lost at
+each to another frame it could not have heard. A relay passing a frame
+on is heard by the node that sent it, so the node can tell, at the
+cost of listening. Managed flooding's sender listens the same way. One
+more send took local broadcasts on that workload from 85–86% to 93–94%
+and chat from 81–88% to 92–95%; the frames sent again were 144 in the
+hour, a few seconds of airtime.
+
+What it costs is that the floods now reach everyone: the relays'
+airtime that carries them takes the air from frames that follow
+routes. [What was measured](#what-was-measured) has it: messages to
+one node lose up to three or four points where the channel has room,
+and more where it has none. A second send gained a point or two of broadcast
+for as much again of that loss, so `FLOOD_RESENDS` is 1. A longer
+`FLOOD_ECHO` heard no more copies (at 32 and 64 airtimes, as many
+frames went again): where a copy is not heard, it is because none was
+sent, a busy relay having dropped it, and a frame sent again into the
+same air is dropped again. That is why a busy node gives it up as a
+busy relay would. A frame with `hops` 0 or 1 is not listened for: in a
+crowd nothing passes it on.
 
 **What it costs.** The channel is one. In the simulator's deployed
 region, floods at that power took unicast messages on time from
@@ -457,6 +513,45 @@ That load is more than the channel holds, allowance or none: unicast
 on time falls from 92.0, 98.0 and 96.1% to 28.0, 23.6 and 39.2%. No
 node is near its own bucket. A thousand of them, each allowed 0.5% of
 its time, are together allowed five channels.
+
+**Sending again.** The same three rows on the firmware as it is now,
+its own frames sent once and with [sending again](#sending), at −5,
+0, 5, 10 and 20 dBm. The firmware has moved on since the first table,
+so its once-sent row is not that table's:
+
+| | | Unicast | Broadcast |
+|---|---|---|---|
+| SF7, 200 relays | once | 60.6, 88.4, 94.2, 94.0, 93.9% | 39.1, 62.7, 71.0, 78.6, 80.4% |
+| | again | 60.7, 85.9, 93.5, 92.9, 93.1% | 40.5, 67.0, 76.9, 85.3, 87.9% |
+| SF8 at 62.5 kHz, the channel full | once | 18.4, 21.2, 17.0, 13.3, 12.0% | 17.9, 23.2, 28.6, 28.2, 10.9% |
+| | again | 17.3, 20.1, 15.3, 11.8, 10.3% | 19.3, 26.2, 32.9, 31.6, 13.3% |
+| SF9, every node a relay | once | 26.1, 25.2, 20.7, 20.1, 24.0% | 29.9, 35.9, 40.1, 40.9, 40.8% |
+| | again | 25.5, 24.1, 18.8, 17.3, 20.6% | 31.5, 37.6, 42.3, 43.4, 44.2% |
+
+Broadcast gains 1.4 to 7.5 points in every case, and unicast gives up
+as many as 3.4, but for the first row at −5 dBm, where it is even.
+Deliveries per second of airtime rise in every case: in the first row
+at 20 dBm, from 33.8 to 35.1.
+
+On the simulator's workloads drawn from the field (ternmesh/sim,
+`docs/workload.md`): a thousand nodes over 18 km on the fast preset,
+200 relays, three seeds, the range over the seeds of each flow's
+deliveries within a minute. Local is presence, position and telemetry,
+wanted within 5 km; an alert is wanted by every node, and there are
+only nine an hour, so its range is wide:
+
+| | | Local | Chat | Alerts | Direct | Airtime |
+|---|---|---|---|---|---|---|
+| Metro | once | 85.0–86.3% | 81.3–88.0% | 62.7–95.5% | 95.6–97.0% | 11.6 ks |
+| | again | 92.7–94.2% | 91.5–94.7% | 75.7–95.5% | 93.3–97.3% | 12.6 ks |
+| An event, the channel busy | once | 43.0–47.6% | 40.5–45.1% | 50.9–56.9% | 65.8–84.4% | 16.0 ks |
+| | again | 53.0–54.9% | 40.8–54.3% | 32.3–69.0% | 58.9–65.7% | 16.1 ks |
+| Direct messages heavy | once | 82.9–84.3% | 72.0–80.2% | 61.3–95.0% | 94.0–95.8% | 13.0 ks |
+| | again | 91.0–93.1% | 85.4–94.3% | 91.3–94.4% | 89.3–93.3% | 13.9 ks |
+
+Frames sent again were 144 an hour on the metro and some 3,000 at the
+event, where the relays' copies were dropped as busy; it is there that
+direct messages pay most.
 
 ## Not yet measured
 
