@@ -574,8 +574,9 @@ the leaf asks again at the next `SOLICIT_GAP`. Then:
    `SOLICIT_GAP`.
 5. Otherwise it has moved. Every relay neighbour it may use and did
    not hear from goes out of use. If the relay it asked after was its
-   anchor when it asked, or it asked after none, and it has an anchor
-   now, it **re-attaches** to it: it raises
+   anchor when it asked, or it asked after none, or its anchor when it
+   asked is among those it did not hear, and it has an anchor now, it
+   **re-attaches** to it: it raises
    its `seq` by one, and its next announce comes within the shortest
    interval, at full power, carrying its address, and is not suppressed.
    It does not re-attach to the anchor it last re-attached to; and
@@ -779,7 +780,9 @@ An implementation conforms to this section if, for
   solicits in a row that had no answer at all, hearing the relay asked
   after or not, and other relays or not, and with an anchor now that is
   the one it last re-attached to, another, or none, having re-attached
-  before or not, it does as `does` says: `settled`, asks `again`,
+  before or not, and having heard from the relay that was its anchor
+  when it asked or not (`anchor_heard`, `null` for none or the one
+  asked after), it does as `does` says: `settled`, asks `again`,
   `waits`, has `moved`, or `reattaches`; and then holds `doubt_after`
   and `unanswered_after`, and each of its `relays`, heard from or not,
   is out of use or not as `out_of_use_after` says;
@@ -794,8 +797,9 @@ An implementation conforms to this section if, for
   `out_of_use_after` says;
 * **samples:** keeping a neighbour as given (or none, where `kept` is
   false), and hearing from it the solicit or answer given, it holds the
-  floor, the margin it gave and the link as `floor_after`,
-  `their_margin_after` and `up_after` say, and answers a solicit with
+  floor, the margin it gave, the link and whether the neighbour is out
+  of use as `floor_after`, `their_margin_after`, `up_after` and
+  `out_of_use_after` say, and answers a solicit with
   `answer_margin` at `answer_power`, or not where they are `null`;
 * **leaves:** with the destination's own last announce saying it is a
   relay or not (`relay`, `null` if it is not kept as a neighbour), the

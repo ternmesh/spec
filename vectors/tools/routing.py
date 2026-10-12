@@ -210,10 +210,12 @@ def answering(own, asked):
     return True, JITTER if asked else ANSWER_WINDOW, not asked
 
 
-def answered(asked, doubt, unanswered, asked_heard, others_heard, anchor_now, attached_before):
+def answered(asked, doubt, unanswered, asked_heard, others_heard, anchor_now, attached_before,
+             anchor_heard=None):
     """What a leaf does once its solicit's SOLICIT_WAIT is over, and then its doubt and count of
     solicits wholly unanswered. asked is "anchor", "another" or None; anchor_now is "attached",
-    "other" or None."""
+    "other" or None; anchor_heard, with asked "another", whether the leaf heard from the relay
+    that was its anchor when it asked (None for none)."""
     if asked is not None and asked_heard:
         return "settled", False, 0
     # A solicit another relay answered had an answer: the streak of those with none is broken.
@@ -223,7 +225,9 @@ def answered(asked, doubt, unanswered, asked_heard, others_heard, anchor_now, at
     if not others_heard:
         return "waits", False, unanswered
     first = asked is None and not attached_before  # takes its anchor without raising its seq
-    moves = (asked in ("anchor", None)) and anchor_now not in (None, "attached") and not first
+    # Re-attached to, too, when the anchor it had when it asked has gone silent with the rest.
+    silent = asked in ("anchor", None) or anchor_heard is False
+    moves = silent and anchor_now not in (None, "attached") and not first
     return ("reattaches" if moves else "moved"), False, 0
 
 
@@ -950,9 +954,16 @@ def build():
         # Another relay answered: the streak of solicits with no answer at all is broken.
         ("anchor", False, 2, False, True, "other", True),
         (None, False, 2, False, True, "other", True),
+        # Asked after another relay for hops given up there, and the anchor it had then silent
+        # too: it has moved from its anchor, and re-attaches.
+        ("another", True, 0, False, True, "other", True, False),
+        ("another", True, 0, False, True, "other", True, True),  # its anchor answered: no
+        # The relay asked after, out of use for the hops given up there, answers: in use again.
+        ("another", False, 0, True, False, "attached", True, True),
     ]:
+        case = case + (None,) * (8 - len(case))
         does, doubt_after, unanswered_after = answered(*case)
-        asked, doubt, unanswered, asked_heard, others_heard, anchor_now, before = case
+        asked, doubt, unanswered, asked_heard, others_heard, anchor_now, before, anchor_heard = case
         moved = does in ("moved", "reattaches")
         # The relay neighbours it has: the one asked after, first, if any - out of use already if
         # it was asked after for hops given up there - one other heard if any was, one it may use
@@ -961,8 +972,12 @@ def build():
         relays = []
         if asked is not None:
             relays.append({"up": True, "out_of_use": asked == "another", "heard": asked_heard})
+        if anchor_heard is not None:
+            relays.append({"up": True, "out_of_use": False, "heard": anchor_heard})
         if others_heard:
             relays.append({"up": True, "out_of_use": False, "heard": True})
+            # one out of use, given up on earlier, that answered: in use again
+            relays.append({"up": True, "out_of_use": True, "heard": True})
         relays += [
             {"up": True, "out_of_use": False, "heard": False},
             {"up": True, "out_of_use": True, "heard": False},
@@ -973,7 +988,8 @@ def build():
         answered_.append(
             {"asked": asked, "doubt": doubt, "unanswered": unanswered, "asked_heard": asked_heard,
              "others_heard": others_heard, "anchor_now": anchor_now, "attached_before": before,
-             "relays": relays, "does": does, "doubt_after": doubt_after,
+             "anchor_heard": anchor_heard, "relays": relays, "does": does,
+             "doubt_after": doubt_after,
              "unanswered_after": unanswered_after}
         )
 
@@ -1009,7 +1025,7 @@ def build():
     ]
 
     samples = []
-    for kind, leaf, rl, floor, theirs, up, power, snr, margin in [
+    for row in [
         # a leaf hears its relay's answer: the margin given, and the link up at once
         ("answer to me", True, True, 16 * -20, 0, False, 14, 0, 140),
         ("answer to me", True, True, 16 * -20, 0, False, 14, 0, 127),  # less than none: not up
@@ -1018,16 +1034,23 @@ def build():
         ("answer to another", True, True, 16 * -20, 130, True, 14, -40, 200),  # a sample only
         ("solicit", False, False, 16 * -20, 135, True, 22, -50, None),  # a relay hears a leaf
         ("solicit", False, False, 16 * 30, 135, True, 22, -50, None),  # and the link goes down
+        # From a neighbour out of use, anything heard brings it back into use: the relay a leaf
+        # gave hops up at answers it, or a leaf a relay took out of use solicits.
+        ("answer to me", True, True, 16 * -20, 140, True, 14, 0, 140, True),
+        ("answer to another", True, True, 16 * -20, 130, True, 14, -40, 200, True),
+        ("solicit", False, False, 16 * -20, 135, True, 22, -50, None, True),
     ]:
+        kind, leaf, rl, floor, theirs, up, power, snr, margin = row[:9]
+        out = len(row) > 9 and row[9]
         f, t, u = sample(kind, leaf, rl, floor, theirs, up, 22, power, snr, margin)
         # A relay that hears a solicit answers with the margin it gives the leaf, at the power of
         # a frame for it, if its own margin allows.
         replies = kind == "solicit" and not leaf and answering(16 * 22 - f, False)[0]
         samples.append(
             {"kind": kind, "leaf": leaf, "relay": rl, "kept": True, "floor_sixteenths": floor,
-             "their_margin": theirs, "up": up, "full_power": 22, "power": power,
-             "snr_quarter_db": snr, "margin": margin, "floor_after": f, "their_margin_after": t,
-             "up_after": u,
+             "their_margin": theirs, "up": up, "out_of_use": out, "full_power": 22,
+             "power": power, "snr_quarter_db": snr, "margin": margin, "floor_after": f,
+             "their_margin_after": t, "up_after": u, "out_of_use_after": False,
              "answer_margin": margin_byte(22, f) if replies else None,
              "answer_power": max(-9, min(22, -(-(f + 16 * POWER_MARGIN) // 16)))
              if replies else None}
@@ -1036,7 +1059,8 @@ def build():
     for kind, leaf in [("solicit", False), ("answer to me", True)]:
         samples.append(
             {"kind": kind, "leaf": leaf, "relay": not leaf, "kept": False,
-             "floor_sixteenths": None, "their_margin": None, "up": None, "full_power": 22,
+             "floor_sixteenths": None, "their_margin": None, "up": None, "out_of_use": None,
+             "out_of_use_after": None, "full_power": 22,
              "power": 14, "snr_quarter_db": 0, "margin": 140 if kind != "solicit" else None,
              "floor_after": None, "their_margin_after": None, "up_after": None,
              "answer_margin": None, "answer_power": None}
@@ -1103,7 +1127,12 @@ def build():
         "power is full_power, and the floor, the margin and the link are then the ones after; "
         "a relay that answers a solicit answers with answer_margin at answer_power, both null "
         "where it does not answer. Where kept is false the node does not keep the sender, and "
-        "takes nothing from the frame: it keeps no neighbour for it and answers nothing.",
+        "takes nothing from the frame: it keeps no neighbour for it and answers nothing. "
+        "out_of_use and out_of_use_after say whether the neighbour is out of use before and "
+        "after: heard from, it is in use again. In answered, anchor_heard, where the leaf asked "
+        "after a relay that was not its anchor, says whether it heard from the relay that was "
+        "(null where there was none, or the anchor is the one asked after), and that relay is "
+        "among relays.",
         "generator": "vectors/tools/routing.py",
         "ids": [{"address": x.hex(), "id": rid(x)} for x in addresses],
         "newer": [
