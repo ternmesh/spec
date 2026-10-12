@@ -412,7 +412,7 @@ half hour:
   fell 2.6 points; at 2%, 3 to 10 points. At 12% it dropped next to
   nothing.
 * **The own part** held nothing on the fast preset and 4 frames an hour
-  in the town. On the deployed preset it held 3,000 to 4,500 frames an
+  in the town. On the deployed preset it held 3,100 to 4,600 frames an
   hour for about two minutes each, past the 60 s deadline: unicast on
   time did not move, the 95th-percentile delay doubled or more, to 151
   to 291 s, and deliveries per second of airtime rose 12 to 47%, the
