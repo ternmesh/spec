@@ -163,6 +163,15 @@ and neither is zero. `0x67` is the alternate if `0x5E` proves a poor
 choice on some radio; Meshtastic's `0x2B` shows that a half above 8
 works across the SX127x, SX126x and LR11x0.
 
+On two SX1262s 0.3 m apart, no frame sent with `0x5E` was received
+with `0x12`, `0x2B`, `0x34` or `0x67`, or the other way round, and none
+got past the preamble: 0 of 1600 each way, at `US915`'s settings. Against
+Meshtastic 2.7.26 and MeshCore 1.17.1 on their own firmware and
+modulations, neither received any of 420 frames Tern sent with `0x5E`,
+and Tern received none of 420 of theirs. `0x2B` and `0x12`, by
+contrast, reached a header that then failed in 9 to 32 frames in 100
+([ternmesh/sim `calibration/syncword/`](https://github.com/ternmesh/sim/tree/main/calibration/syncword)).
+
 **A sync word is a filter, not a wall.** Other networks' frames still
 arrive as energy, and trip channel-activity detection. So a frame says
 what it is in its first byte as well.
@@ -332,8 +341,12 @@ weak link without changing this section's receivers.
 These would be measured on a bench before this section is frozen. Until
 then the values above stand on the published sources.
 
-* **That `0x5E` is not received as `0x2B` or `0x12`, or they as it**, on
-  the SX1262, SX1276 and LR1110, at each profile's settings.
+* **That `0x5E` is not received as `0x2B` or `0x12`, or they as it**,
+  on the SX1276 and LR1110; on the SX1262 at the 125 kHz profiles'
+  settings (SF7), since it was checked only at `US915`'s and at
+  Meshtastic's and MeshCore's own; and on any radio at a weak signal,
+  since every check so far received -30 to 0 dBm
+  ([Rationale](#rationale)).
 * **That `0x5E` costs no sensitivity** against the radio's default sync
   words.
 * **The 6 dB bandwidth of LoRa at 500 kHz** from the radios Tern runs
