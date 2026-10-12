@@ -106,13 +106,37 @@ boost plays no part.
 [Listening first](forwarding.md#listening-first) holds for flooded
 frames as for every other.
 
+**Sending again.** A frame of a node's own whose `hops` is 2 or more is
+one a relay should pass on, and the node listens for that. If it
+receives no copy of the frame within `FLOOD_ECHO` airtimes of the frame
+from when it went on the air, it SHOULD send the frame again: the same
+bytes but for `power`, which is worked out afresh. It first waits a
+random time, uniform up to `FLOOD_WAIT` airtimes, as a relay does, and
+the frame waits for its allowance as before. Each time it goes it is
+listened for again, and a node MUST NOT send a frame of its own more
+than `FLOOD_RESENDS` times beyond the first.
+
+* A copy received at any time before the frame goes again drops it.
+* When the listening ends, a node [busy](#a-busy-relay) as a relay
+  would be gives the frame up as often as such a relay drops a frame
+  it would pass on: it reckons its busy share as a relay does, leaf or
+  relay.
+* A node MAY give a frame up rather than send it again, as one with no
+  room left for a frame it has to send, or to pass on, does.
+
+A frame whose `hops` is 0 or 1 goes once: a relay in a crowd does not
+pass it on, so nothing will be heard of it.
+
 ## Receiving
 
 A node that receives a flooded frame works out its id.
 
 **A frame it has seen** is a copy. If the node is
 [waiting to pass that frame on](#passing-on), the copy counts against
-it. Otherwise the copy is ignored.
+it; if it is its own, which it is listening for or waiting to
+[send again](#sending), it is not sent again. Otherwise the copy is
+ignored. A node takes a frame of its own as seen for as long as it
+might send it again, whatever else it has seen meanwhile.
 
 **A frame it has not seen** is taken as seen, and handed to the section
 that defines its kind: every node does this, leaf or relay, whatever
@@ -213,6 +237,8 @@ transmit at all, which bounds these and everything else it sends.
 | `FLOOD_SPARSE` | 8 | relay neighbours, at most, of a bridge |
 | `FLOOD_WAIT` | 8 | airtimes |
 | `FLOOD_COPIES` | 2 | so one more copy heard drops a waiting frame |
+| `FLOOD_RESENDS` | 1 | times a node's own frame goes again, at most |
+| `FLOOD_ECHO` | 16 | airtimes a node listens for its own frame passed on |
 | `SEEN_FOR` | 60 s | |
 | `SEEN_ROOM` | 128 | frames |
 | `FLOOD_OWN` | 0.5% | of a node's time |
