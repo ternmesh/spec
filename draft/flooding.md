@@ -352,15 +352,15 @@ delivery missed. A frame was in reach of 20 to 50 relays, and lost at
 each to another frame it could not have heard. A relay passing a frame
 on is heard by the node that sent it, so the node can tell, at the
 cost of listening. Managed flooding's sender listens the same way. One
-more send took local broadcasts on that workload from 82–86% to 91–94%
-and alerts to every node from about 80% to about 90%; the frames sent
-again were some 240 in the hour, a few seconds of airtime.
+more send took local broadcasts on that workload from 85–86% to 93–94%
+and chat from 81–88% to 92–95%; the frames sent again were 144 in the
+hour, a few seconds of airtime.
 
 What it costs is that the floods now reach everyone: the relays'
 airtime that carries them takes the air from frames that follow
 routes. [What was measured](#what-was-measured) has it: messages to
-one node lose up to three points where the channel has room, and more
-where it has none. A second send gained a point or two of broadcast
+one node lose up to three or four points where the channel has room,
+and more where it has none. A second send gained a point or two of broadcast
 for as much again of that loss, so `FLOOD_RESENDS` is 1. A longer
 `FLOOD_ECHO` heard no more copies (at 32 and 64 airtimes, as many
 frames went again): where a copy is not heard, it is because none was
@@ -529,7 +529,25 @@ as many as 3.4, but for the first row at −5 dBm, where it is even.
 Deliveries per second of airtime rise in every case: in the first row
 at 20 dBm, from 33.8 to 35.1.
 
-WORKLOAD_TABLE
+On the simulator's workloads drawn from the field (ternmesh/sim,
+`docs/workload.md`): a thousand nodes over 18 km on the fast preset,
+200 relays, three seeds, the range over the seeds of each flow's
+deliveries within a minute. Local is presence, position and telemetry,
+wanted within 5 km; an alert is wanted by every node, and there are
+only nine an hour, so its range is wide:
+
+| | | Local | Chat | Alerts | Direct | Airtime |
+|---|---|---|---|---|---|---|
+| Metro | once | 85.0–86.3% | 81.3–88.0% | 62.7–95.5% | 95.6–97.0% | 11.6 ks |
+| | again | 92.7–94.2% | 91.5–94.7% | 75.7–95.5% | 93.3–97.3% | 12.6 ks |
+| An event, the channel busy | once | 43.0–47.6% | 40.5–45.1% | 50.9–56.9% | 65.8–84.4% | 16.0 ks |
+| | again | 53.0–54.9% | 40.8–54.3% | 32.3–69.0% | 58.9–65.7% | 16.1 ks |
+| Direct messages heavy | once | 82.9–84.3% | 72.0–80.2% | 61.3–95.0% | 94.0–95.8% | 13.0 ks |
+| | again | 91.0–93.1% | 85.4–94.3% | 91.3–94.4% | 89.3–93.3% | 13.9 ks |
+
+Frames sent again were 144 an hour on the metro and some 3,000 at the
+event, where the relays' copies were dropped as busy; it is there that
+direct messages pay most.
 
 ## Not yet measured
 
