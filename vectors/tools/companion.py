@@ -25,7 +25,7 @@ import sharing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 7
+VERSION = 8
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -115,6 +115,8 @@ FRAMES = {
                              ("minutes", U16)]),
     0x92: ("CARD", [("address", ADDR), ("heard", U32), ("name", STR, NAME_MAX)]),
     0x93: ("CARD_GONE", [("address", ADDR)]),
+    0x94: ("FIX", [("receiver", U8), ("source", U8), ("lat", I32), ("lon", I32), ("altitude", I16),
+                   ("accuracy", U16), ("age", U32), ("satellites", U8)]),
 }
 BY_NAME = {name: t for t, (name, _) in FRAMES.items()}
 NEWS_NAMES = {name for t, (name, _) in FRAMES.items() if t >= 0x80}
@@ -133,6 +135,7 @@ TYPE_SINCE = {
     **{t: 5 for t in (0x33, 0x34, 0x35, 0x8E, 0x8F, 0x90, 0x91)},  # positions
     **{t: 6 for t in (0x92, 0x93)},  # cards
     **{t: 7 for t in (0x26, 0x27, 0x47)},  # join codes
+    0x94: 8,  # the node's own fix
 }
 
 
@@ -147,11 +150,12 @@ SETTINGS = {
     4: ("passkey", [("value", U32)]),
     5: ("cards", [("value", U8)]),
     6: ("card_name", [("value", STR, NAME_MAX)]),
+    7: ("receiver", [("value", U8)]),
 }
 
 # Settings a later version added, and the version that added them. A node of an earlier version, or
 # one speaking to a client of an earlier version, answers SET of one with ERROR 1.
-SETTING_SINCE = {5: 6, 6: 6}
+SETTING_SINCE = {5: 6, 6: 6, 7: 8}
 
 REQUESTS, ANSWERS, NEWS = (0x01, 0x3F), (0x40, 0x7F), (0x80, 0xBF)
 
@@ -383,6 +387,12 @@ SUMMIT = dict(lat=458_325_000, lon=68_644_000)
 BOB_AT = dict(precision=16, lat=603_945_922, lon=52_871_704)
 NO_ALTITUDE = -32768
 
+# The node's own fix (FIX). Its receiver's is a few metres from the client's summit, as a receiver
+# on the same ridge would put it, with its height above the ellipsoid.
+NO_FIX = dict(source=0, lat=0, lon=0, altitude=0, accuracy=0, age=0, satellites=0)
+RECEIVED = dict(source=1, lat=458_325_412, lon=68_643_871, altitude=4809, accuracy=3, age=0,
+                satellites=9)
+
 
 def info(speak=VERSION):
     """The node's INFO, as a client of version speak is sent it."""
@@ -393,6 +403,7 @@ def build():
     self_check()
 
     examples = [
+        ("HELLO", 1, {"version": 8}),
         ("HELLO", 1, {"version": 7}),
         ("HELLO", 1, {"version": 6}),
         ("HELLO", 1, {"version": 5}),
@@ -441,6 +452,8 @@ def build():
         ("GROUP_LINK", 36, {"group": RIDGE}),
         ("JOIN_LINK", 37, {"link": join_link(MADE_SECRET, "Hut")}),
         ("JOIN_LINK", 38, {"link": join_link(INVITED_SECRET, "x" * NAME_MAX)}),
+        ("SET", 39, {"setting": 7, "value": 0}),
+        ("SET", 40, {"setting": 7, "value": 1}),
         ("OK", 4, {}),
         ("ERROR", 15, {"code": 4}),
         ("INFO", 1, {"version": 4, **FIRMWARE}),
@@ -504,6 +517,14 @@ def build():
         ("CARD", 29, {"address": DAVE, "heard": 1260, "name": TRAIL}),
         ("CARD", 30, {"address": DAVE, "heard": 86_399, "name": ""}),
         ("CARD_GONE", 31, {"address": DAVE}),
+        ("FIX", 32, {"receiver": 0, **NO_FIX}),
+        ("FIX", 33, {"receiver": 2, **NO_FIX}),
+        ("FIX", 34, {"receiver": 3, **RECEIVED}),
+        ("FIX", 35, {"receiver": 1, **{**RECEIVED, "age": 5400}}),
+        ("FIX", 36, {"receiver": 2, "source": 2, **SUMMIT, "altitude": 4806, "accuracy": 4,
+                     "age": 3, "satellites": 0}),
+        ("FIX", 37, {"receiver": 0, "source": 2, "lat": -336_183_000, "lon": -704_517_000,
+                     "altitude": NO_ALTITUDE, "accuracy": 0, "age": 600, "satellites": 0}),
     ]
     frames = []
     for name, seq, values in examples:
@@ -573,6 +594,8 @@ def build():
         encode("GROUP_LINK", 36, group=RIDGE)[:-1],
         encode("JOIN_LINK", 37, link="")[:-1] + bytes([LINK_MAX + 1]) + b"A" * (LINK_MAX + 1),
         encode("LINK", 36, link=join_link(INVITED_SECRET, "Ridge walkers"))[:-1],
+        encode("SET", 39, setting=7, value=0)[:-1],
+        encode("FIX", 34, receiver=3, **RECEIVED)[:-1],
     ]:
         why = decode(frame)
         assert isinstance(why, str), frame.hex()
@@ -643,60 +666,63 @@ def build():
         ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
         ("node", encode("AIRTIME", 5, **airtime)),
         ("node", encode("POWER", 6, **power)),
-        ("node", encode("SYNCED", 3, news=7)),
+        ("node", encode("FIX", 7, receiver=2, **NO_FIX)),
+        ("node", encode("SYNCED", 3, news=8)),
         ("client", encode("READ", 4, through=17)),
         ("node", encode("OK", 4)),
-        ("node", encode("MESSAGE", 7, flags=1, **where)),
+        ("node", encode("MESSAGE", 8, flags=1, **where)),
         ("client", encode("SEND", 5, ref=0xC0FFEE01, to=BOB, text="On the ridge by six")),
         ("node", encode("QUEUED", 5, id=18)),
-        ("node", encode("MESSAGE", 8, state=0, reason=1, wait=0, **ridge)),
-        ("node", encode("STATE", 9, id=18, state=1, reason=0, wait=0)),
-        ("node", encode("STATE", 10, id=18, state=2, reason=0, wait=0)),
+        ("node", encode("MESSAGE", 9, state=0, reason=1, wait=0, **ridge)),
+        ("node", encode("STATE", 10, id=18, state=1, reason=0, wait=0)),
+        ("node", encode("STATE", 11, id=18, state=2, reason=0, wait=0)),
         # Carol makes first contact, and is refused: she is not a contact.
-        ("node", encode("ASKED", 11, address=CAROL, why=1)),
+        ("node", encode("ASKED", 12, address=CAROL, why=1)),
         ("client", encode("SAVE_CONTACT", 6, address=CAROL, name="Carol")),
         ("node", encode("OK", 6)),
-        ("node", encode("CONTACT", 12, address=CAROL, session=0, name="Carol")),
+        ("node", encode("CONTACT", 13, address=CAROL, session=0, name="Carol")),
         # A group is made, Bob is invited to it, and a message is written to it.
         ("client", encode("MAKE_GROUP", 7, name="Hut")),
         ("node", encode("MADE", 7, group=HUT)),
-        ("node", encode("GROUP", 13, group=HUT, name="Hut")),
+        ("node", encode("GROUP", 14, group=HUT, name="Hut")),
         ("client", encode("SEND_INVITE", 8, group=HUT, to=BOB)),
         ("node", encode("QUEUED", 8, id=19)),
-        ("node", encode("INVITE", 14, state=0, reason=1, wait=0, **invite)),
-        ("node", encode("STATE", 15, id=19, state=1, reason=0, wait=0)),
-        ("node", encode("STATE", 16, id=19, state=2, reason=0, wait=0)),
+        ("node", encode("INVITE", 15, state=0, reason=1, wait=0, **invite)),
+        ("node", encode("STATE", 16, id=19, state=1, reason=0, wait=0)),
+        ("node", encode("STATE", 17, id=19, state=2, reason=0, wait=0)),
         ("client", encode("SEND_GROUP", 9, ref=0xC0FFEE02, group=HUT, text="Anyone at the hut?")),
         ("node", encode("QUEUED", 9, id=20)),
-        ("node", encode("GROUP_MESSAGE", 17, state=0, reason=0, wait=0, **anyone)),
-        ("node", encode("STATE", 18, id=20, state=1, reason=0, wait=0)),
+        ("node", encode("GROUP_MESSAGE", 18, state=0, reason=0, wait=0, **anyone)),
+        ("node", encode("STATE", 19, id=20, state=1, reason=0, wait=0)),
         # Bob answers in the group, and invites this node to another.
-        ("node", encode("GROUP_MESSAGE", 19, flags=0, **two)),
-        ("node", encode("INVITE", 20, flags=0, **invited)),
+        ("node", encode("GROUP_MESSAGE", 20, flags=0, **two)),
+        ("node", encode("INVITE", 21, flags=0, **invited)),
         ("client", encode("JOIN", 10, id=22)),
         ("node", encode("OK", 10)),
-        ("node", encode("GROUP", 21, group=RIDGE, name="Ridge")),
+        ("node", encode("GROUP", 22, group=RIDGE, name="Ridge")),
         ("client", encode("NAME_GROUP", 11, group=RIDGE, name="Ridge walkers")),
         ("node", encode("OK", 11)),
-        ("node", encode("GROUP", 22, group=RIDGE, name="Ridge walkers")),
+        ("node", encode("GROUP", 23, group=RIDGE, name="Ridge walkers")),
         ("client", encode("READ", 12, through=22)),
         ("node", encode("OK", 12)),
-        ("node", encode("GROUP_MESSAGE", 23, flags=1, **two)),
-        ("node", encode("INVITE", 24, flags=1, **invited)),
+        ("node", encode("GROUP_MESSAGE", 24, flags=1, **two)),
+        ("node", encode("INVITE", 25, flags=1, **invited)),
         ("client", encode("LEAVE_GROUP", 13, group=HUT)),
         ("node", encode("OK", 13)),
-        ("node", encode("GROUP_GONE", 25, group=HUT)),
+        ("node", encode("GROUP_GONE", 26, group=HUT)),
         # The client gives the node its position, and the user shares it with Bob for an hour.
         # Bob's position arrives. A precision past 24 is refused, and sharing with Bob is
         # turned off again.
         ("client", encode("SET_POSITION", 14, **SUMMIT, altitude=4806, accuracy=4, age=3)),
         ("node", encode("OK", 14)),
+        ("node", encode("FIX", 27, receiver=2, source=2, **SUMMIT, altitude=4806, accuracy=4,
+                        age=3, satellites=0)),
         ("client", encode("SHARE", 15, contact=BOB, precision=20, fields=0, interval=900,
                           minutes=60)),
         ("node", encode("OK", 15)),
-        ("node", encode("SHARING", 26, contact=BOB, precision=20, fields=0, interval=900,
+        ("node", encode("SHARING", 28, contact=BOB, precision=20, fields=0, interval=900,
                         minutes=60)),
-        ("node", encode("POSITION", 27, contact=BOB, **BOB_AT, altitude=NO_ALTITUDE, accuracy=0,
+        ("node", encode("POSITION", 29, contact=BOB, **BOB_AT, altitude=NO_ALTITUDE, accuracy=0,
                         age=40)),
         ("client", encode("SHARE_GROUP", 16, group=RIDGE, precision=25, fields=0, interval=300,
                           minutes=0)),
@@ -704,40 +730,52 @@ def build():
         ("client", encode("SHARE", 17, contact=BOB, precision=0, fields=0, interval=0,
                           minutes=0)),
         ("node", encode("OK", 17)),
-        ("node", encode("SHARING", 28, contact=BOB, precision=0, fields=0, interval=0,
+        ("node", encode("SHARING", 30, contact=BOB, precision=0, fields=0, interval=0,
                         minutes=0)),
         ("client", encode("END_SESSION", 18, address=BOB)),
         ("node", encode("OK", 18)),
-        ("node", encode("CONTACT", 29, address=BOB, session=0, name="Bob")),
+        ("node", encode("CONTACT", 31, address=BOB, session=0, name="Bob")),
         # The user names the node's cards and turns them on; a value that is neither on nor off is
         # refused. A newer card from Dave arrives, and the user saves him as a contact from it,
         # under a name of their own. Cards are turned off again, and a day later the node forgets
         # Dave's card.
         ("client", encode("SET", 19, setting=6, value="Ada · hut warden")),
         ("node", encode("OK", 19)),
-        ("node", encode("SELF", 30, **{**self_, "card_name": "Ada · hut warden"})),
+        ("node", encode("SELF", 32, **{**self_, "card_name": "Ada · hut warden"})),
         ("client", encode("SET", 20, setting=5, value=1)),
         ("node", encode("OK", 20)),
-        ("node", encode("SELF", 31, **{**self_, "cards": 1, "card_name": "Ada · hut warden"})),
+        ("node", encode("SELF", 33, **{**self_, "cards": 1, "card_name": "Ada · hut warden"})),
         ("client", encode("SET", 21, setting=5, value=2)),
         ("node", encode("ERROR", 21, code=3)),
-        ("node", encode("CARD", 32, address=DAVE, heard=0, name=TRAIL)),
+        ("node", encode("CARD", 34, address=DAVE, heard=0, name=TRAIL)),
         ("client", encode("SAVE_CONTACT", 22, address=DAVE, name="Dave (trail crew)")),
         ("node", encode("OK", 22)),
-        ("node", encode("CONTACT", 33, address=DAVE, session=0, name="Dave (trail crew)")),
+        ("node", encode("CONTACT", 35, address=DAVE, session=0, name="Dave (trail crew)")),
         ("client", encode("SET", 23, setting=5, value=0)),
         ("node", encode("OK", 23)),
-        ("node", encode("SELF", 34, **{**self_, "card_name": "Ada · hut warden"})),
-        ("node", encode("CARD_GONE", 35, address=DAVE)),
+        ("node", encode("SELF", 36, **{**self_, "card_name": "Ada · hut warden"})),
+        ("node", encode("CARD_GONE", 37, address=DAVE)),
         # The user asks for the second group's join code, to show it; joins the group it left,
         # from that group's code; and types a code with a letter wrong, which is refused.
         ("client", encode("GROUP_LINK", 24, group=RIDGE)),
         ("node", encode("LINK", 24, link=join_link(INVITED_SECRET, "Ridge walkers"))),
         ("client", encode("JOIN_LINK", 25, link=join_link(MADE_SECRET, "Hut"))),
         ("node", encode("MADE", 25, group=HUT)),
-        ("node", encode("GROUP", 36, group=HUT, name="Hut")),
+        ("node", encode("GROUP", 38, group=HUT, name="Hut")),
         ("client", encode("JOIN_LINK", 26, link=MISTYPED)),
         ("node", encode("ERROR", 26, code=3)),
+        # The receiver finds the sky, and its fix is more recent than the client's. The user turns
+        # it off, which keeps that fix; asks for a value that is neither on nor off, which is
+        # refused; and turns it on again.
+        ("node", encode("FIX", 39, receiver=3, **RECEIVED)),
+        ("client", encode("SET", 27, setting=7, value=0)),
+        ("node", encode("OK", 27)),
+        ("node", encode("FIX", 40, receiver=1, **{**RECEIVED, "age": 20})),
+        ("client", encode("SET", 28, setting=7, value=2)),
+        ("node", encode("ERROR", 28, code=3)),
+        ("client", encode("SET", 29, setting=7, value=1)),
+        ("node", encode("OK", 29)),
+        ("node", encode("FIX", 41, receiver=2, **{**RECEIVED, "age": 40})),
     ])
 
     counted = [f["seq"] for f in exchange if f["type"] in NEWS_NAMES]
@@ -854,6 +892,24 @@ def build():
         ("node", encode("ERROR", 3, code=1)),
     ], 6)})
 
+    # A client of version 7, to the node as the exchange begins: the same sync as the exchange's
+    # but for its FIX, and its last request names a setting its version does not define.
+    older.append({"version": 7, "frames": connection([
+        ("client", encode("HELLO", 1, version=7)),
+        ("node", info(7)),
+        ("client", encode("SYNC", 2, after=0)),
+        ("node", encode("SELF", 0, **self_)),
+        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("MESSAGE", 2, flags=0, **where)),
+        ("node", encode("NEIGHBOUR", 3, **neighbour)),
+        ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
+        ("node", encode("AIRTIME", 5, **airtime)),
+        ("node", encode("POWER", 6, **power)),
+        ("node", encode("SYNCED", 2, news=7)),
+        ("client", encode("SET", 3, setting=7, value=0)),
+        ("node", encode("ERROR", 3, code=1)),
+    ], 7)})
+
     # Frames a later version defines, as a receiver of an earlier version reads them: a type it
     # does not know. A node answers such a request with ERROR 1; a client ignores such news.
     unknown_to_older = []
@@ -879,6 +935,8 @@ def build():
         ("GROUP_LINK", 6, {"group": RIDGE}),
         ("JOIN_LINK", 6, {"link": join_link(MADE_SECRET, "Hut")}),
         ("LINK", 6, {"link": join_link(INVITED_SECRET, "Ridge walkers")}),
+        ("SET", 7, {"setting": 7, "value": 1}),
+        ("FIX", 7, {"receiver": 3, **RECEIVED}),
     ]:
         frame = encode(name, 5, **values)
         assert isinstance(decode(frame), dict)
@@ -899,7 +957,8 @@ def build():
             ("node", encode("SELF", 0, **self_)),
             ("node", encode("AIRTIME", 1, **airtime)),
             ("node", encode("POWER", 2, **power)),
-            ("node", encode("SYNCED", 3, news=3)),
+            ("node", encode("FIX", 3, receiver=0, **NO_FIX)),
+            ("node", encode("SYNCED", 3, news=4)),
         ]
 
     size, chunk = len(IMAGE), UPDATE_CHUNK
@@ -964,7 +1023,7 @@ def build():
                  for g in (MADE_SECRET, INVITED_SECRET, bytes(16), bytes([0xFF] * 16))]
 
     return {
-        "description": "The companion protocol, version 7 (draft/companion.md). Frames, streams, "
+        "description": "The companion protocol, version 8 (draft/companion.md). Frames, streams, "
         "addresses and group ids are hex; numbers are numbers; strings are text. In frames, "
         "frame is the frame alone, as one BLE write or notification carries it, and stream is "
         "the same frame as it goes on a byte stream. In extended, frame carries bytes past the "
@@ -986,7 +1045,8 @@ def build():
         "follows END_SESSION it accepts a newer card from that address, with the same name, "
         "just before the CARD that says so, and forgets it just before the CARD_GONE. Its last "
         "JOIN_LINK carries the first group's join code with one character of the secret typed "
-        "wrong. Older "
+        "wrong. Its satellite receiver is on, without a fix, from the start; it finds a fix just "
+        "before the FIX that says so, and each FIX's age is as the file gives it. Older "
         "holds connections to the same node by clients of "
         "earlier versions. To the client of version 0 it holds what the exchange begins with, "
         "and refuses that first contact after the sync, before the client's SAVE_CONTACT. To "
@@ -1002,11 +1062,14 @@ def build():
         "it holds what the exchange begins with, and the sync sends no card; the client's last "
         "request names a setting its version does not define. To the client of version 6 it holds "
         "what the exchange begins with, and the client's last request is one its version does not "
-        "define. Positions are in units of "
+        "define. To the client of version 7 it holds what the exchange begins with, the sync sends "
+        "no FIX, and the client's last request names a setting its version does not define. "
+        "Positions are in units of "
         "10^-7 degree. Each connection's frames are read by the "
         "version its client speaks, and each client of an earlier version is sent an INFO "
         "without board and release. Update is one update of image, whose SHA-256 is "
-        "image_digest, over two connections to a node that holds only itself: the link is lost "
+        "image_digest, over two connections to a node that holds only itself, and has no "
+        "satellite receiver: the link is lost "
         "after the first connection's last frame, and the node keeps what it was sent. "
         "Refusals is one connection to a node with no update under way, given an image of the "
         "same size whose digest is not its own. The four addresses are the public keys of RFC "

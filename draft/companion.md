@@ -198,6 +198,7 @@ a refusal.
 | `0x91` | `GROUP_SHARING` | `group` `gid`, `precision` `u8`, `fields` `u8`, `interval` `u16`, `minutes` `u16` |
 | `0x92` | `CARD` | `address` `addr`, `heard` `u32`, `name` `str` up to 31 |
 | `0x93` | `CARD_GONE` | `address` `addr` |
+| `0x94` | `FIX` | `receiver` `u8`, `source` `u8`, `lat` `i32`, `lon` `i32`, `altitude` `i16`, `accuracy` `u16`, `age` `u32`, `satellites` `u8` |
 
 Each news frame but `STATE`, the four `_GONE`s and `ASKED` is a
 **record**: the whole of one thing as the node holds it now. A record
@@ -375,6 +376,35 @@ record was sent, from the position's own `age` and the time since the
 node received it. A record whose `precision` is 0 says the node holds
 no position from that sender, and its other fields are 0.
 
+**The node's own fix** (`FIX`). Where the node takes itself to be: the
+fix it [uses](positions.md#sharing) to share its position, which is the
+more recent of its own receiver's and the last a client gave it with
+[`SET_POSITION`](#the-requests). It is what a client centres a map on,
+and what it shows of the node's receiver.
+
+`receiver` is the node's satellite receiver, as it is now:
+
+| `receiver` | |
+|---|---|
+| 0 | the node has none |
+| 1 | off: [`SET`](#the-requests) 7 turned it off |
+| 2 | on, and without a fix |
+| 3 | on, with a fix |
+
+Other values are reserved, and a client treats one it does not know as
+2. `source` says whose fix the rest of the record is: 0 if the node has
+none, 1 if it is the receiver's, 2 if it is one a client gave it. `lat`,
+`lon`, `altitude` and `accuracy` are as in `SET_POSITION`. `age` is how
+many seconds old the fix was as of when the record was sent.
+`satellites` is how many satellites the receiver's fix was made from, 0
+if it does not say or if the fix is a client's. A record whose `source`
+is 0 has its other fields, but `receiver`, 0.
+
+A fix is the node's own, and goes no further than the node's clients
+because of this record: what goes on the air is the
+[cell](positions.md#the-grid) each destination is shared, when sharing
+is on, and nothing when it is not.
+
 **Sharing** (`SHARING`, `GROUP_SHARING`). How the node shares its
 position with a contact or a group, as [`SHARE`](#the-requests) set it.
 `precision` is 1 to 24, or 0 when sharing is off, and then the other
@@ -475,14 +505,20 @@ A node with a client that has said `HELLO` MUST send that client:
 * `NEIGHBOUR_GONE` when the node forgets a neighbour;
 * `CARD` when the node accepts a card, and `CARD_GONE` when it forgets
   one;
+* `FIX` when its `receiver` or its `source` changes;
 * `ASKED` when it refuses [first contact](#who-may-make-first-contact),
   as that section says.
 
 A `minutes`, an `age` or a `heard` that only counts on is not a change.
 
 It SHOULD send `NEIGHBOUR`, `AIRTIME` and `POWER` when they change,
-and MAY send each no more often than once every `QUIET` seconds, so
-that a neighbour heard every second does not fill the link.
+and `FIX` when its fix moves, and MAY send each no more often than once
+every `QUIET` seconds, so that a neighbour heard every second, or a
+receiver that gives a fix every second, does not fill the link. A fix
+moves when its `lat`, `lon`, `altitude`, `accuracy` or `satellites`
+differs from the last record's; one that only grows older has not
+moved. A `FIX` that the list above requires, for a change of `receiver`
+or `source`, is sent at once, however soon after the last.
 
 What changes because of a request from one client is sent as news to
 every client, the one that asked included: a client sees its own
@@ -499,7 +535,9 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 7. Version 6 is the same without
+version 8. Version 7 is the same without
+[the node's own fix](#positions): the setting 7 and the news `FIX`.
+Version 6 is version 7 without
 [join codes](groups.md#join-codes): the requests `0x26` and `0x27`,
 and `LINK`. Version 5 is version 6 without [cards](#cards): the settings
 5 and 6, `SELF`'s `cards` and `card_name`, and the news `CARD` and
@@ -521,16 +559,18 @@ version and the `version` the `INFO` carries. A client of an earlier version is
 not told of group messages or invites at all: their `id`s are ones it
 never sees. One of version 4 or earlier is told of no positions, and
 of no sharing. One of version 5 or earlier is told of no cards, and
-is sent a `SELF` without `cards` and `card_name`. A node MUST answer a
-request, or a setting, that the client's version does not define with
-`ERROR` 1, as it does one its own version does not: it could not tell
-that client what the request changed. A
-receiver reads a frame of a type that only a later version defines as
+is sent a `SELF` without `cards` and `card_name`. One of version 7 or
+earlier is told of no fix. A node MUST answer a request, or a setting,
+that the client's version does not define with `ERROR` 1, as it does
+one its own version does not: it could not tell that client what the
+request changed. A receiver reads a frame of a type that only a later version defines as
 one of a type it does not know, whatever its own version: a node of
 version 5 answers a `SHARE` from a client of version 4 with `ERROR` 1,
 and a client of version 4 ignores a `POSITION`. Likewise, a node of
 version 6 answers a `SET` of setting 5 from a client of version 5 with
-`ERROR` 1, and a client of version 5 ignores a `CARD`.
+`ERROR` 1, and a client of version 5 ignores a `CARD`; and a node of
+version 8 answers a `SET` of setting 7 from a client of version 7 with
+`ERROR` 1, and a client of version 7 ignores a `FIX`.
 Later versions only add types, settings, error codes and
 fields at the end of a frame, so any two versions can talk. A change
 that cannot be made that way is a new protocol, with its own magic and
@@ -540,8 +580,8 @@ A client then, typically, sets the node's clock and syncs:
 
 ```
 client                         node
-HELLO       seq 1, version 7  ─▶
-                              ◀─  INFO        seq 1, version 7
+HELLO       seq 1, version 8  ─▶
+                              ◀─  INFO        seq 1, version 8
 SET_TIME    seq 2             ─▶
                               ◀─  OK          seq 2
 SYNC        seq 3, after 0    ─▶
@@ -564,8 +604,9 @@ greater than `after`, in order of `id`, a `NEIGHBOUR` for every
 neighbour, a `POSITION` or `GROUP_POSITION` for every position it
 holds, a `SHARING` or `GROUP_SHARING` for every contact or group it
 shares its position with, a `CARD` for every card it holds, one
-`AIRTIME` and one `POWER`. Then it answers `SYNCED`. News that a change
-prompts while it syncs is sent as at any other time, among the rest.
+`AIRTIME`, one `POWER` and one `FIX`. Then it answers `SYNCED`. News
+that a change prompts while it syncs is sent as at any other time,
+among the rest.
 
 For contacts, groups, neighbours, positions, sharing and cards, a sync
 is the whole list: a client that receives `SYNCED` MUST forget every
@@ -654,6 +695,7 @@ was given, counting on from it, until it is given another.
 | 4 | passkey | `u32` | the [Bluetooth](#bluetooth-le) passkey, 0 to 999999, or `0xFFFFFFFF` for a random one each time |
 | 5 | cards | `u8` | 1 to send [cards](#cards), 0 to send none |
 | 6 | card name | `str` up to 31 | the name the node's cards carry; empty for none |
+| 7 | receiver | `u8` | 1 to run the node's satellite receiver, 0 to turn it off |
 
 A node MUST refuse, with `ERROR` 3, a region it does not have and a
 power its radio cannot send at or that would let it radiate more than
@@ -670,6 +712,16 @@ the node sends from then on, and the one name a node puts on the air
 in clear. A node keeps it while its cards are off. A client MUST NOT
 send `SET` 5 with 1, or change the card name, unless its user asked it
 to: being seen is the user's choice, as sharing a position is.
+
+A node with a satellite receiver runs it until it is given `SET` 7
+with 0, and again when it is given it with 1, and keeps the setting
+across restarts; it MUST refuse any other value with `ERROR` 3. A node
+with none answers `OK` to 0, and refuses 1 with `ERROR` 3. Off, a
+receiver gives the node no new fix, and the last it gave stays the
+node's until a client gives a more recent one: turning it off is how a
+user saves the power it draws, which on a small battery is more than
+the radio's, and is not a move. Turning the receiver on or off sends
+nothing on the air.
 
 **`SEND`** sends `text` to the node at `to`, as a new message. The
 answer, `QUEUED`, means the node has the message and has given it the
@@ -764,6 +816,9 @@ metres above the WGS 84 ellipsoid, or `-32768` if the client has none;
 `accuracy` in metres, or 0 if it has none; and `age`, how many seconds
 old the fix is. The node uses it as [Positions](positions.md#sharing)
 says, and sends nothing on the air because of it unless sharing is on.
+A client need not give a node whose receiver has a fix its position,
+and SHOULD NOT give one that came from that node's own `FIX`: the node
+would take its own fix back as a client's.
 A node MUST refuse a `lat` beyond ±900000000 or a `lon` beyond
 ±1800000000 with `ERROR` 3. A client SHOULD give the node its position
 when it moves, and SHOULD NOT give it more often than every few
@@ -1000,7 +1055,8 @@ An implementation conforms to this section if, for
   a client of version 4 `SHARE`; and it sends a client of version 5 or
   earlier no card, and a `SELF` without `cards` and `card_name`, and
   refuses a client of version 5 `SET` 5; and refuses a client of
-  version 6 `JOIN_LINK`;
+  version 6 `JOIN_LINK`; and sends a client of version 7 no `FIX`, and
+  refuses it `SET` 7;
 * **update:** as a client, given the `image` to send and the node's
   frames in order, it sends the client's frames of each of the two
   connections in `update`, in order, going on in the second from the
@@ -1096,6 +1152,33 @@ paired.
 where each person is now, not a history. A record for each sender,
 which the next replaces, is that; a message for each position would
 fill a node's store with a day of one person's walk.
+
+**Why the node tells its clients its own fix.** A client that drives
+a node with a receiver of its own, from a phone that is not sharing, or
+a computer with no idea where it is, has nowhere to centre a map, and
+a user who carries the node in a pack and the phone in a pocket wants
+the two to agree. The node already holds the fix it shares from, so
+the record is that fix, whoever made it: a client that showed only the
+receiver's would show the user somewhere the node is not sharing from.
+`receiver` is there besides, because a receiver that has not yet found
+the sky is the thing a user with a fresh board asks about first, and
+`satellites` is how a client says how far it has got. The fix goes no
+further than the paired link it was already allowed over: `SET_POSITION`
+carries the same fix the other way.
+
+**Why `FIX` is a record of its own, and not part of `SELF`.** A
+receiver gives a fix every second, and `SELF` is sent whenever any of
+it changes: a moving node would send its 32-byte address again with
+every step. As a record of its own, sent at most every `QUIET` seconds
+as `POWER` is, a walk costs a frame of 21 bytes every ten seconds.
+
+**Why a receiver is on until it is turned off.** Someone who buys a
+board with a receiver on it expects it to find where they are; one
+that sat unpowered until a client found the setting would look broken.
+It puts nothing on the air by itself: sharing is still off for every
+destination until the user turns it on. What it costs is power, so
+turning it off is a setting a client offers, kept on the node as the
+region is.
 
 **Why a card is a record, and carries no number or signal.** Who is
 about is a list a client shows, as neighbours and positions are, so a
@@ -1261,8 +1344,12 @@ and a node needs a way to say it cannot be updated at all.
 * **Authentication over TCP.** The framing above serves TCP, but
   nothing yet says who may drive a node over a network. Until something
   does, a node SHOULD NOT offer this protocol on a network socket.
-* **A node's own fix**, for a node with a satellite receiver to tell
-  its clients where it is.
+* **Movement**: a fix's speed and heading, which a receiver gives and
+  `FIX` does not carry, as [Positions](positions.md#not-yet-specified)
+  does not.
+* **How often a receiver runs.** A node runs its receiver all the time
+  or not at all; one that woke it now and then would draw less, and
+  have an older fix.
 * **What became of a position** sent: whether it went, and whether a
   contact acknowledged it.
 * **Developer frames**: routes, links and counters for whoever is

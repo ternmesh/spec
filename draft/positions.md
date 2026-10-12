@@ -244,9 +244,15 @@ A client that offers altitude or accuracy SHOULD offer them only with
 a precision of 20 or more: each says more of a coarse position than its
 cell does.
 
-A node learns its own position from a receiver of its own, or from a
-client, by [`SET_POSITION`](companion.md#positions). It uses the more
-recent fix of the two.
+A node learns its own position from a satellite receiver of its own,
+while it [runs one](companion.md#the-requests), or from a client, by
+[`SET_POSITION`](companion.md#positions). It uses the more recent fix
+of the two, and tells its clients which, as
+[`FIX`](companion.md#positions). A node MUST NOT take a fix from its
+receiver that the receiver does not say is valid. Its height is above
+the WGS 84 ellipsoid, as `altitude` is everywhere: a receiver that gives
+height above sea level gives the geoid's separation with it, and the
+node adds the two.
 
 ## When a position is sent
 
