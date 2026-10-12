@@ -75,9 +75,10 @@ A node is a **relay** or a **leaf**. Only relays forward other nodes'
 frames and announce other nodes' routes. A leaf announces itself, and
 what it hears, and nothing else. Which a node is, is its owner's choice
 for now. A node may **use** a neighbour as the next hop to a
-destination only if the link to it is [up](#links), and the neighbour
-is a relay or is the destination itself; a leaf's [default
-route](#a-leafs-default-route) is the one exception.
+destination only if the link to it is [up](#links), the neighbour is
+not [out of use](#leaves-that-move), and it is a relay or is the
+destination itself; a leaf's [default route](#a-leafs-default-route) is
+the one exception.
 
 ## Announces
 
@@ -175,7 +176,11 @@ rounded up. `margin` is [below](#links).
 
 **Routes.** A relay lists routes it has [selected](#selecting-a-route):
 the destination, the sequence number the route carries, and the route's
-metric from this node. A metric of `0xFFFF` **retracts** the route. Its
+metric from this node. A `metric` of `0xFFFF` **retracts** the route.
+Any other has its top bit set if the destination is a
+[leaf](#leaves-that-move), and clear if it is a relay or not known to
+be a leaf, and the low 15 bits are the metric; a receiver MUST take one
+whose low 15 bits are `0x7FFF` as a retraction. Its
 route to itself, metric 0 at `seq`, is implied and never listed. Routes
 that have changed since they were last announced go first; the rest
 follow in turn, as many as fit, so that every route is repeated every
@@ -242,13 +247,17 @@ from a neighbour just found, and its entry dropped.
 **A full table.** A node keeps as many neighbours as it has room for,
 and where there are more nodes to hear than that, which ones it keeps
 decides whether it has routes at all. On hearing an announce from a
-node it does not keep, with no room left, a node looks at the
+node it does not keep, with no room left, a node that has neighbours
+[out of use](#leaves-that-move) MUST forget the one of them with the
+highest floor, whatever its link and whatever the floor the announce
+gives, and every route through it, and keep the sender in its place;
+of two with that floor, either. With none out of use, it looks at the
 neighbours whose links are not up. If the floor the announce gives is
 `REPLACE_BAND` or more below the highest floor among them, the node
 MUST forget that neighbour, and every route through it, and keep the
 sender in its place; of two with that floor, either. Otherwise it MUST
-take nothing from the announce. A node MUST NOT replace a neighbour
-whose link is up.
+take nothing from the announce. A node MUST NOT replace a neighbour in
+use whose link is up.
 
 ### Power for every neighbour
 
@@ -269,7 +278,7 @@ louder by the neighbour's boost, which
 
 A link that is up costs `LINK_COST`: `airtime(REF_LEN)` in
 milliseconds, rounded up. A route's metric is the metric its neighbour
-announced plus the link's cost, never more than `0xFFFE`. Every link on
+announced plus the link's cost, never more than `0x7FFE`. Every link on
 a profile costs the same, so the metric counts hops in units of time on
 air.
 
@@ -286,10 +295,19 @@ through a different neighbour: that neighbour's latest `seq` and
 A retraction removes the route through that neighbour. A route to the
 node's own id is ignored.
 
+A node takes a destination to be a **leaf** as the destination's own
+last announce said, if it keeps the destination as a neighbour;
+otherwise as the neighbour of its selected route listed it; and with
+neither, as it last took it. It lists its own route to the destination
+as one to a leaf or not accordingly. What other neighbours list does
+not count, so what a node lists comes only from the destination itself,
+along routes that cannot loop, and a node that takes up the relay's
+role is soon taken for one everywhere.
+
 With no room for a new route, it replaces the least worth keeping of
 those not selected, if it is worth more: a route the node could select
-now is worth more than one it could not, then a newer `seq`, then a
-lower metric.
+now, feasible and through a neighbour it may [use](#roles), is worth
+more than one it could not, then a newer `seq`, then a lower metric.
 
 Routes do not expire. A route lasts until its neighbour retracts it or
 is forgotten.
@@ -311,7 +329,8 @@ yet specified](#not-yet-specified)).
 A leaf that has no route it may use to a destination MAY hand a frame
 for it to its **nearest relay**: of the relay neighbours it may use
 whose links are up, the one with the lowest floor; if there is none, of
-the relay neighbours it hears, the one with the lowest floor; and of
+the relay neighbours it hears that are not [out of
+use](#leaves-that-move), the one with the lowest floor; and of
 those with equal floors, any. It MUST NOT:
 
 * while it is [starting](#starting);
@@ -328,7 +347,7 @@ contact](first-contact.md) say what a node with no route does, a leaf
 that takes default routes and has a nearest relay it may hand the frame
 to has a route; a leaf that takes none, or has no such relay, has none,
 and asks for one. For the frame's [waits](forwarding.md), the route's
-metric is `DEFAULT_HOPS` times `LINK_COST`, never more than `0xFFFE`.
+metric is `DEFAULT_HOPS` times `LINK_COST`, never more than `0x7FFE`.
 
 ### Selecting a route
 
@@ -341,8 +360,12 @@ neighbour announced it) strictly lower.
 
 A node MUST NOT select a route that is not feasible, nor one through a
 neighbour it may not [use](#roles). Among the rest, it selects the one
-with the lowest metric, but keeps the route it has selected unless
-another's metric is lower by more than `HYSTERESIS` of it.
+with the lowest metric, and of those with the lowest, one with the
+newest `seq`. Having selected a route, it keeps it unless at least one
+other route is lower in metric by more than `HYSTERESIS` of it, or is
+no higher in metric with a newer `seq`; it then selects, of all such
+routes, the one with the lowest metric, and of those with the lowest,
+one with the newest `seq`.
 
 When a node announces a selected route, it sets the feasibility
 distance to what it announces, if that is better.
@@ -357,7 +380,8 @@ above the neighbour's, it announces that metric again.
 A route has **changed**, and goes first in the next announce, when it
 is first selected; when its `seq` is newer than the last announced;
 when its metric differs from the last announced by more than `CHANGE`
-of it; and when it is lost.
+of it; when it is lost; and when whether its destination is a leaf
+differs from what was last announced.
 
 A node that loses its selected route to a destination it has announced
 retracts it. A retraction lost on the air would leave a neighbour with
@@ -436,6 +460,156 @@ value. Its neighbours then hold routes at its old `seq`, starve, and
 ask for a newer one, which it takes. A node SHOULD keep its `seq`
 across restarts.
 
+### Leaves that move
+
+A leaf that moves keeps handing its frames to the relay it was near, and
+every route to it keeps leading there. Its link to that relay stays up
+until `DEAD_HOPS` [hops are given up](forwarding.md#hops) there, more
+than a leaf sends in a long while, and it learns of the relays now
+around it only from their announces, which Trickle stretches and which
+go only as loud as each relay's nearest need. So a leaf asks.
+
+**Out of use.** A neighbour **out of use** is one a node may not
+[use](#roles), though its link may be up, until it next hears anything
+from it: an announce taken, a solicit or an answer (below), or a frame
+[passed on](forwarding.md#hops). It keeps its link and its routes; the
+routes through it are not selected meanwhile. A neighbour's going out
+of use is an inconsistency (see [When to announce](#when-to-announce))
+for a relay, as a link going down is, and not for a leaf, whose
+announces it does not change. A leaf leaves the neighbours out of use
+out of the `POWER_K` it sends frames for every neighbour to reach.
+
+| Offset | Bytes | Field | |
+|---|---|---|---|
+| 0 | 1 | `hdr` | `0x5B` |
+| 1 | 4 | `sender` | the leaf's routing id |
+| 5 | 2 | `id` | counts the leaf's solicits, from a random value |
+| 7 | 4 | `after` | the relay it asks after, or `0xFFFFFFFF` for none |
+| 11 | 1 | `power` | what this frame was sent at, `i8` dBm, rounded up |
+
+A **solicit**. `hdr` has type `011` and flags `011` (solicit). The frame
+is exactly 12 bytes. A leaf SHOULD give the first solicit it sends after
+it starts a random `id`, and each after it one more: a relay answers a
+solicit only once, by `sender` and `id`, and may remember those it
+answered before the leaf restarted.
+
+| Offset | Bytes | Field | |
+|---|---|---|---|
+| 0 | 1 | `hdr` | `0x5C` |
+| 1 | 4 | `sender` | the relay's routing id |
+| 5 | 4 | `leaf` | the routing id of the leaf it answers |
+| 9 | 2 | `id` | the solicit's |
+| 11 | 1 | `margin` | the margin the relay gives the leaf, as in an announce |
+| 12 | 1 | `power` | what this frame was sent at, `i8` dBm, rounded up |
+
+An **answer**. `hdr` has type `011` and flags `100` (answer). The frame
+is exactly 13 bytes. A receiver MUST discard a solicit or an answer of
+any other length, and one whose `sender` is its own id or a reserved
+id. Neither is signed: see [Not yet specified](#not-yet-specified).
+
+A node that hears a solicit or an answer from a neighbour it keeps
+takes its `power` and signal-to-noise ratio as a sample for the
+neighbour's floor, as from an announce, and as a sign of life. One from
+a node it does not keep it takes nothing from.
+
+**Where a leaf solicits.** A leaf SHOULD solicit, as below, while it has
+`SOLICIT_SPARSE` or fewer relay neighbours it may use that it has heard
+from within two of their promises. Where it has more, the relay it moved
+from still reaches it more often than not, and every relay around would
+answer. Its **anchor** is the relay neighbour it may use whose link has
+the highest margin; of two as high, either.
+
+A leaf that solicits asks after a relay:
+
+* when `SOLICIT_HOPS` hops in a row are given up at a relay neighbour it
+  may use, with nothing heard from it between: it takes that relay out
+  of use and asks after it;
+* every `SOLICIT_GAP`, if it has no anchor, or has not heard from its
+  anchor within two of its promises: it asks after the anchor, or after
+  none. A neighbour whose last announce made no promise has not gone
+  quiet. It does not, while `SOLICIT_TRIES` solicits in a row have had
+  no answer at all, until it finds a relay neighbour it had not kept, or
+  a neighbour it keeps becomes a relay.
+
+It sends a solicit at its full power, with `after` the relay it asks
+after, at once unless it sent one within `SOLICIT_GAP`, and then when
+`SOLICIT_GAP` has passed since that one; the second of a pair, asking
+after a relay again (step 3 below), goes at once whatever `SOLICIT_GAP`
+says. The requests' bucket of [the
+cap](#the-cap) pays for it; one it cannot pay for is dropped, and the
+leaf asks again at the next `SOLICIT_GAP`.
+
+**Answering.** A relay that hears a solicit from a neighbour it keeps,
+and whose own margin for it, `full power - floor`, is `LINK_MARGIN` or
+more once the solicit is taken as a sample, MUST answer it once, with
+the margin it gives that neighbour, at the power of a frame for that
+neighbour ([Power](#power-for-every-neighbour)). If `after` is its own
+id, the answer waits a random time up to `JITTER` × `airtime(13)`;
+otherwise up to `ANSWER_WINDOW` × `airtime(13)`, and it is not sent if
+`ANSWER_CANCEL` answers to the same solicit, by `leaf` and `id`, are
+heard from other relays first. The requests' bucket pays for it; one it
+cannot pay for is not sent. The relay names the leaf in its next
+announce before the rest, as a neighbour just found.
+
+A leaf that hears an answer for itself from a relay neighbour it keeps
+takes `margin` as the margin that neighbour gave, as if in the last
+announce it heard from it, judges the link afresh, and names the relay
+in its next announce before the rest. So the link can come up at once.
+Until it does, a frame it has no route for goes by its [default
+route](#a-leafs-default-route), if it takes one.
+
+**What the answers say.** A leaf counts, for each solicit, the relay
+neighbours it hears from in the `SOLICIT_WAIT` after it goes on the
+air, however long it waited to go. One that never goes is no solicit:
+the leaf asks again at the next `SOLICIT_GAP`. Then:
+
+1. If it heard from the relay it asked after, nothing is wrong: it
+   stops asking, and its count of solicits that had no answer at all
+   goes back to 0.
+2. Otherwise, if it heard from no relay, that count goes up by one; if
+   it heard from another relay, the solicit had an answer, and the count
+   goes back to 0.
+3. If it asked after a relay, and that relay had not already left a
+   solicit unanswered, it asks after it again at once, while that count
+   is under `SOLICIT_TRIES`. A lost answer moves no leaf that has not
+   moved.
+4. Otherwise, if it heard from no relay, it waits for the next
+   `SOLICIT_GAP`.
+5. Otherwise it has moved. Every relay neighbour it may use that it has
+   not heard from since the solicit went, or since the first of the
+   pair went if this was the second, goes out of use: one lost answer
+   takes no relay out of use. If the relay it asked after was its
+   anchor when it asked, or it asked after none, or its anchor when it
+   asked is among those that went out of use, and it has an anchor now
+   among the relays it may still use, it **re-attaches** to it: it
+   raises its `seq` by one, and its next announce comes within the shortest
+   interval, at full power, carrying its address, and is not suppressed.
+   It does not re-attach to the anchor it last re-attached to; and
+   having asked after none and never re-attached, it takes its anchor
+   as the one it last re-attached to without raising its `seq`, since
+   the routes to it can lead nowhere else.
+
+The newer `seq` reaches the relays now around the leaf first, at full
+power, and from them every node: of routes as good, a node selects the
+newer `seq` (see [Selecting a route](#selecting-a-route)).
+
+**A leaf heard of elsewhere.** A node with the link up to a leaf that
+it keeps, offered by another neighbour a route to that leaf with a
+`seq` newer than the leaf's own last announce gave, MUST take the leaf
+out of use: it has moved, and raised its `seq` where this node did not
+hear it.
+
+**Routes to leaves, repaired patiently.** A relay that loses its
+selected route to a leaf, having announced one, MUST NOT retract it at
+once, nor ask at once. It is starved, whether or not it holds an
+infeasible route: it asks as a starved node does (see [Starving, and
+asking](#starving-and-asking)), first `REQUEST_INTERVAL` after it lost
+the route, and `LEAF_TRIES` times in all, `REQUEST_INTERVAL` apart. If
+it has selected no route `REQUEST_INTERVAL` after the last, it retracts
+the route then. Only the leaf can make a route to it feasible again,
+and a leaf that moves raises its `seq` itself; meanwhile every relay
+behind this one keeps its route, rather than starving in turn.
+
 ## When to announce
 
 Announces are timed by Trickle (RFC 6206). A node's interval starts at
@@ -464,10 +638,10 @@ Departing from RFC 6206:
 
 ## The cap
 
-Announces and requests together take no more than `CAP` of a node's
-time, and a relay in its first `LEARN_FOR` no more than the learning
-allowance below besides: `REQUEST_SHARE` of the cap for requests, the
-rest for announces. Each
+Announces, requests, solicits and answers together take no more than
+`CAP` of a node's time, and a relay in its first `LEARN_FOR` no more than the learning
+allowance below besides: `REQUEST_SHARE` of the cap for requests,
+solicits and answers, the rest for announces. Each
 is a token bucket, which fills at its share and holds `CAP_WINDOW` of
 it, or one 255-byte frame if that is more, and starts full.
 
@@ -495,7 +669,7 @@ starved node asks again anyway.
 
 The cap and the learning allowance are the routing part of the
 [airtime budget](airtime.md#the-parts), and nothing else there pays for
-announces or requests.
+routing's frames.
 
 ## Parameters
 
@@ -538,6 +712,14 @@ announces or requests.
 | `ADDRESS_EVERY` | 8 | announces of which at least one carries it |
 | `NUMBER_SAVE` | 256 | announce numbers a node stores ahead |
 | `FORGOTTEN_KEPT` | 64 | forgotten neighbours whose numbers a node keeps |
+| `SOLICIT_SPARSE` | 4 | relays a leaf hears, at most, where it solicits |
+| `SOLICIT_HOPS` | 3 | hops given up in a row at a relay before a leaf asks after it |
+| `SOLICIT_GAP` | 60 s | between a leaf's solicits, but for the second of a pair |
+| `SOLICIT_WAIT` | 10 s | for a solicit's answers |
+| `SOLICIT_TRIES` | 3 | solicits in a row with no answer before a leaf waits for a relay new to it |
+| `ANSWER_WINDOW` | 16 | airtimes an answer waits, at most, from a relay not asked after |
+| `ANSWER_CANCEL` | 3 | answers to the same solicit that cancel a relay's own |
+| `LEAF_TRIES` | 1 | requests a relay makes for a route to a leaf it has lost |
 
 ## Conformance
 
@@ -564,9 +746,10 @@ An implementation conforms to this section if, for
 * **named:** it takes a margin as withdrawn, or not, as `withdrawn`
   says, when the neighbour last named it in announce `named` and has
   now sent `number`, with `round`;
-* **places:** with the full table of `neighbours` given, hearing an
-  announce that gives `floor_sixteenths` from a node not among them, it
-  replaces `replaces` (`null` for none);
+* **places:** with the full table of `neighbours` given, each with its
+  floor, whether its link is up and whether it is out of use
+  (`out_of_use`), hearing an announce that gives `floor_sixteenths` from
+  a node not among them, it replaces `replaces` (`null` for none);
 * **numbering:** hearing an announce numbered `number` from a
   neighbour whose last was `last`, it does as `does` says: `take` it,
   `discard` it, or forget the neighbour and take it as found `again`.
@@ -576,20 +759,77 @@ An implementation conforms to this section if, for
 * **feasible:** with the feasibility distance given (`null` for none),
   it finds each route feasible or not;
 * **selection:** with the routes given, each through a neighbour it may
-  use, and `selected` naming the one selected before (`null` for none),
-  it selects `selects`;
+  use or not (`usable`: not where the link is down or the neighbour is
+  out of use), and `selected` naming the one selected before (`null`
+  for none), it selects `selects`;
+* **powers:** as a leaf or not, with the neighbours given, each with
+  its floor and whether it is out of use, and its lowest and full
+  power, it sends a frame for every neighbour at `power`;
 * **kept:** with four routes held and `selected` among them, offered
-  `offered`, it replaces `replaces` (`null` for none);
+  `offered`, each through a neighbour it may use or not (`usable`), it
+  replaces `replaces` (`null` for none);
+* **listed:** it reads each route's `metric` as a retraction, or as
+  `leaf` and `metric`, and writes them back as `field`;
+* **anchors:** as a leaf, with the relay neighbours
+  given, each with whether its link is up, whether it is out of use, its
+  link's margin, and how long since it was heard against its promise,
+  it solicits there or not (`sparse`), has `anchor` (`null` for none),
+  and asks after it on its `SOLICIT_GAP`, or not (`asks`);
+* **solicits** and **answers:** it builds `frame` from the fields given,
+  and reads the fields from `frame`;
+* **answering:** as a relay, with its own margin for the leaf given, and
+  asked after or not, it answers or not, within a random wait of up to
+  `wait` airtimes of the answer, cancelled by others' answers or not;
+* **answered:** as a leaf that asked after `asked` (`"anchor"`,
+  `"another"` or `null` for none), the relay asked after having left one
+  solicit unanswered already or not (`doubt`), with `unanswered`
+  solicits in a row that had no answer at all, hearing the relay asked
+  after or not, and other relays or not, and with an anchor now that is
+  the one it last re-attached to, another, or none, having re-attached
+  before or not, and having heard from the relay that was its anchor
+  when it asked or not (`anchor_heard`, `null` for none or the one
+  asked after), and in the first solicit of the pair or not
+  (`anchor_heard_first`), it does as `does` says: `settled`, asks `again`,
+  `waits`, has `moved`, or `reattaches`; and then holds `doubt_after`,
+  `unanswered_after` and `anchor_heard_first_after`, and each of its
+  `relays`, heard from in this solicit or not (`heard`) and in the first
+  of the pair or not (`heard_first`), is out of use or not as
+  `out_of_use_after` says;
+* **in use again:** keeping a neighbour out of use and hearing from it
+  what `heard` says, it holds it out of use or not as
+  `out_of_use_after` says;
+* **given up:** as a leaf with the `relays` given, as in **anchors**,
+  having given `hops` hops up in a row at the one `at`, it holds each
+  out of use or not as `out_of_use_after` says, and asks after the one
+  `after` (`null` for none), its anchor or not (`anchored`), or does
+  not ask (`asks`);
+* **elsewhere:** keeping a neighbour as given, whose own last announce
+  gave `own_seq`, and offered a route to it at `offered_seq` by another
+  neighbour, it holds that neighbour out of use or not as
+  `out_of_use_after` says;
+* **samples:** keeping a neighbour as given (or none, where `kept` is
+  false), and hearing from it the solicit or answer given, it holds the
+  floor, the margin it gave, the link and whether the neighbour is out
+  of use as `floor_after`, `their_margin_after`, `up_after` and
+  `out_of_use_after` say, and answers a solicit with
+  `answer_margin` at `answer_power`, or not where they are `null`;
+* **leaves:** with the destination's own last announce saying it is a
+  relay or not (`relay`, `null` if it is not kept as a neighbour), the
+  routes held to it each listed as to a leaf or not (`listed`), the one
+  selected (`selected`, `null` for none) and what it took before
+  (`was`), it takes the destination to be a leaf or not as `leaf` says;
 * **defaults**, for an implementation that takes default routes: with
-  the `neighbours` given, each a relay or not and each with its floor
-  and whether its link is up, as a leaf or not (`leaf`), starting or
+  the `neighbours` given, each a relay or not and each with its floor,
+  whether its link is up and whether it is out of use (`out_of_use`),
+  as a leaf or not (`leaf`), starting or
   not, with the busy share `busy_ppm`, and with the neighbours `tried`
   already tried at, it hands a frame with no route to `next` (`null` for
   none), with a route metric of `metric` on a profile whose links cost
   `link_cost`.
 
-When announces go, and what a node does on a request, depend on random
-times and cannot be checked by vectors. They are checked by running
+When announces go, what a node does on a request, and when solicits and
+answers go and a route to a leaf is retracted, depend on random times
+and cannot be checked by vectors. They are checked by running
 implementations against each other and against the simulator.
 
 ## Rationale
@@ -692,6 +932,12 @@ relays, or keeping half the places for them, held fewer routes than
 taking no account of role: 23% and 84% at SF7 with 32 places, against
 88%, on one seed.
 
+A neighbour [out of use](#leaves-that-move) is given up before any
+other, whatever its link. A leaf that has moved keeps its links to the
+relays it left up until hops are given up there, and with a full table
+would otherwise have no place for a relay where it is now; one given up
+that is heard again comes back as a neighbour found.
+
 **How many destinations, and a leaf's default route.** A network's size
 is its relays' tables. The simulator, measured as a
 board runs the firmware (its tables read from the firmware's source),
@@ -758,6 +1004,79 @@ loud enough for the neighbours it names instead delivered 83.7% and
 that does not hear the leaf passes nothing on, and the leaf gives the
 frame up there and tries [another way](forwarding.md#hops), as from any
 relay.
+
+**Leaves that move: a leaf asks.** In the simulator, with a quarter of
+a thousand nodes' leaves walking, unicast on time fell by 28 points at
+0 dBm and 23 at 20 dBm, where the other designs moved by about 2: a leaf
+kept sending to a relay it could no longer reach. Forgetting a relay
+sooner made it worse, 38.0% falling to 25.2% at 3 hops given up and
+17.2% at 10 minutes' silence: it only left the leaf with none, since it
+learns of the relays around it from announces Trickle stretches to
+minutes. So a leaf that loses frames, or no longer hears its relay,
+asks the relays around it with a solicit, as RPL's DIS and Babel's
+route request ask, and they answer at once with the margin they give
+it, so a link comes up without waiting for an announce to name it.
+
+Asking after the relay twice, and moving only when it leaves both
+unanswered while another answers, is what keeps a lost answer from
+moving a leaf that has not moved: each move raises a `seq` that every
+relay then announces. The leaf takes out of use the relays that did not
+answer, and only the leaf's own `seq` can repair the routes to it, so
+it raises one, once for each relay it moves to.
+
+What the first version cost was repair (sim MSH-62, MSH-72). Every relay
+a leaf left took the routes behind it down, and each asked five times:
+38,523 requests an hour on the region at 0 dBm with leaves walking,
+against 11,769 without re-attachment. Taking a leaf's link out of use
+for a single frame lost flapped links, each flap resetting a relay's
+Trickle; a leaf asking for every frame lost cost detours. Hence
+`SOLICIT_HOPS`, a node taking a leaf out of use only when it hears of
+the leaf's newer `seq` from elsewhere, newer routes winning ties, and
+routes to leaves repaired patiently. Tried and not kept: selecting the
+newest `seq` first for leaves, as DSDV does, which made every `seq` a
+leaf raised a wave through the whole network (30,308 requests an hour
+with nothing moving); and a notice from the leaf along its new routes to
+its old relay, which changed nothing measurable. A route's metric gives
+up its top bit to say whether its destination is a leaf; `0x7FFE`
+milliseconds is still hundreds of hops on every profile.
+
+Unicast on time, candidate 3 on the simulator's fast preset (a thousand
+nodes, 200 relays, three seeds), without re-attachment and with it, at
+0 and 20 dBm: with nothing moving 88.8% and 88.7%, 95.8% and 97.5%;
+with a quarter of the leaves walking 59.8% and 67.5%, 84.8% and 89.7%;
+driving at 5 to 20 m/s 59.2% and 65.4%, 75.7% and 86.3%; with relays
+going down and coming back, unchanged. With nothing moving, deliveries
+per second of airtime stayed within 5% of what they were without it.
+Routes held once settled, with no traffic, went from 97.2% of pairs to
+99.6%, but that counts a leaf's way to the relay it solicited as a
+route, as a [default route](#a-leafs-default-route) is: it is what a
+leaf with no relay up gains.
+
+**Only where few relays are heard.** Where a network is dense, every
+relay in earshot answers a solicit, some 24 of them at 20 dBm, and the
+`seq` the leaf raises goes out from all of them, while the relay it
+moved from mostly still reaches it. Soliciting only where a leaf hears
+`SOLICIT_SPARSE` relays or fewer kept nearly everything re-attachment
+gained where relays are few and most of what it cost where they are
+many: with a quarter of the leaves walking, unicast on time without it,
+with it everywhere, and with it where four or fewer are heard, was
+65.0%, 71.6% and 71.7% at 0 dBm and 92.9%, 92.3% and 93.9% at 20 dBm;
+with nothing moving at 20 dBm, 95.9%, 97.9% and 98.6%, at 52.0, 49.2
+and 56.0 deliveries per second of airtime. Eight relays kept a little
+less of both. Counting relays the leaf has heard from within two of
+their promises, and not every relay whose link is up, is what lets a
+walker solicit where it needs to: links to relays it passed long ago
+stay up until hops are given up there.
+
+**Measured of the firmware.** The reference implementation's core, with
+this section's rules and the default route, run in the simulator on the
+same fast preset (three seeds, 255 neighbours a node): with a quarter of
+the leaves walking, unicast on time was 91.2% against 86.8% without
+re-attachment, for 8% fewer deliveries per second of airtime; with
+nothing moving, 99.2% against 99.3%, and with 32 neighbours a node 85.1%
+against 80.5%. On the deployed preset, SF8 at 62.5 kHz, routes settled
+sooner: 77.6% of pairs held one six hours on, against 64.8%, on a tenth
+less airtime, and 95% either way at twelve.
 
 **Signed announces, not a network key.** Unsigned, any radio can send
 an announce in another node's name: list routes it does not have, claim
@@ -942,6 +1261,8 @@ announces, as before: see [Not yet specified](#not-yet-specified).
   Ed25519 checks one in 2.6 ms on a desktop processor; a board is tens
   of times slower.
 * **A leaf's busy share on radios**, against what the simulator gave.
+* **Leaves that move, on radios**, and how often a leaf that has not
+  moved re-attaches for answers lost.
 * **Why a crowded network with small tables does not always settle.**
   With 32 or 64 places at SF7, six hours on, some seeds still sent
   requests and five times the announces of the others.
@@ -983,8 +1304,16 @@ announces, as before: see [Not yet specified](#not-yet-specified).
   announces.
 * **Who is a relay.** The simulator has nodes elect themselves from
   what they hear. Here it is configured.
-* **Leaves that move**: finding a new relay, and moving the routes
-  there.
+* **Signed solicits and answers.** Anyone may send either. A forged
+  solicit makes relays answer, within the requests' share of their cap;
+  a forged answer can bring a leaf's link to a relay up that is not, or
+  leave the relay it asked after looking silent, so that the leaf takes
+  its relays out of use and raises its `seq`. Signing them costs 64
+  bytes on a frame of 12 or 13.
+* **Solicits to and answers from nodes not kept.** A relay answers only
+  a leaf it keeps, and a leaf takes only an answer from a relay it
+  keeps, since neither frame can be checked. The simulator's candidate
+  3 took either from any node.
 * **Networks of more nodes than `RELAY_PLACES`**: routes kept within a
   region, and frames between regions by flooding or through nodes that
   join them.

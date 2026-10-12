@@ -33,7 +33,7 @@ WAIT_MAX = 0xFFFF
 
 HDR_MESSAGE, HDR_MESSAGE_NODE, HDR_ACK = 0x48, 0x49, 0x50
 HDR_CONTACT = (0x51, 0x52, 0x53, 0x54)
-HDR_ANNOUNCE, HDR_REQUEST = 0x59, 0x5A
+HDR_ROUTING = (0x59, 0x5A, 0x5B, 0x5C)  # announce, request, solicit, answer
 HDR_FLOODED = (0x60, 0x61, 0x68)
 
 US915, EU868 = phy.PROFILES[0], phy.PROFILES[1]
@@ -41,7 +41,7 @@ US915, EU868 = phy.PROFILES[0], phy.PROFILES[1]
 
 def part(hdr, own):
     """The part of the budget that pays for a frame: own, relayed, or routing (Routes' cap)."""
-    if hdr in (HDR_ANNOUNCE, HDR_REQUEST):
+    if hdr in HDR_ROUTING:
         return "routing"
     assert hdr in (HDR_MESSAGE, HDR_MESSAGE_NODE, HDR_ACK) + HDR_CONTACT + HDR_FLOODED
     return "own" if own else "relayed"
@@ -199,8 +199,7 @@ def build():
     self_check()
 
     classes = []
-    for hdr in (HDR_MESSAGE, HDR_MESSAGE_NODE, HDR_ACK) + HDR_CONTACT + (HDR_ANNOUNCE,
-                                                                        HDR_REQUEST) + HDR_FLOODED:
+    for hdr in (HDR_MESSAGE, HDR_MESSAGE_NODE, HDR_ACK) + HDR_CONTACT + HDR_ROUTING + HDR_FLOODED:
         for own in (True, False):
             classes.append({"hdr": hdr, "own": own, "part": part(hdr, own),
                             "flood_allowance": flood_bucket(hdr, own), "unpaid": unpaid(hdr, own)})

@@ -61,9 +61,9 @@ A node's budget is three parts:
 
 | Part | Pays for | Fills at | Holds |
 |---|---|---|---|
-| **routing** | announces and requests, its own and those it passes on | [Routes' cap](routing.md#the-cap) and, for a relay, its learning allowance | as Routes says |
-| **own** | its own frames, but announces and requests | `BUDGET_OWN` | `BUDGET_OWN_WINDOW` |
-| **relayed** | frames it passes on, but announces and requests | `BUDGET_RELAY` for a relay; a leaf has no relayed part | `BUDGET_RELAY_WINDOW` |
+| **routing** | announces, requests, solicits and answers, its own and those it passes on | [Routes' cap](routing.md#the-cap) and, for a relay, its learning allowance | as Routes says |
+| **own** | its own frames, but routing's | `BUDGET_OWN` | `BUDGET_OWN_WINDOW` |
+| **relayed** | frames it passes on, but routing's | `BUDGET_RELAY` for a relay; a leaf has no relayed part | `BUDGET_RELAY_WINDOW` |
 
 The routing part is Routes' cap and learning allowance, unchanged, and
 nothing in this section adds to it or takes from it. The own and
@@ -87,7 +87,7 @@ bucket for those it passes on **and** by the relayed part.
 | `0x48`, `0x49` | a [message](forwarding.md#the-head) | own: waits | relayed: dropped |
 | `0x50` | an [acknowledgement](forwarding.md#messages) | own: never held | relayed: never held |
 | `0x51` to `0x54` | a [first-contact frame](first-contact.md#the-frame) | own: waits | relayed: dropped |
-| `0x59`, `0x5A` | an [announce or request](routing.md#announces) | routing | routing |
+| `0x59` to `0x5C` | an [announce, request, solicit or answer](routing.md#announces) | routing | routing |
 | `0x60`, `0x61`, `0x68` | a [flooded frame](flooding.md#the-head) | own and the flood bucket for its own: waits | relayed and the flood bucket for those passed on: dropped |
 
 A first-contact frame that answers another, such as the responder's
@@ -95,7 +95,7 @@ A first-contact frame that answers another, such as the responder's
 
 ## Spending
 
-A frame other than an announce or request is **paid for** when every
+A frame other than routing's is **paid for** when every
 bucket that pays for it, by the table above, holds it. Then:
 
 * **A frame of the node's own** is sent only once it is paid for. A
@@ -117,8 +117,7 @@ that pays for it, all at once. A frame not sent is charged to none: one
 that waits is charged when it goes, and one dropped, for the budget or
 for any other reason, never.
 
-Announces and requests are paid for as Routes says, and by nothing
-here.
+Routing's frames are paid for as Routes says, and by nothing here.
 
 **The region's limit as well.** Any frame, paid for or an
 acknowledgement, is still sent only if the
