@@ -1022,15 +1022,15 @@ def build():
         f, t, u = sample(kind, leaf, rl, floor, theirs, up, 22, power, snr, margin)
         # A relay that hears a solicit answers with the margin it gives the leaf, at the power of
         # a frame for it, if its own margin allows.
-        answers = kind == "solicit" and not leaf and answering(16 * 22 - f, False)[0]
+        replies = kind == "solicit" and not leaf and answering(16 * 22 - f, False)[0]
         samples.append(
             {"kind": kind, "leaf": leaf, "relay": rl, "kept": True, "floor_sixteenths": floor,
              "their_margin": theirs, "up": up, "full_power": 22, "power": power,
              "snr_quarter_db": snr, "margin": margin, "floor_after": f, "their_margin_after": t,
              "up_after": u,
-             "answer_margin": margin_byte(22, f) if answers else None,
+             "answer_margin": margin_byte(22, f) if replies else None,
              "answer_power": max(-9, min(22, -(-(f + 16 * POWER_MARGIN) // 16)))
-             if answers else None}
+             if replies else None}
         )
     # From a node it does not keep, a solicit or an answer gives nothing: no neighbour, no answer.
     for kind, leaf in [("solicit", False), ("answer to me", True)]:
