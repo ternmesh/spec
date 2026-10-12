@@ -411,18 +411,19 @@ half hour:
   the figure above. At 4% the ten busiest dropped up to 21% and unicast
   fell 2.6 points; at 2%, 3 to 10 points. At 12% it dropped next to
   nothing.
-* **The own part** held nothing on the fast preset and 4 frames an hour
-  in the town. On the deployed preset it held 3,100 to 4,600 frames an
-  hour for about two minutes each, past the 60 s deadline: unicast on
-  time did not move, the 95th-percentile delay doubled or more, to 151
-  to 291 s, and deliveries per second of airtime rose 12 to 47%, the
-  retries held back having been mostly lost anyway. At 2% it held a
-  tenth as many, for a minute, and delay was as with no budget.
+* **The own part** held nothing on the fast preset and 5 frames an hour
+  in the town. On the deployed preset it held frames 3,100 to 4,600
+  times an hour, about a minute at a time: unicast on time did not
+  move, the 95th-percentile delay doubled or more, to 151 to 291 s,
+  past the 60 s deadline, and deliveries per second of airtime rose 12
+  to 47%, the retries held back having been mostly lost anyway. At 2%
+  it held a tenth as many, for under half a minute, and delay was as
+  with no budget.
 
 At six times that traffic, a message every five minutes, the town fell
-from 19.9% of unicasts on time to 5.1% with the own part at 1%, each
-held frame waiting seven minutes, and to 18.7% at 2%; at 4% nothing was
-held. The deployed preset fell from 2.1-3.7% to 0.3-0.7% at 1%, and to
+from 19.9% of unicasts on time to 4.9% with the own part at 1%, which
+held frames some 19,000 times an hour, and to 18.7% at 2%; at 4% nothing
+was held. The deployed preset fell from 2.1-3.7% to 0.2-0.7% at 1%, and to
 1.8-3.0% at 2%. The fast preset, whose frames are a third as long,
 held almost nothing at 1%; there, at -5 dBm, the relayed part dropped
 10% of what the busiest relay was asked, the ten busiest 2.3%, with
@@ -436,9 +437,9 @@ with no budget.
 
 With a twentieth of the nodes writing a message every 10 seconds, the
 own part did what it is for: the other nodes' unicasts arrived on time
-36 to 70% of the time on the fast preset against 14 to 19% with no
-budget, and 10 to 18% against 3 to 10% on the deployed preset; at 2%,
-25 to 54% and 10 to 16%. The writers sent only stale messages: their
+36 to 69% of the time on the fast preset against 14 to 19% with no
+budget, and 11 to 18% against 3 to 10% on the deployed preset; at 2%,
+25 to 52% and 10 to 17%. The writers sent only stale messages: their
 own part let their frames go slower than they came, nothing drops a
 frame of a node's own, and every message went out behind a backlog
 minutes long.
