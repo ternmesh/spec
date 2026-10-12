@@ -23,8 +23,8 @@ import phy  # noqa: E402
 OUT = Path(__file__).resolve().parent.parent / "airtime.json"
 
 NS = 1_000_000_000
-BUDGET_OWN_PPM, BUDGET_OWN_WINDOW_S = 10_000, 600
-BUDGET_RELAY_PPM, BUDGET_RELAY_WINDOW_S = 80_000, 60
+BUDGET_OWN_PPM, BUDGET_OWN_WINDOW_S = 20_000, 600
+BUDGET_RELAY_PPM, BUDGET_RELAY_WINDOW_S = 70_000, 60
 # Routes' cap (draft/routing.md): CAP, of which REQUEST_SHARE for requests; and a relay's learning
 # allowance, LEARN_SHARE of the announces' share.
 CAP_PPM = 5_000
@@ -171,25 +171,26 @@ def reason(route, session, region_wait_s, budget_wait_s):
 def self_check():
     # The shares a relay may spend, routing's at its largest, are within 10% of the hour.
     assert LEARN_PPM == 1_875 and parts("relay")["most_ppm"] == 96_875
-    assert parts("leaf")["most_ppm"] == 15_000
+    assert parts("leaf")["most_ppm"] == 25_000
     for name, _, _, _, _, duty, _ in phy.PROFILES:
         assert duty >= parts("relay")["most_ppm"], name
-    # 1% of ten minutes is 6 s: fourteen 255-byte frames of 407.808 ms on EU868, and not fifteen.
+    # 2% of ten minutes is 12 s: twenty-nine 255-byte frames of 407.808 ms on EU868, and not
+    # thirty.
     n = Node("leaf", EU868)
-    assert [n.offer(0, HDR_MESSAGE, True, 255)[1] for _ in range(15)] == [True] * 14 + [False]
-    # What is left is 290.688 ms; the rest of a frame, 117.12 ms, takes 11.712 s to come.
+    assert [n.offer(0, HDR_MESSAGE, True, 255)[1] for _ in range(30)] == [True] * 29 + [False]
+    # What is left is 173.568 ms; the rest of a frame, 234.24 ms, takes 11.712 s to come.
     assert not n.offer(11_711_999_999, HDR_MESSAGE, True, 255)[1]
     assert n.offer(11_712_000_000, HDR_MESSAGE, True, 255)[1]
     # Then it is empty: a 19-byte acknowledgement, 59.648 ms, still goes, and leaves no debt; a
-    # 255-byte frame then needs 40.7808 s from when it went.
-    assert n.waits_s(11_712_000_000, [(HDR_MESSAGE, 255)]) == [(407_808_000, 41)]
+    # 255-byte frame then needs 20.3904 s from when it went.
+    assert n.waits_s(11_712_000_000, [(HDR_MESSAGE, 255)]) == [(407_808_000, 21)]
     assert n.offer(11_712_000_000, HDR_ACK, True, 19) == (59_648_000, True)
     assert n.b["own"].level == 0
-    assert not n.offer(52_492_799_999, HDR_MESSAGE, True, 255)[1]
-    assert n.offer(52_492_800_000, HDR_MESSAGE, True, 255)[1]
-    # 8% of a minute is 4.8 s: fourteen 255-byte frames of 320.768 ms on US915.
+    assert not n.offer(32_102_399_999, HDR_MESSAGE, True, 255)[1]
+    assert n.offer(32_102_400_000, HDR_MESSAGE, True, 255)[1]
+    # 7% of a minute is 4.2 s: thirteen 255-byte frames of 320.768 ms on US915.
     r = Node("relay", US915)
-    assert [r.offer(0, HDR_MESSAGE, False, 255)[1] for _ in range(15)] == [True] * 14 + [False]
+    assert [r.offer(0, HDR_MESSAGE, False, 255)[1] for _ in range(14)] == [True] * 13 + [False]
     assert r.offer(0, HDR_MESSAGE, True, 255)[1]  # the node's own are apart
     assert reason(False, False, 9, 9) == (1, 0) and reason(True, True, 5, 5) == (3, 5)
     assert reason(True, True, 0, 70_000) == (4, WAIT_MAX)
@@ -210,22 +211,22 @@ def build():
     for name, role, profile, offers in [
         # The own part, emptied by a burst, and filling again.
         ("own", "leaf", EU868,
-         [(0, M, True, 255)] * 15 + [(11_711_999_999, M, True, 255), (11_712_000_000, M, True, 255),
+         [(0, M, True, 255)] * 30 + [(11_711_999_999, M, True, 255), (11_712_000_000, M, True, 255),
                                       (11_712_000_000, 0x52, True, 60), (600 * s, M, True, 67)]),
         # An acknowledgement goes when the part is empty, and leaves it empty, not owing.
         ("acknowledgements", "leaf", EU868,
-         [(0, M, True, 255)] * 14 + [(0, AK, True, 19)] * 6 + [(0, M, True, 23),
-                                                               (40_780_799_999, M, True, 255),
-                                                               (40_780_800_000, M, True, 255)]),
+         [(0, M, True, 255)] * 29 + [(0, AK, True, 19)] * 6 + [(0, M, True, 23),
+                                                               (20_390_399_999, M, True, 255),
+                                                               (20_390_400_000, M, True, 255)]),
         # Group frames of the node's own: the flood allowance, inside the own part, binds first,
         # and a message still goes from what the part has left.
         ("own-floods", "relay", EU868,
          [(0, G, True, 255)] * 8 + [(0, M, True, 255), (0, 0x68, True, 134)]),
         # Frames passed on empty the relayed part; the node's own still go.
         ("relayed", "relay", US915,
-         [(0, M, False, 255)] * 15 + [(0, M, True, 255), (0, AK, False, 19),
-                                      (825_599_999, M, False, 255),
-                                      (825_600_000, M, False, 255)]),
+         [(0, M, False, 255)] * 14 + [(0, M, True, 255), (0, AK, False, 19),
+                                      (4_582_399_999, M, False, 255),
+                                      (4_582_400_000, M, False, 255)]),
         # Floods passed on: the relay allowance binds first, and a message passed on still goes.
         ("relayed-floods", "relay", US915,
          [(k * 10_000_000, G, False, 255) for k in range(7)] + [(s, 0x51, False, 56),
@@ -245,13 +246,13 @@ def build():
 
     estimates = []
     for name, role, profile, spent, at, waiting in [
-        ("messages", "leaf", EU868, [(0, M, True, 255)] * 14, 0,
+        ("messages", "leaf", EU868, [(0, M, True, 255)] * 29, 0,
          [(M, 255), (M, 67), (M, 255)]),
-        ("later", "leaf", EU868, [(0, M, True, 255)] * 14, 30 * s,
+        ("later", "leaf", EU868, [(0, M, True, 255)] * 29, 30 * s,
          [(M, 255), (M, 67), (M, 255)]),
         ("group-behind-message", "relay", EU868, [(0, G, True, 255)] * 7 + [(0, M, True, 255)] * 6,
          0, [(M, 255), (G, 255), (G, 120)]),
-        ("us915", "relay", US915, [(0, M, True, 255)] * 18, 0, [(M, 23)] * 4),
+        ("us915", "relay", US915, [(0, M, True, 255)] * 37, 0, [(M, 23)] * 4),
         ("message-behind-group", "relay", EU868, [(0, G, True, 255)] * 7, 0, [(G, 255), (M, 255)]),
     ]:
         node = Node(role, profile)
@@ -265,7 +266,7 @@ def build():
             "waiting": [{"hdr": h, "length": n, "airtime_ns": air, "wait_s": w}
                         for (h, n), (air, w) in zip(waiting, rows)],
         })
-    assert [w["wait_s"] for w in estimates[0]["waiting"]] == [12, 25, 66]
+    assert [w["wait_s"] for w in estimates[0]["waiting"]] == [12, 19, 39]
     # A frame never goes before the one ahead of it, even when its own buckets could pay sooner.
     for e in estimates:
         waits = [w["wait_s"] for w in e["waiting"]]
