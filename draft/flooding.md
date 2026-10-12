@@ -466,8 +466,13 @@ its time, are together allowed five channels.
 * **The allowance's numbers against each other.** One load was run
   with them and without. Whether 3% is the right share for a relay,
   or 0.5% for a writer, was not asked.
-* **A workload with groups in it**, drawn from what meshes carry in the
-  field: here every broadcast is for every node.
+* **A workload with groups in it.** One drawn from what meshes carry in
+  the field has since been run (ternmesh/sim, `docs/workload.md`):
+  presence, position and telemetry are most of a mesh's traffic and want
+  only the nodes nearby, and starting them at fewer hops is what moved
+  most. Positions start at [`POSITION_HOPS`](positions.md#parameters).
+  Every node was in one group, so how many groups a mesh holds, and
+  how their members are spread, is still to be run.
 * **Any of it on radios**, past one hop between two boards.
 
 ## Not yet specified

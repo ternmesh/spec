@@ -44,6 +44,7 @@ POSITION_MIN = 60
 POSITION_GROUP_MIN = 300
 POSITION_REFRESH = 3600
 POSITION_STALE = 3600
+POSITION_HOPS = 2
 
 
 def where_bytes(precision):
@@ -344,10 +345,12 @@ def build():
     g1 = bytes(range(16))
     nonce = bytes.fromhex("5050505050505050")
     alice = 0x1D2E3F40
-    grp = seal_group(g1, nonce, alice, 9, town)
+    # A position's flood starts with POSITION_HOPS, not the FLOOD_HOPS of a group's words.
+    flood = {**groups.FLOOD, "hops": POSITION_HOPS}
+    grp = seal_group(g1, nonce, alice, 9, town, flood)
     assert open_group(g1, grp) == (alice, 9, town)
     # groups.md's own frame with its node flag set: the same bytes, and a member takes it.
-    assert grp == groups.seal(g1, nonce, alice, 9, town, hdr=groups.HDR_NODE)
+    assert grp == groups.seal(g1, nonce, alice, 9, town, flood, hdr=groups.HDR_NODE)
     assert groups.open_frame(g1, 0x0A0B0C0D, grp) == (alice, 9, town)
     frames = [
         {"name": "to-a-contact", "note": "a secured unicast frame with the node flag set",
@@ -356,7 +359,7 @@ def build():
         {"name": "to-a-group", "note": "a group frame with the node flag set",
          "group_secret": g1.hex(), "nonce": nonce.hex(), "from": alice, "count": 9,
          "hdr": HDR_GROUP_NODE,
-         **groups.FLOOD, "content": town.hex(), "frame": grp.hex()},
+         **flood, "content": town.hex(), "frame": grp.hex()},
     ]
 
     receiving = []
