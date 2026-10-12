@@ -35,7 +35,7 @@ OUT = Path(__file__).resolve().parent.parent / "routing.json"
 
 EVERYONE = 0xFFFFFFFF
 INF = 0xFFFF
-HDR_ANNOUNCE, HDR_REQUEST = 0x59, 0x5A
+HDR_ANNOUNCE, HDR_REQUEST, HDR_SOLICIT, HDR_ANSWER = 0x59, 0x5A, 0x5B, 0x5C
 FLAG_RELAY = 0x01
 FLAG_STARTING = 0x02
 FLAG_ADDRESS = 0x04
@@ -48,6 +48,13 @@ ROUTES_KEPT = 4
 REPLACE_BAND = 6 * 16
 DEFAULT_HOPS = 6
 DEFAULT_BUSY = 500000
+METRIC_MAX = 0x7FFE  # a route's metric gives up its top bit to say its destination is a leaf
+LEAF_BIT = 0x8000
+JITTER = 2
+SOLICIT_SPARSE = 4
+SOLICIT_TRIES = 3
+ANSWER_WINDOW = 16
+SOLICIT_LEN, ANSWER_LEN = 12, 13
 
 
 def rid(address):
@@ -141,6 +148,83 @@ def request(q):
     return out
 
 
+def solicit(x):
+    return struct.pack(">BIHIb", HDR_SOLICIT, x["sender"], x["id"], x["after"], x["power"])
+
+
+def answer(x):
+    return struct.pack(
+        ">BIIHBb", HDR_ANSWER, x["sender"], x["leaf"], x["id"], x["margin"], x["power"]
+    )
+
+
+def short_read(frame, own):
+    """A solicit's or an answer's fields, or None if a node with routing id own MUST discard it."""
+    if len(frame) == SOLICIT_LEN and frame[0] == HDR_SOLICIT:
+        sender, id_, after, power = struct.unpack(">IHIb", frame[1:])
+        x = {"sender": sender, "id": id_, "after": after, "power": power}
+    elif len(frame) == ANSWER_LEN and frame[0] == HDR_ANSWER:
+        sender, leaf, id_, margin, power = struct.unpack(">IIHBb", frame[1:])
+        x = {"sender": sender, "leaf": leaf, "id": id_, "margin": margin, "power": power}
+    else:
+        return None
+    return None if x["sender"] in (0, EVERYONE, own) else x
+
+
+def listed_read(field):
+    """A listed route's metric field: None for a retraction, else (leaf, metric)."""
+    if field & 0x7FFF == 0x7FFF:
+        return None
+    return bool(field & LEAF_BIT), field & 0x7FFF
+
+
+def listed_write(leaf, metric):
+    return INF if metric is None else (LEAF_BIT if leaf else 0) | metric
+
+
+def solicit_view(relays):
+    """As a leaf with these relay neighbours: whether it solicits there, its anchor (an index, or
+    None), and whether it asks after it on its SOLICIT_GAP."""
+    def usable(n):
+        return n["up"] and not n["out_of_use"]
+
+    def lately(n):
+        return n["promise_s"] is None or n["heard_s"] <= 2 * n["promise_s"]
+
+    sparse = sum(1 for n in relays if n["relay"] and usable(n) and lately(n)) <= SOLICIT_SPARSE
+    ok = [(n["margin_sixteenths"], i) for i, n in enumerate(relays) if n["relay"] and usable(n)]
+    anchor = max(ok)[1] if ok else None
+    if ok:
+        assert [m for m, _ in ok].count(max(ok)[0]) == 1, "the vectors leave no tie to break"
+    asks = sparse and (anchor is None or not lately(relays[anchor]))
+    return sparse, anchor, asks
+
+
+def answering(own, asked):
+    """Whether a relay answers a solicit with its own margin for the leaf `own` (sixteenths of a
+    dB), the most it waits, in airtimes of the answer, and whether others' answers cancel it."""
+    if own < LINK_MARGIN:
+        return False, None, None
+    return True, JITTER if asked else ANSWER_WINDOW, not asked
+
+
+def answered(asked, doubt, unanswered, asked_heard, others_heard, anchor_now, attached_before):
+    """What a leaf does once its solicit's SOLICIT_WAIT is over, and then its doubt and count of
+    solicits wholly unanswered. asked is "anchor", "another" or None; anchor_now is "attached",
+    "other" or None."""
+    if asked is not None and asked_heard:
+        return "settled", False, 0
+    if not others_heard:
+        unanswered += 1
+    if asked is not None and not doubt:
+        return ("again" if unanswered < SOLICIT_TRIES else "waits"), True, unanswered
+    if not others_heard:
+        return "waits", False, unanswered
+    first = asked is None and not attached_before  # takes its anchor without raising its seq
+    moves = (asked in ("anchor", None)) and anchor_now not in (None, "attached") and not first
+    return ("reattaches" if moves else "moved"), False, 0
+
+
 def snr_floor_quarters(sf):
     return -30 - 10 * (sf - 7)
 
@@ -186,7 +270,7 @@ def feasible(fd, seq, metric):
 
 
 def total(metric, cost):
-    return min(metric + cost, INF - 1)
+    return min(metric + cost, METRIC_MAX)
 
 
 def select(fd, cost, routes, selected):
@@ -198,12 +282,20 @@ def select(fd, cost, routes, selected):
         t = total(r["metric"], cost)
         if i == selected:
             cur = t
-        if best is None or t < best[1]:
+        # Of the lowest, the newest seq: a leaf that has moved raised it.
+        if best is None or t < best[1] or (
+            t == best[1] and newer(r["seq"], routes[best[0]]["seq"])
+        ):
             best = (i, t)
     if best is None:
         return None
-    # Kept unless another is lower by more than a tenth of it.
-    if cur is not None and best[0] != selected and not 10 * best[1] < 9 * cur:
+    # Kept unless another is lower by more than a tenth of it, or no higher with a newer seq.
+    if (
+        cur is not None
+        and best[0] != selected
+        and not 10 * best[1] < 9 * cur
+        and not (best[1] <= cur and newer(routes[best[0]]["seq"], routes[selected]["seq"]))
+    ):
         return selected
     return best[0]
 
@@ -261,7 +353,7 @@ def default_next(leaf, starting, busy_ppm, neighbours, tried):
 
 
 def default_metric(cost):
-    return min(DEFAULT_HOPS * cost, INF - 1)
+    return min(DEFAULT_HOPS * cost, METRIC_MAX)
 
 
 def self_check():
@@ -288,7 +380,17 @@ def self_check():
     r = [{"floor_sixteenths": -100, "up": True, "relay": True},
          {"floor_sixteenths": -300, "up": True, "relay": False}]
     assert default_next(True, False, 0, r, []) == 0 and default_next(False, False, 0, r, []) is None
-    assert default_metric(70) == 420 and default_metric(20000) == INF - 1
+    assert default_metric(70) == 420 and default_metric(20000) == METRIC_MAX
+    # As good, newer wins; a tenth better at an older seq still moves.
+    two = [{"seq": 5, "metric": 100}, {"seq": 6, "metric": 100}]
+    assert select(None, 54, two, None) == 1 and select(None, 54, two, 0) == 1
+    assert select(None, 54, [{"seq": 6, "metric": 100}, {"seq": 5, "metric": 10}], 0) == 1
+    assert listed_read(0xFFFF) is None and listed_read(0x7FFF) is None
+    assert listed_read(0x8036) == (True, 54) and listed_write(True, 54) == 0x8036
+    assert answered("anchor", False, 0, False, True, "other", True) == ("again", True, 0)
+    assert answered("anchor", True, 0, False, True, "other", True) == ("reattaches", False, 0)
+    assert answered(None, False, 0, False, True, "other", False) == ("moved", False, 0)
+    assert answering(-1, True) == (False, None, None) and answering(0, False) == (True, 16, True)
 
 
 def build():
@@ -327,6 +429,16 @@ def build():
             "neighbours": [{"id": a, "margin": 130}],
             "routes": [{"destination": c, "seq": 7, "metric": 54}],
         },
+        {
+            "sender": sc, "number": 6, "seq": 9, "relay": True, "starting": False,
+            "carries_address": False, "promise": 600, "round": 1, "power": 8,
+            "neighbours": [],
+            "routes": [
+                {"destination": a, "seq": 0x0100, "metric": listed_write(True, 54)},
+                {"destination": d, "seq": 3, "metric": listed_write(False, 0x7FFE)},
+                {"destination": b, "seq": 4, "metric": listed_write(True, None)},
+            ],
+        },
     ]
     signer = {sa: 0, sb: 1, sc: 2}
     requests = [
@@ -346,6 +458,20 @@ def build():
         x["frame"] = announce(x, seeds[k]).hex()
     for x in requests:
         x["frame"] = request(x).hex()
+    solicits = [
+        {"sender": a, "id": 0, "after": b, "power": 22},
+        {"sender": d, "id": 0xFFFF, "after": EVERYONE, "power": -9},
+    ]
+    answers = [
+        {"sender": b, "leaf": a, "id": 0, "margin": 128, "power": 14},
+        {"sender": c, "leaf": d, "id": 0xFFFF, "margin": 1, "power": -9},
+    ]
+    for x in solicits:
+        x["frame"] = solicit(x).hex()
+        assert short_read(solicit(x), 0x12345678) == {k: v for k, v in x.items() if k != "frame"}
+    for x in answers:
+        x["frame"] = answer(x).hex()
+        assert short_read(answer(x), 0x12345678) == {k: v for k, v in x.items() if k != "frame"}
     assert len(bytes.fromhex(announces[2]["frame"])) == 249
 
     good = bytes.fromhex(announces[1]["frame"])  # carries no address
@@ -380,6 +506,23 @@ def build():
         {"why": "a request a byte long", "frame": (ask + b"\x00").hex()},
         {"why": "a request with nothing in it", "frame": (ask[:5] + b"\x00").hex()},
     ]
+    sol = solicit({"sender": a, "id": 1, "after": b, "power": 22})
+    ans = answer({"sender": b, "leaf": a, "id": 1, "margin": 140, "power": 22})
+    rejected += [
+        {"why": "a solicit a byte short", "frame": sol[:-1].hex()},
+        {"why": "a solicit a byte long", "frame": (sol + b"\x00").hex()},
+        {"why": "a solicit from routing id 0", "frame": (sol[:1] + bytes(4) + sol[5:]).hex()},
+        {
+            "why": "a solicit from the receiver's own routing id",
+            "frame": solicit({"sender": d, "id": 1, "after": b, "power": 22}).hex(),
+        },
+        {"why": "an answer a byte short", "frame": ans[:-1].hex()},
+        {"why": "an answer a byte long", "frame": (ans + b"\x00").hex()},
+        {
+            "why": "an answer from routing id ffffffff",
+            "frame": (ans[:1] + b"\xff" * 4 + ans[5:]).hex(),
+        },
+    ]
     own = d  # the receiver's routing id, the last of ids
     for x in rejected:
         f = bytes.fromhex(x["frame"])
@@ -387,6 +530,8 @@ def build():
             sender = struct.unpack(">I", f[1:5])[0] if len(f) >= 5 else 0
             for held in (None, signers[signer[sender]] if sender in signer else None):
                 assert announce_read(f, own, held) is None, x["why"]
+        elif f[0] in (HDR_SOLICIT, HDR_ANSWER):
+            assert short_read(f, own) is None, x["why"]
 
     # Whether a node takes an announce depends on the address it holds for the sender.
     verified = []
@@ -474,7 +619,7 @@ def build():
             "routes": [{"seq": s, "metric": m, "feasible": feasible(f, s, m)} for s, m in routes],
         }
         for f, routes in [
-            (None, [(0, 0), (9, 0xFFFE)]),
+            (None, [(0, 0), (9, 0x7FFE)]),
             (fd, [(10, 161), (10, 162), (10, 163), (11, 5000), (9, 0), (0x8009, 0), (0x800A, 0)]),
             ({"seq": 0xFFFF, "metric": 54}, [(0, 9999), (0xFFFF, 53), (0xFFFE, 0)]),
         ]
@@ -493,7 +638,18 @@ def build():
         (fd, 54, [(10, 162), (10, 200), (9, 0)], 0),
         (fd, 54, [(10, 162), (11, 500), (10, 108)], 1),
         (fd, 54, [(10, 162), (11, 500), (10, 54)], 1),
-        (None, 54, [(1, 0xFFFE), (1, 0xFFF0)], 0),
+        (None, 54, [(1, 0x7FFE), (1, 0x7FF0)], 0),
+        # Of routes as good, the newer seq; the selected route gives way to one as good and newer,
+        # however little better, but not to one older, nor to one newer and worse.
+        (None, 54, [(3, 108), (4, 108)], None),
+        (None, 54, [(4, 108), (3, 108)], None),
+        (None, 54, [(3, 108), (4, 108)], 0),
+        (None, 54, [(3, 108), (4, 100)], 0),
+        (None, 54, [(4, 108), (3, 108)], 0),
+        (None, 54, [(3, 108), (4, 109)], 0),
+        (None, 54, [(3, 108), (2, 0)], 0),
+        (fd, 54, [(10, 54), (11, 54), (11, 108)], 0),
+        (None, 54, [(0xFFFF, 54), (0, 54)], 0),  # newer across the wrap
         (None, 54, [], None),
     ]:
         rs = routes_of(pairs)
@@ -517,8 +673,8 @@ def build():
         (fd, four, 3, (11, 5000)),
         (fd, [(10, 54), (10, 55), (10, 56), (10, 57)], 3, (10, 56)),
         (fd, [(10, 54), (10, 55), (10, 56), (10, 57)], 2, (10, 56)),
-        (None, [(1, 54), (2, 5000), (3, 9000), (4, 60000)], 0, (5, 65000)),
-        (None, [(1, 54), (2, 5000), (3, 9000), (4, 60000)], 3, (1, 0)),
+        (None, [(1, 54), (2, 5000), (3, 9000), (4, 30000)], 0, (5, 32000)),
+        (None, [(1, 54), (2, 5000), (3, 9000), (4, 30000)], 3, (1, 0)),
     ]:
         rs = routes_of(pairs)
         o = {"seq": off[0], "metric": off[1]}
@@ -576,9 +732,77 @@ def build():
             # no link to a relay up: the nearest relay heard, not the nearer leaf
             (nb((-100, False, True), (-300, False, True), (-480, True, False)), True, False, 0, [], 70),
             (nb((-100, True, False)), True, False, 0, [], 70),  # no relay
-            (near, True, False, 0, [], 11000),  # a metric past 0xFFFE is 0xFFFE
+            (near, True, False, 0, [], 11000),  # a metric past 0x7FFE is 0x7FFE
         ]
     ]
+
+    listed = []
+    for field in [0x0036, 0x8036, 0x7FFE, 0xFFFE, 0x0000, 0x8000, 0xFFFF, 0x7FFF]:
+        got = listed_read(field)
+        listed.append(
+            {
+                "metric_field": field,
+                "retracts": got is None,
+                "leaf": None if got is None else got[0],
+                "metric": None if got is None else got[1],
+                "field": listed_write(*(got if got else (False, None))),
+            }
+        )
+
+    def relay(up, out, margin, heard, promise, is_relay=True):
+        return {"relay": is_relay, "up": up, "out_of_use": out, "margin_sixteenths": margin,
+                "heard_s": heard, "promise_s": promise}
+
+    anchors = []
+    for rs in [
+        [relay(True, False, 80, 100, 600), relay(True, False, 160, 100, 600)],
+        [relay(True, False, 80, 100, 600), relay(True, False, 160, 1300, 600)],  # gone quiet
+        [relay(True, False, 160, 1200, 600)],  # two promises exactly: not yet
+        [relay(True, False, 160, 1201, 600)],
+        [relay(True, False, 160, 99999, None)],  # promised nothing: never quiet
+        [relay(True, True, 300, 10, 600), relay(False, False, 400, 10, 600),
+         relay(True, False, 900, 10, 600, False)],  # out of use, down, and a leaf: no anchor
+        [],
+        [relay(True, False, 16 * k, 10, 600) for k in range(1, 6)],  # five heard: not sparse
+        # five whose links are up, one unheard for long: four heard lately, so sparse
+        [relay(True, False, 16 * k, 10, 600) for k in range(1, 5)]
+        + [relay(True, False, 80, 2000, 600)],
+    ]:
+        sparse, anchor, asks = solicit_view(rs)
+        anchors.append({"relays": rs, "sparse": sparse, "anchor": anchor, "asks": asks})
+
+    answering_ = []
+    for own_, asked in [(0, True), (0, False), (-1, True), (-1, False), (320, False), (-48, True)]:
+        ok, wait, cancel = answering(own_, asked)
+        answering_.append(
+            {"own_margin_sixteenths": own_, "asked": asked, "answers": ok, "wait": wait,
+             "cancelled": cancel}
+        )
+
+    answered_ = []
+    for case in [
+        ("anchor", False, 0, True, True, "attached", True),  # it answered: nothing is wrong
+        ("anchor", True, 2, True, False, "attached", True),
+        ("anchor", False, 0, False, True, "other", True),  # once unanswered: asks again
+        ("anchor", False, 0, False, False, None, True),
+        ("anchor", False, 2, False, False, None, True),  # a third with no answer: waits
+        ("anchor", True, 0, False, True, "other", True),  # twice, and another answered: moves
+        ("anchor", True, 0, False, True, "other", False),
+        ("anchor", True, 0, False, True, "attached", True),  # to where it last moved: no new seq
+        ("anchor", True, 0, False, True, None, True),
+        ("anchor", True, 1, False, False, "other", True),  # twice, and none answered: waits
+        ("another", True, 0, False, True, "other", True),  # not its anchor: no new seq
+        (None, False, 0, False, True, "other", True),  # no anchor, then one answered
+        (None, False, 0, False, True, "other", False),  # its first: no new seq
+        (None, False, 1, False, False, None, False),
+    ]:
+        does, doubt_after, unanswered_after = answered(*case)
+        asked, doubt, unanswered, asked_heard, others_heard, anchor_now, before = case
+        answered_.append(
+            {"asked": asked, "doubt": doubt, "unanswered": unanswered, "asked_heard": asked_heard,
+             "others_heard": others_heard, "anchor_now": anchor_now, "attached_before": before,
+             "does": does, "doubt_after": doubt_after, "unanswered_after": unanswered_after}
+        )
 
     return {
         "description": "Routing, draft 0 (draft/routing.md). Routing ids, sequence numbers, "
@@ -600,7 +824,22 @@ def build():
         "is an index into announces, held_address is the address the receiver holds for its "
         "sender (null for none), takes whether it takes the announce rather than discarding it, "
         "and holds_address the address it then holds for the sender, if the rest of the "
-        "section then takes the announce from a neighbour.",
+        "section then takes the announce from a neighbour. In listed, metric_field is a listed "
+        "route's metric as it goes on the air, retracts whether it retracts the route, leaf and "
+        "metric what it says otherwise (null for a retraction), and field what a node writes for "
+        "them. In anchors, each of relays is a neighbour of a leaf, relay saying whether it is "
+        "one, with whether its link is up, whether it is out of use, its link's margin in "
+        "sixteenths of a decibel, the seconds since it was heard and its promise in seconds "
+        "(null for none); sparse is whether the leaf solicits there, anchor an index into relays "
+        "(null for none), and asks whether it asks after it on its SOLICIT_GAP. In answering, "
+        "own_margin_sixteenths is the relay's full power less its floor for the leaf, asked "
+        "whether the solicit asks after it, wait the most its answer waits in airtimes of the "
+        "answer (null if it does not answer), and cancelled whether others' answers cancel it. "
+        "In answered, asked is the relay the leaf asked after, its anchor when it asked, another "
+        "or null for none; asked_heard and others_heard whether it heard from that relay and "
+        "from any other in SOLICIT_WAIT; anchor_now whether its anchor now is the one it last "
+        "re-attached to, another, or null for none; attached_before whether it has re-attached "
+        "before; does is settled, again, waits, moved or reattaches.",
         "generator": "vectors/tools/routing.py",
         "ids": [{"address": x.hex(), "id": rid(x)} for x in addresses],
         "newer": [
@@ -616,6 +855,8 @@ def build():
         ],
         "announces": announces,
         "requests": requests,
+        "solicits": solicits,
+        "answers": answers,
         "rejected": rejected,
         "verified": verified,
         "floors": floors,
@@ -628,6 +869,10 @@ def build():
         "selection": selection,
         "kept": kept,
         "defaults": defaults,
+        "listed": listed,
+        "anchors": anchors,
+        "answering": answering_,
+        "answered": answered_,
     }
 
 
