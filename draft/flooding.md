@@ -26,7 +26,8 @@ produced by
 1. **A flood costs a frame a relay at most, and where relays are many,
    far less.** A relay that hears another pass the frame on does not.
 2. **A flood stops.** It goes a few relays from where it began, and no
-   node sends one frame twice.
+   relay passes one frame on twice. Its writer sends it again only if
+   it hears no relay pass it on, and only `FLOOD_RESENDS` times.
 3. **No sender, no destination.** What this section puts in a frame
    names no node.
 4. **Floods do not take the channel.** A node spends a bounded share of
@@ -86,7 +87,8 @@ relabelled as another kind among them.
 
 A node floods a frame of its own with `hops` set to `FLOOD_HOPS`, or
 fewer where the section that defines its kind says so, and
-`power` to what it is sent at, once. It takes the frame's id as
+`power` to what it is sent at, once, and again only as
+[Sending again](#sending) below says. It takes the frame's id as
 [seen](#receiving) before it sends, and waits for
 [its allowance](#the-allowance).
 
@@ -204,7 +206,9 @@ with `busy` and `FLOOD_BUSY` in millionths: 0 up to `FLOOD_BUSY`, and
 drops the frame if the number is less than `drops`. A frame dropped so
 is not charged to the allowance.
 
-This holds for frames a relay passes on and not for a node's own.
+This holds for frames a relay passes on and not for a node's own, but
+for a frame of its own about to go [again](#sending), which a node
+gives up as often as this has a relay drop one, leaf or relay.
 
 ## The allowance
 
