@@ -313,7 +313,9 @@ where frames are lost it does. 24 sends of a 60-byte frame take 2.9 s
 on `EU868`'s modulation and 9.7 s at SF9; one or two messages' retries
 spend the part, and in a full network every node is retrying.
 Measured, 1% held a node's frames for minutes there and made a full
-network worse; 2% did not ([What the budget did](#what-the-budget-did)).
+network worse; 2% held a tenth as many, and at six times the
+traffic cost about a point of unicasts on time where 1% cost three
+quarters or more of them ([What the budget did](#what-the-budget-did)).
 
 **Windows.** The own part holds ten minutes, as the own flood bucket
 does: a person writes in bursts, a few messages and then none. The
