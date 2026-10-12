@@ -4,8 +4,9 @@
 seven-day rule in [GOVERNANCE.md](../GOVERNANCE.md). The budget was
 set before the simulator kept one. What was measured that sets its
 numbers, and what keeping it then did to a mesh in the simulator, are
-[below](#what-was-measured); the second recommends changing two of its
-numbers, which this draft has not yet done. Every number here is
+[below](#what-was-measured); the second is why the own part is now 2%
+and the relayed part 7%, where this section first had 1% and 8%.
+Every number here is
 **provisional**, and the choices the maintainer is asked to make are
 under [Not yet specified](#not-yet-specified).
 
@@ -70,7 +71,7 @@ The routing part is Routes' cap and learning allowance, unchanged, and
 nothing in this section adds to it or takes from it. The own and
 relayed parts are each one bucket, kept as this section says. With the
 values below, a relay's budget is 9.5% of its time, 9.6875% in its
-first [`LEARN_FOR`](routing.md#the-cap), and a leaf's is 1.5%.
+first [`LEARN_FOR`](routing.md#the-cap), and a leaf's is 2.5%.
 
 A node MAY fill either bucket at less than its share. It MUST NOT fill
 one at more.
@@ -183,9 +184,9 @@ ahead of it.
 
 | Name | Value | |
 |---|---|---|
-| `BUDGET_OWN` | 1% | of a node's time |
+| `BUDGET_OWN` | 2% | of a node's time |
 | `BUDGET_OWN_WINDOW` | 600 s | as `FLOOD_OWN_WINDOW` |
-| `BUDGET_RELAY` | 8% | of a relay's time |
+| `BUDGET_RELAY` | 7% | of a relay's time |
 | `BUDGET_RELAY_WINDOW` | 60 s | as `FLOOD_RELAY_WINDOW` and `CAP_WINDOW` |
 
 ## Conformance
@@ -260,8 +261,8 @@ whether their node is a relay or a leaf.
 **Above the allowances, not in place of them.** Routes' cap is the
 routing part as it is. The flood buckets stay inside the own and
 relayed parts, so floods cannot take all of either: within the own
-part, a group can take half and messages the rest; within the relayed
-part, floods passed on 3% of a relay's 8%. Replacing them with the
+part, a group can take a quarter and messages the rest; within the
+relayed part, floods passed on 3% of a relay's 7%. Replacing them with the
 parts would have changed what was measured of floods for no gain.
 
 **Token buckets, not a sliding period.** Routes' cap and the flood
@@ -289,38 +290,44 @@ sparsest, their relays carrying all of it; at the slow preset, under
 ([What was measured](#what-was-measured)). A leaf passes nothing on,
 so a relayed part would be air it could never spend.
 
-**8% for a relay.** It is what is left of the 10% that three profiles
+**7% for a relay.** It is what is left of the 10% that three profiles
 allow once routing, at its largest, and the own part are taken out,
 rounded down: 9.6875% in all. It is below the most any node was
 measured sending in a whole hour, which counts every frame that node
 sent, its own and routing included. Over a minute it binds a little,
-and only where relays are busiest: the busiest relay measured dropped
-5.3% of what it was asked to pass on, and delivery did not move
-([What the budget did](#what-the-budget-did)). It began to cost at 4%.
+and only where relays are busiest: the ten busiest relays measured
+dropped 0.5 to 5.8% of what they were asked to pass on, and delivery
+did not move ([What the budget did](#what-the-budget-did)). It began
+to cost at 4%. It was 8% until the own part took a point of it; at 8%
+the busiest relay dropped 5.3%, and delivery did not move either.
 
-**1% for a node's own.** The simulator's workloads send a message from
+**2% for a node's own.** The simulator's workloads send a message from
 each node every half hour, or in the heaviest flooding run every five
 minutes. One try of a 67-byte message frame on `EU868` takes
 131.328 ms, so a message every five minutes, tried once, is 0.044% of
-a node's time; 1% is more than twenty times that. It binds a node that
+a node's time; 2% is more than forty times that. It binds a node that
 writes far more than any workload measured: a bot, a client in a loop,
-or a user who writes without pause. Ten minutes of it is 6 s of
-airtime, forty-five such frames at once. What that left out is
-retries: a message may go from its source 24 times, four tries of
-three sends each and once more [another way](forwarding.md#hops), and
-where frames are lost it does. 24 sends of a 60-byte frame take 2.9 s
-on `EU868`'s modulation and 9.7 s at SF9; one or two messages' retries
-spend the part, and in a full network every node is retrying.
-Measured, 1% held a node's frames for minutes there and made a full
-network worse; 2% held a tenth as many, and at six times the
-traffic cost about a point of unicasts on time where 1% cost three
-quarters or more of them ([What the budget did](#what-the-budget-did)).
+or a user who writes without pause. Ten minutes of it is 12 s of
+airtime, ninety-one such frames at once. It is 2%, not the 1% this
+section first had, for retries: a message may go from its source 24
+times, four tries of three sends each and once more
+[another way](forwarding.md#hops), and where frames are lost it does.
+24 sends of a 60-byte frame take 2.9 s on `EU868`'s modulation and
+9.7 s at SF9; at 1%, 6 s, one or two messages' retries spent the part,
+and in a full network every node is retrying. Measured, 1% held a
+node's frames for minutes there and made a full network worse; 2% held
+a tenth as many, and at six times the traffic cost about a point of
+unicasts on time where 1% cost three quarters or more of them
+([What the budget did](#what-the-budget-did)). What 2% gives up is some
+of the shield: against nodes that write without pause, the rest of the
+mesh delivered 1.5 to 2.9 times as many unicasts on time as with no
+budget, where 1% did better still.
 
 **Windows.** The own part holds ten minutes, as the own flood bucket
 does: a person writes in bursts, a few messages and then none. The
 relayed part holds a minute, as Routes' cap and the flood relay bucket
-do, so that the most others can ask of a relay at once is 4.8 s of
-airtime, eleven 255-byte frames on `EU868` and fourteen on `US915`.
+do, so that the most others can ask of a relay at once is 4.2 s of
+airtime, ten 255-byte frames on `EU868` and thirteen on `US915`.
 
 **A frame passed on is dropped, not held.** The node before listens
 for it for [`HOP_WAIT`](forwarding.md#hops) and twice its airtime,
@@ -393,7 +400,8 @@ time buys at least as many frames.
 ### What the budget did
 
 ternmesh/sim kept the budget for candidate 3's frames, as
-`vectors/airtime.json` has it, on the 200-node town at SF9 and on the
+`vectors/airtime.json` had it with the values this section first had,
+own 1% and relayed 8%, on the 200-node town at SF9 and on the
 thousand-node region's fast preset (SF7 at 125 kHz) and deployed
 preset (SF8 at 62.5 kHz, coding rate 4/8), at -5, 0 and 20 dBm, beside
 Meshtastic and MeshCore, which keep none
@@ -401,17 +409,17 @@ Meshtastic and MeshCore, which keep none
 MSH-92). At the comparison's traffic, a message from every node every
 half hour:
 
-* **The relayed part** dropped nothing on the fast preset or in the
-  town, where the busiest relay passed frames on for 0.7 to 2.2% of its
-  hour. On the deployed preset it dropped 0.07 to 1.2% of what relays
+* **The relayed part**, at 8%, dropped nothing on the fast preset or in
+  the town, where the busiest relay passed frames on for 0.7 to 2.2% of
+  its hour. On the deployed preset it dropped 0.07 to 1.2% of what relays
   were asked to pass on, 0.4 to 3.6% at the ten busiest, 5.3% at the
   busiest, and unicast on time moved by under a point; the busiest node
   there, with no budget, sent for 3.7 to 6.9% of its hour, more than
   the figure above. At 4% the ten busiest dropped up to 21% and unicast
   fell 2.6 points; at 2%, 3 to 10 points. At 12% it dropped next to
   nothing.
-* **The own part** held nothing on the fast preset and 5 frames an hour
-  in the town. On the deployed preset it held frames 3,100 to 4,600
+* **The own part**, at 1%, held nothing on the fast preset and 5 frames
+  an hour in the town. On the deployed preset it held frames 3,100 to 4,600
   times an hour, about a minute at a time: unicast on time did not
   move, the 95th-percentile delay doubled or more, to 151 to 291 s,
   past the 60 s deadline, and deliveries per second of airtime rose 12
@@ -424,15 +432,16 @@ from 19.9% of unicasts on time to 4.9% with the own part at 1%, which
 held frames some 19,000 times an hour, and to 18.7% at 2%; at 4% nothing
 was held. The deployed preset fell from 2.1-3.7% to 0.2-0.7% at 1%, and to
 1.8-3.0% at 2%. The fast preset, whose frames are a third as long,
-held almost nothing at 1%; there, at -5 dBm, the relayed part dropped
-10% of what the busiest relay was asked, the ten busiest 2.3%, with
-delivery unchanged.
+held almost nothing at 1%; there, at -5 dBm, the relayed part at 8%
+dropped 10% of what the busiest relay was asked, the ten busiest 2.3%,
+with delivery unchanged.
 
-Own 2% and relayed 7%, which keep a relay's budget at 9.6875% of its
-time, delivered on the deployed preset 23.1, 24.2 and 12.3% of unicasts
-on time at -5, 0 and 20 dBm, against 22.6, 22.7 and 11.5% with the
-values above and 22.5, 23.4 and 11.9% with no budget, with delay as
-with no budget.
+Own 2% and relayed 7%, the values adopted, which keep a relay's budget
+at 9.6875% of its time, delivered on the deployed preset 23.1, 24.2 and
+12.3% of unicasts on time at -5, 0 and 20 dBm, against 22.6, 22.7 and
+11.5% with own 1% and relayed 8% and 22.5, 23.4 and 11.9% with no
+budget, with delay as with no budget. The ten busiest relays dropped
+5.8, 2.8 and 0.5% of what they were asked to pass on.
 
 With a twentieth of the nodes writing a message every 10 seconds, the
 own part did what it is for: the other nodes' unicasts arrived on time
@@ -465,13 +474,6 @@ Each of these is a choice for the maintainer.
   full and now, in milliseconds, and how many milliseconds until it
   holds a 255-byte frame. That is what a screen showing "what is left"
   needs, and is left out here until the parts are agreed.
-* **The own and relayed shares.** The simulator recommends
-  `BUDGET_OWN` 2% and `BUDGET_RELAY` 7%, the sum unchanged
-  ([What the budget did](#what-the-budget-did)): the own part at 1%
-  binds on retries and makes a full network worse, and the relayed
-  part has room to spare at 7%. 2% shields a mesh from a node that
-  writes without pause less than 1% does, but still one and a half to
-  three times over. Not yet adopted here.
 * **How long a frame of the node's own may wait.** Nothing drops one,
   so a node writing faster than its own part fills sends every message
   behind its backlog, late. A limit on how many may wait, or for how
