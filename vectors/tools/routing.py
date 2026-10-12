@@ -324,7 +324,13 @@ def replaces(fd, cost, routes, selected, offered):
 
 
 def place(neighbours, floor):
-    """Which neighbour of a full table a node heard with `floor` takes the place of, or None."""
+    """Which neighbour of a full table a node heard with `floor` takes the place of, or None: one
+    out of use first, whatever its link and whatever the floor."""
+    out = [(n["floor_sixteenths"], i) for i, n in enumerate(neighbours) if n["out_of_use"]]
+    if out:
+        worst, at = max(out)
+        assert [f for f, _ in out].count(worst) == 1, "the vectors leave no tie to break"
+        return at
     down = [(n["floor_sixteenths"], i) for i, n in enumerate(neighbours) if not n["up"]]
     if not down:
         return None
@@ -335,14 +341,14 @@ def place(neighbours, floor):
 
 def default_next(leaf, starting, busy_ppm, neighbours, tried):
     """The neighbour a leaf hands a frame with no route to: the nearest relay it may use, or with
-    none, the nearest relay it hears; or None."""
+    none, the nearest relay it hears that is not out of use; or None."""
     if not leaf or starting or busy_ppm >= DEFAULT_BUSY:
         return None
     ok = [(n["floor_sixteenths"], i) for i, n in enumerate(neighbours)
-          if n["relay"] and n["up"] and i not in tried]
+          if n["relay"] and n["up"] and not n["out_of_use"] and i not in tried]
     if not ok:
         ok = [(n["floor_sixteenths"], i) for i, n in enumerate(neighbours)
-              if n["relay"] and i not in tried]
+              if n["relay"] and not n["out_of_use"] and i not in tried]
     if not ok:
         return None
     best = min(ok)
@@ -373,11 +379,16 @@ def self_check():
     assert numbering(5, 6, True, False) == "again"
     assert numbering(5, 6, True, True) == "take"
     assert not withdrawn(10, 18, 1) and withdrawn(10, 19, 1) and withdrawn(0xFFFF, 8, 0)
-    two = [{"floor_sixteenths": 0, "up": False}, {"floor_sixteenths": 160, "up": True}]
+    two = [{"floor_sixteenths": 0, "up": False, "out_of_use": False},
+           {"floor_sixteenths": 160, "up": True, "out_of_use": False}]
     assert place(two, -96) == 0 and place(two, -95) is None
-    r = [{"floor_sixteenths": -100, "up": True, "relay": True},
-         {"floor_sixteenths": -300, "up": True, "relay": False}]
+    two[1]["out_of_use"] = True
+    assert place(two, 9999) == 1
+    r = [{"floor_sixteenths": -100, "up": True, "relay": True, "out_of_use": False},
+         {"floor_sixteenths": -300, "up": True, "relay": False, "out_of_use": False}]
     assert default_next(True, False, 0, r, []) == 0 and default_next(False, False, 0, r, []) is None
+    r[0]["out_of_use"] = True
+    assert default_next(True, False, 0, r, []) is None
     assert default_metric(70) == 420 and default_metric(20000) == METRIC_MAX
     # As good, newer wins; a tenth better at an older seq still moves.
     two = [{"seq": 5, "metric": 100}, {"seq": 6, "metric": 100}]
@@ -691,8 +702,10 @@ def build():
             }
         )
 
-    def table(*pairs):
-        return [{"floor_sixteenths": f, "up": u} for f, u in pairs]
+    def table(*rows):
+        """Each (floor, up), or (floor, up, out of use)."""
+        return [{"floor_sixteenths": x[0], "up": x[1], "out_of_use": len(x) > 2 and x[2]}
+                for x in rows]
 
     down = table((-320, False), (-80, False), (-200, False), (-400, False))
     mixed = table((-320, True), (-80, True), (-200, False), (-400, False))
@@ -709,11 +722,18 @@ def build():
             (table((-320, True), (-80, True), (-200, True), (-400, True)), -2000),
             (table((100, False)), 4),
             (table((100, False)), 5),
+            # Out of use: given up first, though its link is up and the node heard is further
+            (table((-320, True, True), (-80, True), (-200, False), (-400, False)), 0),
+            (table((-320, True), (-80, True), (-200, True, True), (-400, True)), -2000),
+            # of two out of use, the further
+            (table((-320, True, True), (-80, False, True), (-200, False), (-400, False)), -600),
         ]
     ]
 
-    def nb(*triples):
-        return [{"floor_sixteenths": f, "up": u, "relay": r} for f, u, r in triples]
+    def nb(*rows):
+        """Each (floor, up, relay), or (floor, up, relay, out of use)."""
+        return [{"floor_sixteenths": x[0], "up": x[1], "relay": x[2],
+                 "out_of_use": len(x) > 3 and x[3]} for x in rows]
 
     near = nb((-320, True, True), (-80, True, True), (-480, True, False), (-200, False, True))
     defaults = [
@@ -735,6 +755,19 @@ def build():
             (nb((-100, False, True), (-300, False, True), (-480, True, False)), True, False, 0, [], 70),
             (nb((-100, True, False)), True, False, 0, [], 70),  # no relay
             (near, True, False, 0, [], 11000),  # a metric past 0x7FFE is 0x7FFE
+            # Out of use: the nearest relay whose link is up is passed over for the next
+            (nb((-320, True, True, True), (-80, True, True), (-480, True, False),
+                (-200, False, True)), True, False, 0, [], 70),
+            # both whose links are up are, and the relay heard is taken
+            (nb((-320, True, True, True), (-80, True, True, True), (-480, True, False),
+                (-200, False, True)), True, False, 0, [], 70),
+            # with no link up, the nearest relay heard is passed over for the next
+            (nb((-300, False, True, True), (-100, False, True), (-480, True, False)), True, False,
+             0, [], 70),
+            # nor is one out of use taken among those heard though its link is still up
+            (nb((-320, True, True, True), (-200, False, True)), True, False, 0, [], 70),
+            # and with every relay out of use, none
+            (nb((-320, True, True, True), (-200, False, True, True)), True, False, 0, [], 70),
         ]
     ]
 
@@ -817,14 +850,16 @@ def build():
         "own_margin_sixteenths is the node's full power less its floor for the neighbour, in "
         "sixteenths of a decibel, and their_margin is the margin byte the neighbour gave; either "
         "is null when it is missing, and the steps follow one another. In places, neighbours is a "
-        "full table, each with the node's floor for it and whether its link is up, "
+        "full table, each with the node's floor for it, whether its link is up and whether it is "
+        "out of use, "
         "floor_sixteenths is the floor an announce from a node not in it gives, and replaces is "
         "an index into neighbours. In selection and kept, "
         "each route's metric is the one its neighbour announced, every link costs link_cost, and "
-        "selected, selects and replaces are indexes into routes. In defaults, tried and next are "
-        "indexes into neighbours, busy_ppm is the leaf's busy share in millionths, and metric is "
-        "the default route's. Each announce is signed with seed, whose address is address, and "
-        "carries the address in the frame if carries_address is true. A rejected frame MUST be "
+        "selected, selects and replaces are indexes into routes. In defaults, each neighbour's "
+        "out_of_use says whether it is out of use, tried and next are indexes into neighbours, "
+        "busy_ppm is the leaf's busy share in millionths, and metric is the default route's. "
+        "Each announce is signed with seed, whose address is address, and carries the address "
+        "in the frame if carries_address is true. A rejected frame MUST be "
         "discarded whether or not the receiver holds its sender's address. In verified, announce "
         "is an index into announces, held_address is the address the receiver holds for its "
         "sender (null for none), takes whether it takes the announce rather than discarding it, "

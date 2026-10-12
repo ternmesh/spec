@@ -247,13 +247,17 @@ from a neighbour just found, and its entry dropped.
 **A full table.** A node keeps as many neighbours as it has room for,
 and where there are more nodes to hear than that, which ones it keeps
 decides whether it has routes at all. On hearing an announce from a
-node it does not keep, with no room left, a node looks at the
+node it does not keep, with no room left, a node that has neighbours
+[out of use](#leaves-that-move) MUST forget the one of them with the
+highest floor, whatever its link and whatever the floor the announce
+gives, and every route through it, and keep the sender in its place;
+of two with that floor, either. With none out of use, it looks at the
 neighbours whose links are not up. If the floor the announce gives is
 `REPLACE_BAND` or more below the highest floor among them, the node
 MUST forget that neighbour, and every route through it, and keep the
 sender in its place; of two with that floor, either. Otherwise it MUST
-take nothing from the announce. A node MUST NOT replace a neighbour
-whose link is up.
+take nothing from the announce. A node MUST NOT replace a neighbour in
+use whose link is up.
 
 ### Power for every neighbour
 
@@ -728,9 +732,10 @@ An implementation conforms to this section if, for
 * **named:** it takes a margin as withdrawn, or not, as `withdrawn`
   says, when the neighbour last named it in announce `named` and has
   now sent `number`, with `round`;
-* **places:** with the full table of `neighbours` given, hearing an
-  announce that gives `floor_sixteenths` from a node not among them, it
-  replaces `replaces` (`null` for none);
+* **places:** with the full table of `neighbours` given, each with its
+  floor, whether its link is up and whether it is out of use
+  (`out_of_use`), hearing an announce that gives `floor_sixteenths` from
+  a node not among them, it replaces `replaces` (`null` for none);
 * **numbering:** hearing an announce numbered `number` from a
   neighbour whose last was `last`, it does as `does` says: `take` it,
   `discard` it, or forget the neighbour and take it as found `again`.
@@ -766,8 +771,9 @@ An implementation conforms to this section if, for
   `waits`, has `moved`, or `reattaches`; and then holds `doubt_after`
   and `unanswered_after`;
 * **defaults**, for an implementation that takes default routes: with
-  the `neighbours` given, each a relay or not and each with its floor
-  and whether its link is up, as a leaf or not (`leaf`), starting or
+  the `neighbours` given, each a relay or not and each with its floor,
+  whether its link is up and whether it is out of use (`out_of_use`),
+  as a leaf or not (`leaf`), starting or
   not, with the busy share `busy_ppm`, and with the neighbours `tried`
   already tried at, it hands a frame with no route to `next` (`null` for
   none), with a route metric of `metric` on a profile whose links cost
@@ -877,6 +883,12 @@ that never stopped, against 91.4% for both and no requests. Preferring
 relays, or keeping half the places for them, held fewer routes than
 taking no account of role: 23% and 84% at SF7 with 32 places, against
 88%, on one seed.
+
+A neighbour [out of use](#leaves-that-move) is given up before any
+other, whatever its link. A leaf that has moved keeps its links to the
+relays it left up until hops are given up there, and with a full table
+would otherwise have no place for a relay where it is now; one given up
+that is heard again comes back as a neighbour found.
 
 **How many destinations, and a leaf's default route.** A network's size
 is its relays' tables. The simulator, measured as a
