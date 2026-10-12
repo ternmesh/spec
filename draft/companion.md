@@ -511,13 +511,14 @@ A node with a client that has said `HELLO` MUST send that client:
 
 A `minutes`, an `age` or a `heard` that only counts on is not a change.
 
-It SHOULD send `NEIGHBOUR`, `AIRTIME`, `POWER` and `FIX` when they
-change, and MAY send each no more often than once every `QUIET`
-seconds, so that a neighbour heard every second, or a receiver that
-gives a fix every second, does not fill the link. For `FIX`, a change
-is a new fix whose `lat`, `lon` or `altitude` differs from the last
-record's, or whose `accuracy` or `satellites` does; a fix that only
-grows older is not one.
+It SHOULD send `NEIGHBOUR`, `AIRTIME` and `POWER` when they change,
+and `FIX` when its fix moves, and MAY send each no more often than once
+every `QUIET` seconds, so that a neighbour heard every second, or a
+receiver that gives a fix every second, does not fill the link. A fix
+moves when its `lat`, `lon`, `altitude`, `accuracy` or `satellites`
+differs from the last record's; one that only grows older has not
+moved. A `FIX` that the list above requires, for a change of `receiver`
+or `source`, is sent at once, however soon after the last.
 
 What changes because of a request from one client is sent as news to
 every client, the one that asked included: a client sees its own
