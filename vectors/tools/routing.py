@@ -48,6 +48,7 @@ ROUTES_KEPT = 4
 REPLACE_BAND = 6 * 16
 DEFAULT_HOPS = 6
 DEFAULT_BUSY = 500000
+POWER_K, POWER_MARGIN = 8, 10
 METRIC_MAX = 0x7FFE  # a route's metric gives up its top bit to say its destination is a leaf
 LEAF_BIT = 0x8000
 JITTER = 2
@@ -274,9 +275,10 @@ def total(metric, cost):
 
 
 def select(fd, cost, routes, selected):
-    """The index of the route selected, or None."""
+    """The index of the route selected, or None. A route whose neighbour the node may not use (its
+    link down, or out of use) is no choice, the selected one included."""
     ok = [(i, total(r["metric"], cost)) for i, r in enumerate(routes)
-          if feasible(fd, r["seq"], r["metric"])]
+          if r.get("usable", True) and feasible(fd, r["seq"], r["metric"])]
     cur = next((t for i, t in ok if i == selected), None)
     if cur is not None:
         # Kept unless another is lower by more than a tenth of it, or no higher with a newer seq;
@@ -349,6 +351,17 @@ def leaf_of(relay, listed, selected, was):
     if selected is not None:
         return listed[selected]
     return was
+
+
+def power_every(leaf, neighbours, lowest, full):
+    """What a frame for every neighbour goes at, in dBm: the POWER_K-th lowest floor plus
+    POWER_MARGIN, rounded up and kept between lowest and full, with POWER_K floors known; else
+    full. A leaf leaves out its neighbours out of use. Floors are in sixteenths of a dBm."""
+    floors = sorted(n["floor_sixteenths"] for n in neighbours
+                    if not (leaf and n["out_of_use"]))
+    if len(floors) < POWER_K:
+        return full
+    return max(lowest, min(full, -(-(floors[POWER_K - 1] + 16 * POWER_MARGIN) // 16)))
 
 
 def default_next(leaf, starting, busy_ppm, neighbours, tried):
@@ -676,8 +689,18 @@ def build():
         (None, 54, [(10, 1000), (9, 10), (11, 900)], 0),
         (None, 54, [(0xFFFF, 54), (0, 54)], 0),  # newer across the wrap
         (None, 54, [], None),
+        # The selected route's neighbour out of use: the route is dropped, for the best usable one
+        # whatever hysteresis, or for none.
+        (None, 54, [(3, 108, False), (3, 104)], 0),
+        (None, 54, [(3, 108, False), (3, 500), (3, 200)], 0),
+        (None, 54, [(3, 108, False)], 0),
+        (fd, 54, [(10, 54, False), (10, 162)], 0),  # the other infeasible: none
+        # nor is a route through one out of use selected in its place
+        (None, 54, [(3, 108), (3, 10, False)], 0),
+        (None, 54, [(3, 108), (4, 108, False)], 0),
+        (None, 54, [(3, 10, False), (3, 108)], None),
     ]:
-        rs = routes_of(pairs)
+        rs = [{"seq": x[0], "metric": x[1], "usable": len(x) < 3 or x[2]} for x in pairs]
         selection.append(
             {
                 "feasibility_distance": f,
@@ -798,6 +821,35 @@ def build():
         ]
     ]
 
+    def flr(*rows):
+        """Each (floor in whole dB, out of use)."""
+        return [{"floor_sixteenths": 16 * f, "out_of_use": o} for f, o in rows]
+
+    eight = [(-20 + k, False) for k in range(8)]  # floors -20 to -13 dBm
+    powers = [
+        {"leaf": leaf, "neighbours": n, "lowest": lo, "full": full,
+         "power": power_every(leaf, n, lo, full)}
+        for leaf, n, lo, full in [
+            (True, flr(*eight), -9, 22),  # the eighth lowest, -13, and 10 dB: -3
+            (True, flr(*eight[:7]), -9, 22),  # seven known: full power
+            # a nearer neighbour out of use, which would lower it: left out by a leaf
+            (True, flr((-30, True), *eight), -9, 22),
+            (False, flr((-30, True), *eight), -9, 22),  # but not by a relay
+            # one of the eight out of use: seven known, full power for a leaf
+            (True, flr(*eight[:7], (-13, True)), -9, 22),
+            (False, flr(*eight[:7], (-13, True)), -9, 22),
+            # a farther one out of use, past the eighth: no matter
+            (True, flr(*eight, (0, True)), -9, 22),
+            # the nearest out of use, so the eighth a leaf counts is the farther one in use
+            (True, flr(*eight[1:], (-20, True), (5, False)), -9, 22),
+            # rounded up, and kept between the lowest and full power
+            (True, [{"floor_sixteenths": -16 * 13 - 5 + k, "out_of_use": False}
+                    for k in range(8)], -9, 22),
+            (True, flr(*[(-40, False)] * 8), -9, 22),
+            (True, flr(*[(20, False)] * 8), -9, 22),
+        ]
+    ]
+
     listed = []
     for field in [0x0036, 0x8036, 0x7FFE, 0xFFFE, 0x0000, 0x8000, 0xFFFF, 0x7FFF]:
         got = listed_read(field)
@@ -910,7 +962,11 @@ def build():
         "destination's own last announce said of its role (null if the node does not keep it as "
         "a neighbour), listed whether each route the node holds to it was listed as one to a "
         "leaf, selected an index into listed (null for none), was what the node took before, and "
-        "leaf what it takes now.",
+        "leaf what it takes now. In selection, a route whose usable is false goes through a "
+        "neighbour the node may not use: its link is down or it is out of use. In powers, a "
+        "node, a leaf or not, with the neighbours given, each with its floor and whether it is "
+        "out of use, and with the lowest and full power given in dBm, sends a frame for every "
+        "neighbour at power.",
         "generator": "vectors/tools/routing.py",
         "ids": [{"address": x.hex(), "id": rid(x)} for x in addresses],
         "newer": [
@@ -945,6 +1001,7 @@ def build():
         "answering": answering_,
         "answered": answered_,
         "leaves": leaves,
+        "powers": powers,
     }
 
 

@@ -556,7 +556,9 @@ Until it does, a frame it has no route for goes by its [default
 route](#a-leafs-default-route), if it takes one.
 
 **What the answers say.** A leaf counts, for each solicit, the relay
-neighbours it hears from in the `SOLICIT_WAIT` after it is sent. Then:
+neighbours it hears from in the `SOLICIT_WAIT` after it goes on the
+air, however long it waited to go. One that never goes is no solicit:
+the leaf asks again at the next `SOLICIT_GAP`. Then:
 
 1. If it heard from the relay it asked after, nothing is wrong: it
    stops asking, and its count of solicits that had no answer at all
@@ -751,8 +753,12 @@ An implementation conforms to this section if, for
 * **feasible:** with the feasibility distance given (`null` for none),
   it finds each route feasible or not;
 * **selection:** with the routes given, each through a neighbour it may
-  use, and `selected` naming the one selected before (`null` for none),
-  it selects `selects`;
+  use or not (`usable`: not where the link is down or the neighbour is
+  out of use), and `selected` naming the one selected before (`null`
+  for none), it selects `selects`;
+* **powers:** as a leaf or not, with the neighbours given, each with
+  its floor and whether it is out of use, and its lowest and full
+  power, it sends a frame for every neighbour at `power`;
 * **kept:** with four routes held and `selected` among them, offered
   `offered`, it replaces `replaces` (`null` for none);
 * **listed:** it reads each route's `metric` as a retraction, or as
