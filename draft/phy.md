@@ -342,8 +342,10 @@ These would be measured on a bench before this section is frozen. Until
 then the values above stand on the published sources.
 
 * **That `0x5E` is not received as `0x2B` or `0x12`, or they as it**,
-  on the SX1276 and LR1110, and on any radio at a weak signal. The
-  SX1262 was checked only at a strong one, -30 to 0 dBm received
+  on the SX1276 and LR1110; on the SX1262 at the 125 kHz profiles'
+  settings (SF7), since it was checked only at `US915`'s and at
+  Meshtastic's and MeshCore's own; and on any radio at a weak signal,
+  since every check so far received -30 to 0 dBm
   ([Rationale](#rationale)).
 * **That `0x5E` costs no sensitivity** against the radio's default sync
   words.
