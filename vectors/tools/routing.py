@@ -214,8 +214,8 @@ def answered(asked, doubt, unanswered, asked_heard, others_heard, anchor_now, at
     "other" or None."""
     if asked is not None and asked_heard:
         return "settled", False, 0
-    if not others_heard:
-        unanswered += 1
+    # A solicit another relay answered had an answer: the streak of those with none is broken.
+    unanswered = unanswered + 1 if not others_heard else 0
     if asked is not None and not doubt:
         return ("again" if unanswered < SOLICIT_TRIES else "waits"), True, unanswered
     if not others_heard:
@@ -275,29 +275,27 @@ def total(metric, cost):
 
 def select(fd, cost, routes, selected):
     """The index of the route selected, or None."""
-    best = cur = None
-    for i, r in enumerate(routes):
-        if not feasible(fd, r["seq"], r["metric"]):
-            continue
-        t = total(r["metric"], cost)
-        if i == selected:
-            cur = t
+    ok = [(i, total(r["metric"], cost)) for i, r in enumerate(routes)
+          if feasible(fd, r["seq"], r["metric"])]
+    cur = next((t for i, t in ok if i == selected), None)
+    if cur is not None:
+        # Kept unless another is lower by more than a tenth of it, or no higher with a newer seq;
+        # then the best of those.
+        seq = routes[selected]["seq"]
+        ok = [
+            (i, t) for i, t in ok
+            if i != selected and (10 * t < 9 * cur or (t <= cur and newer(routes[i]["seq"], seq)))
+        ]
+        if not ok:
+            return selected
+    best = None
+    for i, t in ok:
         # Of the lowest, the newest seq: a leaf that has moved raised it.
         if best is None or t < best[1] or (
-            t == best[1] and newer(r["seq"], routes[best[0]]["seq"])
+            t == best[1] and newer(routes[i]["seq"], routes[best[0]]["seq"])
         ):
             best = (i, t)
-    if best is None:
-        return None
-    # Kept unless another is lower by more than a tenth of it, or no higher with a newer seq.
-    if (
-        cur is not None
-        and best[0] != selected
-        and not 10 * best[1] < 9 * cur
-        and not (best[1] <= cur and newer(routes[best[0]]["seq"], routes[selected]["seq"]))
-    ):
-        return selected
-    return best[0]
+    return None if best is None else best[0]
 
 
 def rank(fd, cost, r):
@@ -649,6 +647,10 @@ def build():
         (None, 54, [(3, 108), (4, 109)], 0),
         (None, 54, [(3, 108), (2, 0)], 0),
         (fd, 54, [(10, 54), (11, 54), (11, 108)], 0),
+        # Selected, an older route a little cheaper, and a newer one no dearer: the newer.
+        (None, 54, [(10, 100), (9, 99), (11, 100)], 0),
+        # Of those that may take its place, the cheapest, whatever its seq.
+        (None, 54, [(10, 1000), (9, 10), (11, 900)], 0),
         (None, 54, [(0xFFFF, 54), (0, 54)], 0),  # newer across the wrap
         (None, 54, [], None),
     ]:
@@ -795,6 +797,9 @@ def build():
         (None, False, 0, False, True, "other", True),  # no anchor, then one answered
         (None, False, 0, False, True, "other", False),  # its first: no new seq
         (None, False, 1, False, False, None, False),
+        # Another relay answered: the streak of solicits with no answer at all is broken.
+        ("anchor", False, 2, False, True, "other", True),
+        (None, False, 2, False, True, "other", True),
     ]:
         does, doubt_after, unanswered_after = answered(*case)
         asked, doubt, unanswered, asked_heard, others_heard, anchor_now, before = case

@@ -352,9 +352,11 @@ neighbour announced it) strictly lower.
 A node MUST NOT select a route that is not feasible, nor one through a
 neighbour it may not [use](#roles). Among the rest, it selects the one
 with the lowest metric, and of those with the lowest, one with the
-newest `seq`. It keeps the route it has selected unless another's metric
-is lower by more than `HYSTERESIS` of it, or is no higher with a newer
-`seq`.
+newest `seq`. Having selected a route, it keeps it unless at least one
+other route is lower in metric by more than `HYSTERESIS` of it, or is
+no higher in metric with a newer `seq`; it then selects, of all such
+routes, the one with the lowest metric, and of those with the lowest,
+one with the newest `seq`.
 
 When a node announces a selected route, it sets the feasibility
 distance to what it announces, if that is better.
@@ -518,7 +520,9 @@ A leaf that solicits asks after a relay:
 
 It sends a solicit at its full power, with `after` the relay it asks
 after, at once unless it sent one within `SOLICIT_GAP`, and then when
-`SOLICIT_GAP` has passed since that one. The requests' bucket of [the
+`SOLICIT_GAP` has passed since that one; the second of a pair, asking
+after a relay again (step 3 below), goes at once whatever `SOLICIT_GAP`
+says. The requests' bucket of [the
 cap](#the-cap) pays for it; one it cannot pay for is dropped, and the
 leaf asks again at the next `SOLICIT_GAP`.
 
@@ -547,17 +551,19 @@ neighbours it hears from in the `SOLICIT_WAIT` after it is sent. Then:
 1. If it heard from the relay it asked after, nothing is wrong: it
    stops asking, and its count of solicits that had no answer at all
    goes back to 0.
-2. Otherwise, if it heard from no relay, that count goes up by one.
+2. Otherwise, if it heard from no relay, that count goes up by one; if
+   it heard from another relay, the solicit had an answer, and the count
+   goes back to 0.
 3. If it asked after a relay, and that relay had not already left a
    solicit unanswered, it asks after it again at once, while that count
    is under `SOLICIT_TRIES`. A lost answer moves no leaf that has not
    moved.
 4. Otherwise, if it heard from no relay, it waits for the next
    `SOLICIT_GAP`.
-5. Otherwise it has moved. The count goes back to 0, and every relay
-   neighbour it may use and did not hear from goes out of use. If the
-   relay it asked after was its anchor when it asked, or it asked after
-   none, and it has an anchor now, it **re-attaches** to it: it raises
+5. Otherwise it has moved. Every relay neighbour it may use and did
+   not hear from goes out of use. If the relay it asked after was its
+   anchor when it asked, or it asked after none, and it has an anchor
+   now, it **re-attaches** to it: it raises
    its `seq` by one, and its next announce comes within the shortest
    interval, at full power, carrying its address, and is not suppressed.
    It does not re-attach to the anchor it last re-attached to; and
