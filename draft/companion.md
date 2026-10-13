@@ -104,6 +104,7 @@ its field allows, or if a `str` is not valid UTF-8.
 | `0x03` | `PING` | | `OK` |
 | `0x04` | `SET_TIME` | `time` `u32` | `OK` |
 | `0x05` | `SET` | `setting` `u8`, then its value | `OK` |
+| `0x06` | `OFF` | | `OK` |
 | `0x10` | `SEND` | `ref` `u32`, `to` `addr`, `text` `str` up to 128 | `QUEUED` |
 | `0x11` | `READ` | `through` `u32` | `OK` |
 | `0x18` | `SAVE_CONTACT` | `address` `addr`, `name` `str` up to 31 | `OK` |
@@ -535,7 +536,9 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 8. Version 7 is the same without
+version 9. Version 8 is the same without
+[turning the node off](#the-requests): the request `OFF`. Version 7 is
+version 8 without
 [the node's own fix](#positions): the setting 7 and the news `FIX`.
 Version 6 is version 7 without
 [join codes](groups.md#join-codes): the requests `0x26` and `0x27`,
@@ -570,7 +573,8 @@ and a client of version 4 ignores a `POSITION`. Likewise, a node of
 version 6 answers a `SET` of setting 5 from a client of version 5 with
 `ERROR` 1, and a client of version 5 ignores a `CARD`; and a node of
 version 8 answers a `SET` of setting 7 from a client of version 7 with
-`ERROR` 1, and a client of version 7 ignores a `FIX`.
+`ERROR` 1, and a client of version 7 ignores a `FIX`; and a node of
+version 9 answers an `OFF` from a client of version 8 with `ERROR` 1.
 Later versions only add types, settings, error codes and
 fields at the end of a frame, so any two versions can talk. A change
 that cannot be made that way is a new protocol, with its own magic and
@@ -580,8 +584,8 @@ A client then, typically, sets the node's clock and syncs:
 
 ```
 client                         node
-HELLO       seq 1, version 8  ─▶
-                              ◀─  INFO        seq 1, version 8
+HELLO       seq 1, version 9  ─▶
+                              ◀─  INFO        seq 1, version 9
 SET_TIME    seq 2             ─▶
                               ◀─  OK          seq 2
 SYNC        seq 3, after 0    ─▶
@@ -722,6 +726,24 @@ node's until a client gives a more recent one: turning it off is how a
 user saves the power it draws, which on a small battery is more than
 the radio's, and is not a move. Turning the receiver on or off sends
 nothing on the air.
+
+**`OFF`** turns the node off. A node MUST answer it with `OK`, and
+then turn off: every connection drops, and the node sends and receives
+nothing, on the air or on any link, until it is turned on again on the
+node itself, by its button, its reset or its power. Nothing in this
+protocol turns a node on. A node turns off only once its answer has
+gone, so that the client is told, and SHOULD turn off within `QUIET`
+seconds of answering. Being turned off and on again is a restart: a
+node keeps across it what it keeps across any other.
+
+A client MUST NOT send `OFF` unless its user asked it to, and SHOULD
+say before it does that the node can be turned on again only on the
+node. A client that has had `OK` to an `OFF` SHOULD NOT try to connect
+to the node again until its user asks it to: the node is not there to
+answer. One that gave up on the answer may send `OFF` again: it is
+not one of the requests [sending twice](#requests-one-at-a-time) can
+harm. A node that is already off does not answer, and the client takes
+it as gone.
 
 **`SEND`** sends `text` to the node at `to`, as a new message. The
 answer, `QUEUED`, means the node has the message and has given it the
@@ -1041,7 +1063,8 @@ An implementation conforms to this section if, for
   the `INVITE` it receives is to the group whose secret is `invited`;
   and the `GROUP_MESSAGE`, `POSITION` and second `CARD` it receives,
   and the card it forgets, come when the file says. Its last
-  `JOIN_LINK` is a join code whose `check` fails;
+  `JOIN_LINK` is a join code whose `check` fails, and its last request
+  is `OFF`, which it answers before it turns off;
 * **older:** for each of its connections, as the same node, given the
   frames of a client of the `version` given, it sends the node's, in
   order. The node refuses the same first contact and sends a client of
@@ -1056,7 +1079,7 @@ An implementation conforms to this section if, for
   earlier no card, and a `SELF` without `cards` and `card_name`, and
   refuses a client of version 5 `SET` 5; and refuses a client of
   version 6 `JOIN_LINK`; and sends a client of version 7 no `FIX`, and
-  refuses it `SET` 7;
+  refuses it `SET` 7; and refuses a client of version 8 `OFF`;
 * **update:** as a client, given the `image` to send and the node's
   frames in order, it sends the client's frames of each of the two
   connections in `update`, in order, going on in the second from the
@@ -1179,6 +1202,28 @@ It puts nothing on the air by itself: sharing is still off for every
 destination until the user turns it on. What it costs is power, so
 turning it off is a setting a client offers, kept on the node as the
 region is.
+
+**Why a client can turn a node off.** A node rides in a pack, sits
+on a shelf or is taped to a pole, and the button that turns it off is
+small, often recessed, and held for seconds with nothing printed to say
+so. The phone in the user's hand is the thing they can reach and read.
+It asks nothing new of who may drive a node: anyone who can already
+update its firmware or end its sessions can stop it more thoroughly
+than this.
+
+**Why off, and not asleep.** Off is the least a board draws, with the
+radio and every link down, and nothing listening for a client: that is
+what someone putting a node away for a week wants, and why nothing here
+can turn it on again. A node asleep for a while, still able to wake on
+its own, is a different thing with a different cost, and goes under
+[Not yet specified](#not-yet-specified); a later version can give
+`OFF` a field for it at the end of the frame.
+
+**Why `OFF` is answered first.** A connection that drops with no answer
+looks the same as a node that crashed, ran flat or went out of range,
+and a client that cannot tell them apart keeps trying to reconnect to
+a node that is off. With `OK` first, the client knows the drop is the
+one it asked for, and can tell the user so.
 
 **Why a card is a record, and carries no number or signal.** Who is
 about is a list a client shows, as neighbours and positions are, so a
@@ -1358,6 +1403,13 @@ and a node needs a way to say it cannot be updated at all.
   publishes its firmware, not only that it arrived whole.
 * **Sleeping leaves**: what a client sees of a node that is off the
   air most of the time.
+* **Turning a node off for a while**: an `OFF` that says when the node
+  comes on again by itself.
+* **Telling the other clients** that a node is turning off. A node
+  may be driven by several, and only the one that sent `OFF` is told:
+  the rest see a node gone.
+* **Driving another node over the air**, to turn it off or anything
+  else: who may, and how a node knows them.
 * **How many cards a sync sends.** A node in a crowd may hold a day of
   cards, and each is a frame of a sync. A node holds what it has room
   for, and nothing yet lets a client ask for fewer.

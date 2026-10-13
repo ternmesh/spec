@@ -25,7 +25,7 @@ import sharing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 8
+VERSION = 9
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -51,6 +51,7 @@ FRAMES = {
     0x03: ("PING", []),
     0x04: ("SET_TIME", [("time", U32)]),
     0x05: ("SET", [("setting", U8)]),  # then the setting's value, below
+    0x06: ("OFF", []),
     0x10: ("SEND", [("ref", U32), ("to", ADDR), ("text", STR, TEXT_MAX)]),
     0x11: ("READ", [("through", U32)]),
     0x18: ("SAVE_CONTACT", [("address", ADDR), ("name", STR, NAME_MAX)]),
@@ -136,6 +137,7 @@ TYPE_SINCE = {
     **{t: 6 for t in (0x92, 0x93)},  # cards
     **{t: 7 for t in (0x26, 0x27, 0x47)},  # join codes
     0x94: 8,  # the node's own fix
+    0x06: 9,  # turning the node off
 }
 
 
@@ -335,6 +337,8 @@ def self_check():
                   bytes.fromhex("f0f1f2f3f4f5f6f7f8f9"), 32).hex() == (
         "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf")
     assert encode("PING", 7) == b"\x03\x07"
+    assert encode("OFF", 9) == b"\x06\x09"
+    assert decode(b"\x06\x09", speak=8) == UNKNOWN[0]
     assert encode("SYNCED", 3, news=6) == b"\x43\x03\x06"
     assert encode("SYNCED", 3, speak=2) == b"\x43\x03"
     assert decode(b"\x43\x03", speak=2) == {"type": "SYNCED", "seq": 3}
@@ -403,6 +407,7 @@ def build():
     self_check()
 
     examples = [
+        ("HELLO", 1, {"version": 9}),
         ("HELLO", 1, {"version": 8}),
         ("HELLO", 1, {"version": 7}),
         ("HELLO", 1, {"version": 6}),
@@ -454,6 +459,7 @@ def build():
         ("JOIN_LINK", 38, {"link": join_link(INVITED_SECRET, "x" * NAME_MAX)}),
         ("SET", 39, {"setting": 7, "value": 0}),
         ("SET", 40, {"setting": 7, "value": 1}),
+        ("OFF", 41, {}),
         ("OK", 4, {}),
         ("ERROR", 15, {"code": 4}),
         ("INFO", 1, {"version": 4, **FIRMWARE}),
@@ -776,6 +782,9 @@ def build():
         ("client", encode("SET", 29, setting=7, value=1)),
         ("node", encode("OK", 29)),
         ("node", encode("FIX", 41, receiver=2, **{**RECEIVED, "age": 40})),
+        # The user turns the node off. Its answer is the last frame on the connection.
+        ("client", encode("OFF", 30)),
+        ("node", encode("OK", 30)),
     ])
 
     counted = [f["seq"] for f in exchange if f["type"] in NEWS_NAMES]
@@ -910,6 +919,25 @@ def build():
         ("node", encode("ERROR", 3, code=1)),
     ], 7)})
 
+    # A client of version 8, to the node as the exchange begins: the same sync as the exchange's,
+    # and its last request is one its version does not define.
+    older.append({"version": 8, "frames": connection([
+        ("client", encode("HELLO", 1, version=8)),
+        ("node", info(8)),
+        ("client", encode("SYNC", 2, after=0)),
+        ("node", encode("SELF", 0, **self_)),
+        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("MESSAGE", 2, flags=0, **where)),
+        ("node", encode("NEIGHBOUR", 3, **neighbour)),
+        ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
+        ("node", encode("AIRTIME", 5, **airtime)),
+        ("node", encode("POWER", 6, **power)),
+        ("node", encode("FIX", 7, receiver=2, **NO_FIX)),
+        ("node", encode("SYNCED", 2, news=8)),
+        ("client", encode("OFF", 3)),
+        ("node", encode("ERROR", 3, code=1)),
+    ], 8)})
+
     # Frames a later version defines, as a receiver of an earlier version reads them: a type it
     # does not know. A node answers such a request with ERROR 1; a client ignores such news.
     unknown_to_older = []
@@ -937,6 +965,7 @@ def build():
         ("LINK", 6, {"link": join_link(INVITED_SECRET, "Ridge walkers")}),
         ("SET", 7, {"setting": 7, "value": 1}),
         ("FIX", 7, {"receiver": 3, **RECEIVED}),
+        ("OFF", 8, {}),
     ]:
         frame = encode(name, 5, **values)
         assert isinstance(decode(frame), dict)
@@ -1023,7 +1052,7 @@ def build():
                  for g in (MADE_SECRET, INVITED_SECRET, bytes(16), bytes([0xFF] * 16))]
 
     return {
-        "description": "The companion protocol, version 8 (draft/companion.md). Frames, streams, "
+        "description": "The companion protocol, version 9 (draft/companion.md). Frames, streams, "
         "addresses and group ids are hex; numbers are numbers; strings are text. In frames, "
         "frame is the frame alone, as one BLE write or notification carries it, and stream is "
         "the same frame as it goes on a byte stream. In extended, frame carries bytes past the "
@@ -1046,7 +1075,8 @@ def build():
         "just before the CARD that says so, and forgets it just before the CARD_GONE. Its last "
         "JOIN_LINK carries the first group's join code with one character of the secret typed "
         "wrong. Its satellite receiver is on, without a fix, from the start; it finds a fix just "
-        "before the FIX that says so, and each FIX's age is as the file gives it. Older "
+        "before the FIX that says so, and each FIX's age is as the file gives it. Its last "
+        "request turns it off: it answers, and then turns off, so nothing follows. Older "
         "holds connections to the same node by clients of "
         "earlier versions. To the client of version 0 it holds what the exchange begins with, "
         "and refuses that first contact after the sync, before the client's SAVE_CONTACT. To "
@@ -1063,7 +1093,9 @@ def build():
         "request names a setting its version does not define. To the client of version 6 it holds "
         "what the exchange begins with, and the client's last request is one its version does not "
         "define. To the client of version 7 it holds what the exchange begins with, the sync sends "
-        "no FIX, and the client's last request names a setting its version does not define. "
+        "no FIX, and the client's last request names a setting its version does not define. To "
+        "the client of version 8 it holds what the exchange begins with, and the client's last "
+        "request is one its version does not define. "
         "Positions are in units of "
         "10^-7 degree. Each connection's frames are read by the "
         "version its client speaks, and each client of an earlier version is sent an INFO "
