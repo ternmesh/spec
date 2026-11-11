@@ -796,7 +796,8 @@ def build():
         # The user asks for the most the node may transmit at: in EU868, into its antenna, 22 dBm.
         ("client", encode("SET", 30, setting=3, value=POWER_MOST)),
         ("node", encode("OK", 30)),
-        ("node", encode("SELF", 42, **{**self_, "power": 22, "most": 1})),
+        ("node", encode("SELF", 42, **{**self_, "card_name": "Ada · hut warden", "power": 22,
+                                       "most": 1})),
         # The user turns the node off. Its answer is the last frame on the connection.
         ("client", encode("OFF", 31)),
         ("node", encode("OK", 31)),
