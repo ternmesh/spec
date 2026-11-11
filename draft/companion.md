@@ -179,7 +179,7 @@ a refusal.
 
 | `type` | News | Fields |
 |---|---|---|
-| `0x80` | `SELF` | `address` `addr`, `role` `u8`, `region` `str` up to 15, `power` `i8`, `time` `u32`, `cards` `u8`, `card_name` `str` up to 31 |
+| `0x80` | `SELF` | `address` `addr`, `role` `u8`, `region` `str` up to 15, `power` `i8`, `time` `u32`, `cards` `u8`, `card_name` `str` up to 31, `most` `u8` |
 | `0x81` | `CONTACT` | `address` `addr`, `session` `u8`, `name` `str` up to 31 |
 | `0x82` | `CONTACT_GONE` | `address` `addr` |
 | `0x83` | `MESSAGE` | `id` `u32`, `contact` `addr`, `time` `u32`, `flags` `u8`, `state` `u8`, `reason` `u8`, `wait` `u16`, `text` `str` up to 128 |
@@ -223,7 +223,9 @@ it expects has missed some, and SHOULD [sync](#syncing) again.
 empty if none is. `power` is what it transmits at most, in dBm. `time`
 is its clock. `cards` is 1 if the node sends [cards](#cards), 0 if
 not, and `card_name` is the name its cards carry, as `SET` 5 and 6 set
-them.
+them. `most` is 1 if `power` is [the most](#the-requests) the node may
+transmit at, as the node works it out, and 0 if it is a power the node
+was given.
 
 **Contacts** (`CONTACT`). A contact is an address the user has
 saved, with a name. `session` is 1 if the node shares a session with
@@ -536,7 +538,9 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 9. Version 8 is the same without
+version 10. Version 9 is the same without
+[the most](#the-requests): `SET` 3's -128 and `SELF`'s `most`.
+Version 8 is version 9 without
 [turning the node off](#the-requests): the request `OFF`. Version 7 is
 version 8 without
 [the node's own fix](#positions): the setting 7 and the news `FIX`.
@@ -563,7 +567,9 @@ not told of group messages or invites at all: their `id`s are ones it
 never sees. One of version 4 or earlier is told of no positions, and
 of no sharing. One of version 5 or earlier is told of no cards, and
 is sent a `SELF` without `cards` and `card_name`. One of version 7 or
-earlier is told of no fix. A node MUST answer a request, or a setting,
+earlier is told of no fix. One of version 9 or earlier is sent a `SELF`
+without `most`, and its `SET` 3 of -128 is a power, as its version has
+it, that no radio sends at: a node answers it with `ERROR` 3. A node MUST answer a request, or a setting,
 that the client's version does not define with `ERROR` 1, as it does
 one its own version does not: it could not tell that client what the
 request changed. A receiver reads a frame of a type that only a later version defines as
@@ -584,8 +590,8 @@ A client then, typically, sets the node's clock and syncs:
 
 ```
 client                         node
-HELLO       seq 1, version 9  ─▶
-                              ◀─  INFO        seq 1, version 9
+HELLO       seq 1, version 10 ─▶
+                              ◀─  INFO        seq 1, version 10
 SET_TIME    seq 2             ─▶
                               ◀─  OK          seq 2
 SYNC        seq 3, after 0    ─▶
@@ -695,7 +701,7 @@ was given, counting on from it, until it is given another.
 |---|---|---|---|
 | 1 | region | `str` up to 15 | a [profile](phy.md#profiles) name |
 | 2 | role | `u8` | 0 leaf, 1 relay |
-| 3 | power | `i8` | the most the node transmits at, in dBm |
+| 3 | power | `i8` | the most the node transmits at, in dBm; -128 for the most it may |
 | 4 | passkey | `u32` | the [Bluetooth](#bluetooth-le) passkey, 0 to 999999, or `0xFFFFFFFF` for a random one each time |
 | 5 | cards | `u8` | 1 to send [cards](#cards), 0 to send none |
 | 6 | card name | `str` up to 31 | the name the node's cards carry; empty for none |
@@ -705,6 +711,16 @@ A node MUST refuse, with `ERROR` 3, a region it does not have and a
 power its radio cannot send at or that would let it radiate more than
 its profile allows. A node MAY restart to apply a setting, after it
 has answered: the connection then drops, and the client starts again.
+
+A power of -128 is not a power but the most: the most the node's radio
+gives that its profile allows into its antenna, as the node knows them.
+A node given it MUST transmit at no more than that, and MUST work it
+out again whenever its profile changes, or the limits it holds for one
+do, as they may with new firmware; `SELF` gives it as `power`, with
+`most` 1. A node whose radio gives no power that its profile allows
+refuses it with `ERROR` 3. A node that has never been given a power
+MAY start at the most, or at a power its maker chooses; `most` says
+which.
 
 A node sends no cards until it is given `SET` 5 with 1, and stops when
 given it with 0; it MUST refuse any other value with `ERROR` 3. When
@@ -1224,6 +1240,20 @@ looks the same as a node that crashed, ran flat or went out of range,
 and a client that cannot tell them apart keeps trying to reconnect to
 a node that is off. With `OK` first, the client knows the drop is the
 one it asked for, and can tell the user so.
+
+**Why the most is the node's to work out.** What a node may radiate
+depends on its radio, its antenna and its profile, and only the node
+knows all three: a client that asked for the most by sending a number
+would have to know the antenna, and the number it sent would stay
+behind when the law, or the profile's reading of it, changes. So a
+node that ships at the most and a user who wants it back there say the
+same thing, and new firmware that changes a profile's limit moves
+every node set to the most with it. A user who sets a number keeps it,
+since that is a choice the user made. -128 dBm is far below anything a
+radio sends at, so a version-9 node refuses it as an ordinary power,
+and no setting is added for one value. `most` is in `SELF`, not a guess
+from `power`, because a client cannot tell the most from a number that
+happens to equal it, and a user should see which they chose.
 
 **Why a card is a record, and carries no number or signal.** Who is
 about is a list a client shows, as neighbours and positions are, so a

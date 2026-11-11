@@ -25,7 +25,7 @@ import sharing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 9
+VERSION = 10
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -86,7 +86,7 @@ FRAMES = {
     0x47: ("LINK", [("link", STR, LINK_MAX)]),
     # News, node to client.
     0x80: ("SELF", [("address", ADDR), ("role", U8), ("region", STR, REGION_MAX), ("power", I8),
-                    ("time", U32), ("cards", U8), ("card_name", STR, NAME_MAX)]),
+                    ("time", U32), ("cards", U8), ("card_name", STR, NAME_MAX), ("most", U8)]),
     0x81: ("CONTACT", [("address", ADDR), ("session", U8), ("name", STR, NAME_MAX)]),
     0x82: ("CONTACT_GONE", [("address", ADDR)]),
     0x83: ("MESSAGE", [("id", U32), ("contact", ADDR), ("time", U32), ("flags", U8),
@@ -125,7 +125,10 @@ NEWS_NAMES = {name for t, (name, _) in FRAMES.items() if t >= 0x80}
 # Fields a later version added to a frame, and the version that added them. A frame is built and
 # read by the version both ends speak, and has none of the fields a later version added.
 SINCE = {(0x43, "news"): 3, (0x42, "board"): 4, (0x42, "release"): 4, (0x80, "cards"): 6,
-         (0x80, "card_name"): 6}
+         (0x80, "card_name"): 6, (0x80, "most"): 10}
+
+# SET 3's value for the most a node may transmit at, rather than a power (version 10).
+POWER_MOST = -128
 
 # Types a later version added, and the version that added them. A receiver of an earlier version
 # does not know them: a node answers such a request with ERROR 1, and a client ignores such news.
@@ -357,8 +360,11 @@ def self_check():
         b"\x42\x01\x04\x01t")
     assert encode("SET", 9, setting=6, value="Ada") == b"\x05\x09\x06\x03Ada"
     assert decode(b"\x05\x09\x05\x01", speak=5) == UNKNOWN[1]
-    me = dict(address=bytes(32), role=0, region="", power=0, time=0, cards=1, card_name="A")
-    assert encode("SELF", 0, **me) == encode("SELF", 0, speak=5, **me) + b"\x01\x01A"
+    me = dict(address=bytes(32), role=0, region="", power=0, time=0, cards=1, card_name="A",
+              most=1)
+    assert encode("SELF", 0, **me) == encode("SELF", 0, speak=5, **me) + b"\x01\x01A\x01"
+    assert encode("SELF", 0, **me) == encode("SELF", 0, speak=9, **me) + b"\x01"
+    assert encode("SET", 9, setting=3, value=POWER_MOST) == b"\x05\x09\x03\x80"
     assert len(encode("CARD", 0, address=bytes(32), heard=0, name="x" * NAME_MAX)) == 39 + NAME_MAX
 
 
@@ -407,6 +413,7 @@ def build():
     self_check()
 
     examples = [
+        ("HELLO", 1, {"version": 10}),
         ("HELLO", 1, {"version": 9}),
         ("HELLO", 1, {"version": 8}),
         ("HELLO", 1, {"version": 7}),
@@ -460,6 +467,7 @@ def build():
         ("SET", 39, {"setting": 7, "value": 0}),
         ("SET", 40, {"setting": 7, "value": 1}),
         ("OFF", 41, {}),
+        ("SET", 42, {"setting": 3, "value": POWER_MOST}),
         ("OK", 4, {}),
         ("ERROR", 15, {"code": 4}),
         ("INFO", 1, {"version": 4, **FIRMWARE}),
@@ -475,9 +483,12 @@ def build():
         ("ERROR", 29, {"code": 12}),
         ("LINK", 36, {"link": join_link(INVITED_SECRET, "Ridge walkers")}),
         ("SELF", 0, {"address": ALICE, "role": 1, "region": "EU868", "power": 14,
-                     "time": 1_790_000_000, "cards": 1, "card_name": "Ada · hut warden"}),
+                     "time": 1_790_000_000, "cards": 1, "card_name": "Ada · hut warden",
+                     "most": 0}),
         ("SELF", 1, {"address": ALICE, "role": 0, "region": "US915", "power": -9, "time": 0,
-                     "cards": 0, "card_name": ""}),
+                     "cards": 0, "card_name": "", "most": 0}),
+        ("SELF", 2, {"address": ALICE, "role": 1, "region": "US915", "power": 22, "time": 0,
+                     "cards": 0, "card_name": "", "most": 1}),
         ("CONTACT", 2, {"address": BOB, "session": 1, "name": "Bob"}),
         ("CONTACT_GONE", 3, {"address": BOB}),
         ("MESSAGE", 4, {"id": 17, "contact": BOB, "time": 1_789_999_000, "flags": 1, "state": 4,
@@ -543,7 +554,7 @@ def build():
     # Bytes past the fields this version defines: a later version's field, read past.
     longer = encode("PING", 4) + b"\x01\x02"
     later = encode("SELF", 0, address=ALICE, role=1, region="EU868", power=14, time=0, cards=0,
-                   card_name="") + b"\xaa"
+                   card_name="", most=0) + b"\xaa"
     extended = []
     for frame in (longer, later):
         fields = decode(frame)
@@ -631,7 +642,7 @@ def build():
 
     # A connection, as both ends see it: who sends what, in order.
     self_ = dict(address=ALICE, role=1, region="EU868", power=14, time=1_790_000_000, cards=0,
-                 card_name="")
+                 card_name="", most=0)
     neighbour = dict(routing_id=0x1D2E3F40, role=1, snr_quarter_db=-38, heard=42)
     airtime = dict(period=3600, allowed=360_000, used=12_345, wait=0)
     power = dict(millivolts=3987, percent=81, flags=1)
@@ -782,9 +793,13 @@ def build():
         ("client", encode("SET", 29, setting=7, value=1)),
         ("node", encode("OK", 29)),
         ("node", encode("FIX", 41, receiver=2, **{**RECEIVED, "age": 40})),
-        # The user turns the node off. Its answer is the last frame on the connection.
-        ("client", encode("OFF", 30)),
+        # The user asks for the most the node may transmit at: in EU868, into its antenna, 22 dBm.
+        ("client", encode("SET", 30, setting=3, value=POWER_MOST)),
         ("node", encode("OK", 30)),
+        ("node", encode("SELF", 42, **{**self_, "power": 22, "most": 1})),
+        # The user turns the node off. Its answer is the last frame on the connection.
+        ("client", encode("OFF", 31)),
+        ("node", encode("OK", 31)),
     ])
 
     counted = [f["seq"] for f in exchange if f["type"] in NEWS_NAMES]
@@ -907,7 +922,7 @@ def build():
         ("client", encode("HELLO", 1, version=7)),
         ("node", info(7)),
         ("client", encode("SYNC", 2, after=0)),
-        ("node", encode("SELF", 0, **self_)),
+        ("node", encode("SELF", 0, speak=7, **self_)),
         ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
         ("node", encode("MESSAGE", 2, flags=0, **where)),
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
@@ -925,7 +940,7 @@ def build():
         ("client", encode("HELLO", 1, version=8)),
         ("node", info(8)),
         ("client", encode("SYNC", 2, after=0)),
-        ("node", encode("SELF", 0, **self_)),
+        ("node", encode("SELF", 0, speak=8, **self_)),
         ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
         ("node", encode("MESSAGE", 2, flags=0, **where)),
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
@@ -937,6 +952,26 @@ def build():
         ("client", encode("OFF", 3)),
         ("node", encode("ERROR", 3, code=1)),
     ], 8)})
+
+    # A client of version 9, to the node as the exchange begins: the same sync as the exchange's,
+    # its SELF without most, and the most asked for is a power no radio sends at, as version 9
+    # has it.
+    older.append({"version": 9, "frames": connection([
+        ("client", encode("HELLO", 1, version=9)),
+        ("node", info(9)),
+        ("client", encode("SYNC", 2, after=0)),
+        ("node", encode("SELF", 0, speak=9, **self_)),
+        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("MESSAGE", 2, flags=0, **where)),
+        ("node", encode("NEIGHBOUR", 3, **neighbour)),
+        ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
+        ("node", encode("AIRTIME", 5, **airtime)),
+        ("node", encode("POWER", 6, **power)),
+        ("node", encode("FIX", 7, receiver=2, **NO_FIX)),
+        ("node", encode("SYNCED", 2, news=8)),
+        ("client", encode("SET", 3, setting=3, value=POWER_MOST)),
+        ("node", encode("ERROR", 3, code=3)),
+    ], 9)})
 
     # Frames a later version defines, as a receiver of an earlier version reads them: a type it
     # does not know. A node answers such a request with ERROR 1; a client ignores such news.
@@ -1052,7 +1087,7 @@ def build():
                  for g in (MADE_SECRET, INVITED_SECRET, bytes(16), bytes([0xFF] * 16))]
 
     return {
-        "description": "The companion protocol, version 9 (draft/companion.md). Frames, streams, "
+        "description": "The companion protocol, version 10 (draft/companion.md). Frames, streams, "
         "addresses and group ids are hex; numbers are numbers; strings are text. In frames, "
         "frame is the frame alone, as one BLE write or notification carries it, and stream is "
         "the same frame as it goes on a byte stream. In extended, frame carries bytes past the "
@@ -1075,7 +1110,8 @@ def build():
         "just before the CARD that says so, and forgets it just before the CARD_GONE. Its last "
         "JOIN_LINK carries the first group's join code with one character of the secret typed "
         "wrong. Its satellite receiver is on, without a fix, from the start; it finds a fix just "
-        "before the FIX that says so, and each FIX's age is as the file gives it. Its last "
+        "before the FIX that says so, and each FIX's age is as the file gives it. Asked for the "
+        "most it may transmit at, it works it out as 22 dBm. Its last "
         "request turns it off: it answers, and then turns off, so nothing follows. Older "
         "holds connections to the same node by clients of "
         "earlier versions. To the client of version 0 it holds what the exchange begins with, "
@@ -1095,7 +1131,9 @@ def build():
         "define. To the client of version 7 it holds what the exchange begins with, the sync sends "
         "no FIX, and the client's last request names a setting its version does not define. To "
         "the client of version 8 it holds what the exchange begins with, and the client's last "
-        "request is one its version does not define. "
+        "request is one its version does not define. To the client of version 9 it holds what "
+        "the exchange begins with, and the client's last request asks for a power of -128 dBm, "
+        "which its version does not take as the most and no radio sends at. "
         "Positions are in units of "
         "10^-7 degree. Each connection's frames are read by the "
         "version its client speaks, and each client of an earlier version is sent an INFO "
