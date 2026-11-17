@@ -179,7 +179,7 @@ a refusal.
 
 | `type` | News | Fields |
 |---|---|---|
-| `0x80` | `SELF` | `address` `addr`, `role` `u8`, `region` `str` up to 15, `power` `i8`, `time` `u32`, `cards` `u8`, `card_name` `str` up to 31, `most` `u8` |
+| `0x80` | `SELF` | `address` `addr`, `role` `u8`, `region` `str` up to 15, `power` `i8`, `time` `u32`, `cards` `u8`, `card_name` `str` up to 31, `most` `u8`, `pairing` `u8` |
 | `0x81` | `CONTACT` | `address` `addr`, `session` `u8`, `name` `str` up to 31 |
 | `0x82` | `CONTACT_GONE` | `address` `addr` |
 | `0x83` | `MESSAGE` | `id` `u32`, `contact` `addr`, `time` `u32`, `flags` `u8`, `state` `u8`, `reason` `u8`, `wait` `u16`, `text` `str` up to 128 |
@@ -225,7 +225,11 @@ is its clock. `cards` is 1 if the node sends [cards](#cards), 0 if
 not, and `card_name` is the name its cards carry, as `SET` 5 and 6 set
 them. `most` is 1 if `power` is [the most](#the-requests) the node may
 transmit at, as the node works it out, and 0 if it is a power the node
-was given.
+was given. `pairing` says how the node is [paired](#bluetooth-le): 0 if
+it shows a new passkey for each pairing, 1 if it has no screen and
+pairs with the default passkey, and 2 if it pairs with a passkey set
+with `SET` 4. A client that sees 1 SHOULD offer the user to set a
+passkey of their own.
 
 **Contacts** (`CONTACT`). A contact is an address the user has
 saved, with a name. `session` is 1 if the node shares a session with
@@ -538,7 +542,8 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 10. Version 9 is the same without
+version 11. Version 10 is the same without `SELF`'s `pairing`.
+Version 9 is version 10 without
 [the most](#the-requests): `SET` 3's -128 and `SELF`'s `most`.
 Version 8 is version 9 without
 [turning the node off](#the-requests): the request `OFF`. Version 7 is
@@ -567,7 +572,8 @@ not told of group messages or invites at all: their `id`s are ones it
 never sees. One of version 4 or earlier is told of no positions, and
 of no sharing. One of version 5 or earlier is told of no cards, and
 is sent a `SELF` without `cards` and `card_name`. One of version 7 or
-earlier is told of no fix. One of version 9 or earlier is sent a `SELF`
+earlier is told of no fix. One of version 10 or earlier is sent a `SELF` without
+`pairing`. One of version 9 or earlier is sent a `SELF`
 without `most`, and its `SET` 3 of -128 is a power, as its version has
 it, that no radio sends at: a node answers it with `ERROR` 3. A node MUST answer a request, or a setting,
 that the client's version does not define with `ERROR` 1, as it does
@@ -702,7 +708,7 @@ was given, counting on from it, until it is given another.
 | 1 | region | `str` up to 15 | a [profile](phy.md#profiles) name |
 | 2 | role | `u8` | 0 leaf, 1 relay |
 | 3 | power | `i8` | the most the node transmits at, in dBm; -128 for the most it may |
-| 4 | passkey | `u32` | the [Bluetooth](#bluetooth-le) passkey, 0 to 999999, or `0xFFFFFFFF` for a random one each time |
+| 4 | passkey | `u32` | the [Bluetooth](#bluetooth-le) passkey, 0 to 999999, or `0xFFFFFFFF` for the node's default |
 | 5 | cards | `u8` | 1 to send [cards](#cards), 0 to send none |
 | 6 | card name | `str` up to 31 | the name the node's cards carry; empty for none |
 | 7 | receiver | `u8` | 1 to run the node's satellite receiver, 0 to turn it off |
@@ -1013,18 +1019,25 @@ on a connection whose MTU is less with `ERROR` 7.
 
 **Who may drive the node.** Both characteristics MUST require an
 encrypted link from LE Secure Connections pairing with protection
-against a man in the middle. The node is paired by passkey entry: a
-node with a screen shows a passkey, which the user types into the
-client; a node without one uses the passkey set with `SET` 4, and
-until one is set, it MUST NOT pair. A client that has paired, and keeps
+against a man in the middle. The node is paired by passkey entry, with
+the passkey set with `SET` 4 or, until one is set, the node's default.
+A node with a screen shows its default, a new passkey drawn at random
+for each pairing, which the user types into the client. A node without
+a screen has the default passkey `123456`, which the user types from
+the node's documentation: it MUST NOT pair with any other passkey until
+one is set. A client that has paired, and keeps
 the bond, may drive the node from then on. A node keeps its bonds until
 the user clears them, on the node itself or over USB.
 
 **Advertising.** A node advertises the service's UUID, so a client can
 find it. It MUST NOT advertise its address, its routing id or anything
-derived from them, nor the user's name for it.
+derived from them. It MUST NOT advertise the user's name for it unless
+the node sends [cards](#cards), which carry that name on the air
+already: then it SHOULD advertise as its card name, cut to fit on a
+whole character, so the user can pick it from a list. It advertises
+the new name when cards are turned on or off or their name changes.
 
-A node MAY add a tag to the name it advertises, so that a user with
+Otherwise a node MAY add a tag to the name it advertises, so that a user with
 more than one node can tell them apart before pairing. The tag MUST
 be drawn wholly at random, at least 16 bits of it, and carry nothing
 else: nothing from the node's address, routing id or keys, nor any
@@ -1362,14 +1375,20 @@ would be undone by a tag that stayed the same, so a new tag is drawn
 with each address. A new draw that happens to equal the last tells an
 observer no more than two different nodes that happen to match, so it
 is not drawn again. Sixteen bits makes two nodes in one place alike about once
-in 65,000. A name the user chooses was the other way, and would say who
-the node belongs to.
+in 65,000. A name the user chooses would say who the node belongs to,
+so a node advertises one only when the user has already chosen to say
+so on the air, in its cards, which reach further than Bluetooth does.
 
 **Why the passkey, and not "just works" pairing.** A node may relay
 for its neighbours on a hill, and anyone who can drive it can read its
 messages and change its region. Passkey entry stops someone in range
-from pairing unseen. A node with no screen has no way to show one, so
-its passkey is set over USB, which needs the node in hand.
+from pairing unseen. A node with no screen has no way to show one.
+Requiring its passkey to be set over USB first kept a stranger out, but
+also kept out every user without a computer, so such a node pairs with
+a default printed in its documentation, as many such devices do, and
+says so in `SELF`'s `pairing`, so the client can ask the user to choose
+another once they have paired. Until they do, anyone in range who knows
+the default can pair with it.
 
 **Why nothing derived from the address in advertisements.** The radio
 protocol keeps a node's address out of the clear. A Bluetooth
