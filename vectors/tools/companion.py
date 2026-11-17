@@ -25,7 +25,7 @@ import sharing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 10
+VERSION = 11
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -86,7 +86,8 @@ FRAMES = {
     0x47: ("LINK", [("link", STR, LINK_MAX)]),
     # News, node to client.
     0x80: ("SELF", [("address", ADDR), ("role", U8), ("region", STR, REGION_MAX), ("power", I8),
-                    ("time", U32), ("cards", U8), ("card_name", STR, NAME_MAX), ("most", U8)]),
+                    ("time", U32), ("cards", U8), ("card_name", STR, NAME_MAX), ("most", U8),
+                    ("pairing", U8)]),
     0x81: ("CONTACT", [("address", ADDR), ("session", U8), ("name", STR, NAME_MAX)]),
     0x82: ("CONTACT_GONE", [("address", ADDR)]),
     0x83: ("MESSAGE", [("id", U32), ("contact", ADDR), ("time", U32), ("flags", U8),
@@ -125,7 +126,15 @@ NEWS_NAMES = {name for t, (name, _) in FRAMES.items() if t >= 0x80}
 # Fields a later version added to a frame, and the version that added them. A frame is built and
 # read by the version both ends speak, and has none of the fields a later version added.
 SINCE = {(0x43, "news"): 3, (0x42, "board"): 4, (0x42, "release"): 4, (0x80, "cards"): 6,
-         (0x80, "card_name"): 6, (0x80, "most"): 10}
+         (0x80, "card_name"): 6, (0x80, "most"): 10, (0x80, "pairing"): 11}
+
+# SET 4's value for the node's default passkey, and the default of a node without a screen.
+PASSKEY_DEFAULT = 0xFFFFFFFF
+SCREENLESS_PASSKEY = 123456
+
+# SELF's pairing: a new passkey on the screen each time, the default of a node without one, or
+# one set with SET 4 (version 11).
+PAIRING_SHOWN, PAIRING_DEFAULT, PAIRING_SET = 0, 1, 2
 
 # SET 3's value for the most a node may transmit at, rather than a power (version 10).
 POWER_MOST = -128
@@ -361,9 +370,10 @@ def self_check():
     assert encode("SET", 9, setting=6, value="Ada") == b"\x05\x09\x06\x03Ada"
     assert decode(b"\x05\x09\x05\x01", speak=5) == UNKNOWN[1]
     me = dict(address=bytes(32), role=0, region="", power=0, time=0, cards=1, card_name="A",
-              most=1)
-    assert encode("SELF", 0, **me) == encode("SELF", 0, speak=5, **me) + b"\x01\x01A\x01"
-    assert encode("SELF", 0, **me) == encode("SELF", 0, speak=9, **me) + b"\x01"
+              most=1, pairing=PAIRING_DEFAULT)
+    assert encode("SELF", 0, **me) == encode("SELF", 0, speak=5, **me) + b"\x01\x01A\x01\x01"
+    assert encode("SELF", 0, **me) == encode("SELF", 0, speak=9, **me) + b"\x01\x01"
+    assert encode("SELF", 0, **me) == encode("SELF", 0, speak=10, **me) + b"\x01"
     assert encode("SET", 9, setting=3, value=POWER_MOST) == b"\x05\x09\x03\x80"
     assert len(encode("CARD", 0, address=bytes(32), heard=0, name="x" * NAME_MAX)) == 39 + NAME_MAX
 
@@ -413,6 +423,7 @@ def build():
     self_check()
 
     examples = [
+        ("HELLO", 1, {"version": 11}),
         ("HELLO", 1, {"version": 10}),
         ("HELLO", 1, {"version": 9}),
         ("HELLO", 1, {"version": 8}),
@@ -484,11 +495,11 @@ def build():
         ("LINK", 36, {"link": join_link(INVITED_SECRET, "Ridge walkers")}),
         ("SELF", 0, {"address": ALICE, "role": 1, "region": "EU868", "power": 14,
                      "time": 1_790_000_000, "cards": 1, "card_name": "Ada · hut warden",
-                     "most": 0}),
+                     "most": 0, "pairing": PAIRING_SHOWN}),
         ("SELF", 1, {"address": ALICE, "role": 0, "region": "US915", "power": -9, "time": 0,
-                     "cards": 0, "card_name": "", "most": 0}),
+                     "cards": 0, "card_name": "", "most": 0, "pairing": PAIRING_SET}),
         ("SELF", 2, {"address": ALICE, "role": 1, "region": "US915", "power": 22, "time": 0,
-                     "cards": 0, "card_name": "", "most": 1}),
+                     "cards": 0, "card_name": "", "most": 1, "pairing": PAIRING_DEFAULT}),
         ("CONTACT", 2, {"address": BOB, "session": 1, "name": "Bob"}),
         ("CONTACT_GONE", 3, {"address": BOB}),
         ("MESSAGE", 4, {"id": 17, "contact": BOB, "time": 1_789_999_000, "flags": 1, "state": 4,
@@ -554,7 +565,7 @@ def build():
     # Bytes past the fields this version defines: a later version's field, read past.
     longer = encode("PING", 4) + b"\x01\x02"
     later = encode("SELF", 0, address=ALICE, role=1, region="EU868", power=14, time=0, cards=0,
-                   card_name="", most=0) + b"\xaa"
+                   card_name="", most=0, pairing=0) + b"\xaa"
     extended = []
     for frame in (longer, later):
         fields = decode(frame)
@@ -642,7 +653,7 @@ def build():
 
     # A connection, as both ends see it: who sends what, in order.
     self_ = dict(address=ALICE, role=1, region="EU868", power=14, time=1_790_000_000, cards=0,
-                 card_name="", most=0)
+                 card_name="", most=0, pairing=PAIRING_DEFAULT)
     neighbour = dict(routing_id=0x1D2E3F40, role=1, snr_quarter_db=-38, heard=42)
     airtime = dict(period=3600, allowed=360_000, used=12_345, wait=0)
     power = dict(millivolts=3987, percent=81, flags=1)
@@ -798,9 +809,14 @@ def build():
         ("node", encode("OK", 30)),
         ("node", encode("SELF", 42, **{**self_, "card_name": "Ada · hut warden", "power": 22,
                                        "most": 1})),
-        # The user turns the node off. Its answer is the last frame on the connection.
-        ("client", encode("OFF", 31)),
+        # The node has no screen and pairs with the default passkey; the user sets their own.
+        ("client", encode("SET", 31, setting=4, value=482_913)),
         ("node", encode("OK", 31)),
+        ("node", encode("SELF", 43, **{**self_, "card_name": "Ada · hut warden", "power": 22,
+                                       "most": 1, "pairing": PAIRING_SET})),
+        # The user turns the node off. Its answer is the last frame on the connection.
+        ("client", encode("OFF", 32)),
+        ("node", encode("OK", 32)),
     ])
 
     counted = [f["seq"] for f in exchange if f["type"] in NEWS_NAMES]
@@ -974,6 +990,23 @@ def build():
         ("node", encode("ERROR", 3, code=3)),
     ], 9)})
 
+    # A client of version 10, to the node as the exchange begins: the same sync as the exchange's,
+    # its SELF without pairing.
+    older.append({"version": 10, "frames": connection([
+        ("client", encode("HELLO", 1, version=10)),
+        ("node", info(10)),
+        ("client", encode("SYNC", 2, after=0)),
+        ("node", encode("SELF", 0, speak=10, **self_)),
+        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("MESSAGE", 2, flags=0, **where)),
+        ("node", encode("NEIGHBOUR", 3, **neighbour)),
+        ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
+        ("node", encode("AIRTIME", 5, **airtime)),
+        ("node", encode("POWER", 6, **power)),
+        ("node", encode("FIX", 7, receiver=2, **NO_FIX)),
+        ("node", encode("SYNCED", 2, news=8)),
+    ], 10)})
+
     # Frames a later version defines, as a receiver of an earlier version reads them: a type it
     # does not know. A node answers such a request with ERROR 1; a client ignores such news.
     unknown_to_older = []
@@ -1088,7 +1121,7 @@ def build():
                  for g in (MADE_SECRET, INVITED_SECRET, bytes(16), bytes([0xFF] * 16))]
 
     return {
-        "description": "The companion protocol, version 10 (draft/companion.md). Frames, streams, "
+        "description": "The companion protocol, version 11 (draft/companion.md). Frames, streams, "
         "addresses and group ids are hex; numbers are numbers; strings are text. In frames, "
         "frame is the frame alone, as one BLE write or notification carries it, and stream is "
         "the same frame as it goes on a byte stream. In extended, frame carries bytes past the "
@@ -1112,7 +1145,8 @@ def build():
         "JOIN_LINK carries the first group's join code with one character of the secret typed "
         "wrong. Its satellite receiver is on, without a fix, from the start; it finds a fix just "
         "before the FIX that says so, and each FIX's age is as the file gives it. Asked for the "
-        "most it may transmit at, it works it out as 22 dBm. Its last "
+        "most it may transmit at, it works it out as 22 dBm. It has no screen, and pairs with the "
+        "default passkey until the user sets one. Its last "
         "request turns it off: it answers, and then turns off, so nothing follows. Older "
         "holds connections to the same node by clients of "
         "earlier versions. To the client of version 0 it holds what the exchange begins with, "
@@ -1134,7 +1168,8 @@ def build():
         "the client of version 8 it holds what the exchange begins with, and the client's last "
         "request is one its version does not define. To the client of version 9 it holds what "
         "the exchange begins with, and the client's last request asks for a power of -128 dBm, "
-        "which its version does not take as the most and no radio sends at. "
+        "which its version does not take as the most and no radio sends at. To the client of "
+        "version 10 it holds what the exchange begins with, and sends a SELF without pairing. "
         "Positions are in units of "
         "10^-7 degree. Each connection's frames are read by the "
         "version its client speaks, and each client of an earlier version is sent an INFO "
