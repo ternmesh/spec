@@ -25,7 +25,7 @@ import sharing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 11
+VERSION = 12
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -74,11 +74,12 @@ FRAMES = {
                      ("minutes", U16)]),
     0x35: ("SHARE_GROUP", [("group", GID), ("precision", U8), ("fields", U8), ("interval", U16),
                            ("minutes", U16)]),
+    0x36: ("UPDATE_BOOTLOADER", []),
     # Answers, node to client.
     0x40: ("OK", []),
     0x41: ("ERROR", [("code", U8)]),
     0x42: ("INFO", [("version", U8), ("firmware", STR, FIRMWARE_MAX), ("board", STR, BOARD_MAX),
-                    ("release", STR, RELEASE_MAX)]),
+                    ("release", STR, RELEASE_MAX), ("update", U8)]),
     0x43: ("SYNCED", [("news", U8)]),
     0x44: ("QUEUED", [("id", U32)]),
     0x45: ("MADE", [("group", GID)]),
@@ -126,7 +127,7 @@ NEWS_NAMES = {name for t, (name, _) in FRAMES.items() if t >= 0x80}
 # Fields a later version added to a frame, and the version that added them. A frame is built and
 # read by the version both ends speak, and has none of the fields a later version added.
 SINCE = {(0x43, "news"): 3, (0x42, "board"): 4, (0x42, "release"): 4, (0x80, "cards"): 6,
-         (0x80, "card_name"): 6, (0x80, "most"): 10, (0x80, "pairing"): 11}
+         (0x80, "card_name"): 6, (0x80, "most"): 10, (0x80, "pairing"): 11, (0x42, "update"): 12}
 
 # SET 4's value for the node's default passkey, and the default of a node without a screen.
 PASSKEY_DEFAULT = 0xFFFFFFFF
@@ -135,6 +136,10 @@ SCREENLESS_PASSKEY = 123456
 # SELF's pairing: a new passkey on the screen each time, the default of a node without one, or
 # one set with SET 4 (version 11).
 PAIRING_SHOWN, PAIRING_DEFAULT, PAIRING_SET = 0, 1, 2
+
+# INFO's update: how a client gives the node new firmware (version 12): it cannot, over this
+# protocol, or by the node's bootloader.
+UPDATES_NONE, UPDATES_LINK, UPDATES_BOOTLOADER = 0, 1, 2
 
 # SET 3's value for the most a node may transmit at, rather than a power (version 10).
 POWER_MOST = -128
@@ -150,6 +155,7 @@ TYPE_SINCE = {
     **{t: 7 for t in (0x26, 0x27, 0x47)},  # join codes
     0x94: 8,  # the node's own fix
     0x06: 9,  # turning the node off
+    0x36: 12,  # updating by the bootloader
 }
 
 
@@ -399,7 +405,11 @@ MISTYPED = _hut[:23] + ("B" if _hut[23] != "B" else "C") + _hut[24:]
 # its hardware.
 IMAGE = bytes((i * 151 + 7) & 0xFF for i in range(400))
 DIGEST_OF_IMAGE = hashlib.sha256(IMAGE).digest()
-FIRMWARE = dict(firmware="tern 0.2.0 heltec-v3", board="heltec-v3", release="0.2.0")
+FIRMWARE = dict(firmware="tern 0.2.0 heltec-v3", board="heltec-v3", release="0.2.0",
+                update=UPDATES_LINK)
+# A node whose bootloader takes an update over Bluetooth, and that has no room for one itself.
+BOOTLOADER_FIRMWARE = dict(firmware="tern 0.2.0 heltec-t114", board="heltec-t114",
+                           release="0.2.0", update=UPDATES_BOOTLOADER)
 
 # Positions, in 10^-7 degree. The client's own is positions.json's summit. Bob's is the centre of
 # the cell at precision 16 that positions.json's harbour is in, as a node reports one it holds.
@@ -423,6 +433,7 @@ def build():
     self_check()
 
     examples = [
+        ("HELLO", 1, {"version": 12}),
         ("HELLO", 1, {"version": 11}),
         ("HELLO", 1, {"version": 10}),
         ("HELLO", 1, {"version": 9}),
@@ -479,11 +490,13 @@ def build():
         ("SET", 40, {"setting": 7, "value": 1}),
         ("OFF", 41, {}),
         ("SET", 42, {"setting": 3, "value": POWER_MOST}),
+        ("UPDATE_BOOTLOADER", 43, {}),
         ("OK", 4, {}),
         ("ERROR", 15, {"code": 4}),
         ("INFO", 1, {"version": 4, **FIRMWARE}),
         ("INFO", 1, {"version": 4, "firmware": "tern (built by hand)", "board": "",
-                     "release": ""}),
+                     "release": "", "update": UPDATES_NONE}),
+        ("INFO", 1, {"version": 12, **BOOTLOADER_FIRMWARE}),
         ("SYNCED", 2, {"news": 6}),
         ("QUEUED", 10, {"id": 18}),
         ("MADE", 17, {"group": HUT}),
@@ -1007,6 +1020,25 @@ def build():
         ("node", encode("SYNCED", 2, news=8)),
     ], 10)})
 
+    # A client of version 11, to the node as the exchange begins: the same sync as the exchange's,
+    # an INFO without update, and its last request is one its version does not define.
+    older.append({"version": 11, "frames": connection([
+        ("client", encode("HELLO", 1, version=11)),
+        ("node", info(11)),
+        ("client", encode("SYNC", 2, after=0)),
+        ("node", encode("SELF", 0, speak=11, **self_)),
+        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("MESSAGE", 2, flags=0, **where)),
+        ("node", encode("NEIGHBOUR", 3, **neighbour)),
+        ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
+        ("node", encode("AIRTIME", 5, **airtime)),
+        ("node", encode("POWER", 6, **power)),
+        ("node", encode("FIX", 7, receiver=2, **NO_FIX)),
+        ("node", encode("SYNCED", 2, news=8)),
+        ("client", encode("UPDATE_BOOTLOADER", 3)),
+        ("node", encode("ERROR", 3, code=1)),
+    ], 11)})
+
     # Frames a later version defines, as a receiver of an earlier version reads them: a type it
     # does not know. A node answers such a request with ERROR 1; a client ignores such news.
     unknown_to_older = []
@@ -1035,6 +1067,7 @@ def build():
         ("SET", 7, {"setting": 7, "value": 1}),
         ("FIX", 7, {"receiver": 3, **RECEIVED}),
         ("OFF", 8, {}),
+        ("UPDATE_BOOTLOADER", 11, {}),
     ]:
         frame = encode(name, 5, **values)
         assert isinstance(decode(frame), dict)
@@ -1115,13 +1148,35 @@ def build():
         ("node", encode("ERROR", 14, code=11)),
         ("client", encode("UPDATE_END", 15)),
         ("node", encode("ERROR", 15, code=10)),
+        ("client", encode("UPDATE_BOOTLOADER", 16)),
+        ("node", encode("ERROR", 16, code=5)),
     ])
+
+    # A node whose bootloader takes its updates, and that has no room for an image itself: as a
+    # client of this version sees it, and as one of version 11 does, which is told no board.
+    bootloader = [
+        connection([
+            ("client", encode("HELLO", 1, version=VERSION)),
+            ("node", encode("INFO", 1, version=VERSION, **BOOTLOADER_FIRMWARE)),
+            ("client", begin),
+            ("node", encode("ERROR", 4, code=5)),
+            ("client", encode("UPDATE_BOOTLOADER", 5)),
+            ("node", encode("OK", 5)),
+        ]),
+        connection([
+            ("client", encode("HELLO", 1, version=11)),
+            ("node", encode("INFO", 1, speak=11, version=VERSION,
+                            **{**BOOTLOADER_FIRMWARE, "board": ""})),
+            ("client", begin),
+            ("node", encode("ERROR", 4, code=5)),
+        ], 11),
+    ]
 
     group_ids = [{"group_secret": g.hex(), "group": group_id(g).hex()}
                  for g in (MADE_SECRET, INVITED_SECRET, bytes(16), bytes([0xFF] * 16))]
 
     return {
-        "description": "The companion protocol, version 11 (draft/companion.md). Frames, streams, "
+        "description": "The companion protocol, version 12 (draft/companion.md). Frames, streams, "
         "addresses and group ids are hex; numbers are numbers; strings are text. In frames, "
         "frame is the frame alone, as one BLE write or notification carries it, and stream is "
         "the same frame as it goes on a byte stream. In extended, frame carries bytes past the "
@@ -1169,7 +1224,9 @@ def build():
         "request is one its version does not define. To the client of version 9 it holds what "
         "the exchange begins with, and the client's last request asks for a power of -128 dBm, "
         "which its version does not take as the most and no radio sends at. To the client of "
-        "version 10 it holds what the exchange begins with, and sends a SELF without pairing. "
+        "version 10 it holds what the exchange begins with, and sends a SELF without pairing. To "
+        "the client of version 11 it holds what the exchange begins with, sends an INFO without "
+        "update, and the client's last request is one its version does not define. "
         "Positions are in units of "
         "10^-7 degree. Each connection's frames are read by the "
         "version its client speaks, and each client of an earlier version is sent an INFO "
@@ -1178,7 +1235,11 @@ def build():
         "satellite receiver: the link is lost "
         "after the first connection's last frame, and the node keeps what it was sent. "
         "Refusals is one connection to a node with no update under way, given an image of the "
-        "same size whose digest is not its own. The four addresses are the public keys of RFC "
+        "same size whose digest is not its own, and that updates over this protocol, not by "
+        "its bootloader. Bootloader is two connections to a node whose bootloader takes its "
+        "updates over Bluetooth, which has no room for an image itself: one by a client of this "
+        "version, after whose last frame the node restarts into its bootloader, and one by a "
+        "client of version 11, which is sent an INFO with no board. The four addresses are the public keys of RFC "
         "8032's first four Ed25519 test vectors (section 7.1: TEST 1, 2, 3 and 1024).",
         "generator": "vectors/tools/companion.py",
         "crc_check": {"input": b"123456789".hex(), "crc": crc16(b"123456789")},
@@ -1196,6 +1257,7 @@ def build():
         "image_digest": DIGEST_OF_IMAGE.hex(),
         "update": update,
         "refusals": refusals,
+        "bootloader": bootloader,
     }
 
 

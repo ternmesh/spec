@@ -124,6 +124,7 @@ its field allows, or if a `str` is not valid UTF-8.
 | `0x33` | `SET_POSITION` | `lat` `i32`, `lon` `i32`, `altitude` `i16`, `accuracy` `u16`, `age` `u16` | `OK` |
 | `0x34` | `SHARE` | `contact` `addr`, `precision` `u8`, `fields` `u8`, `interval` `u16`, `minutes` `u16` | `OK` |
 | `0x35` | `SHARE_GROUP` | `group` `gid`, `precision` `u8`, `fields` `u8`, `interval` `u16`, `minutes` `u16` | `OK` |
+| `0x36` | `UPDATE_BOOTLOADER` | | `OK` |
 
 Any request may instead be answered by `ERROR`.
 
@@ -133,7 +134,7 @@ Any request may instead be answered by `ERROR`.
 |---|---|---|
 | `0x40` | `OK` | |
 | `0x41` | `ERROR` | `code` `u8` |
-| `0x42` | `INFO` | `version` `u8`, `firmware` `str` up to 31, `board` `str` up to 31, `release` `str` up to 31 |
+| `0x42` | `INFO` | `version` `u8`, `firmware` `str` up to 31, `board` `str` up to 31, `release` `str` up to 31, `update` `u8` |
 | `0x43` | `SYNCED` | `news` `u8` |
 | `0x44` | `QUEUED` | `id` `u32` |
 | `0x45` | `MADE` | `group` `gid` |
@@ -146,10 +147,12 @@ is for. `board` and `release` are for a client to read, and are how it
 finds firmware for the node ([Updating the firmware](#updating-the-firmware)):
 `board` names the hardware the node's firmware is built for, such as
 `heltec-v3`, in lowercase letters, digits and hyphens, and is empty if
-the node cannot be updated over this protocol; `release` is the version
+a client cannot update the node; `release` is the version
 of that firmware, as [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 writes one, without a leading `v`, and is empty if it has none, as a
-build made by hand may not.
+build made by hand may not. `update` says how a client gives the node
+new firmware: 0 if it cannot, 1 over this protocol, and 2 by the node's
+bootloader ([Updating the firmware](#updating-the-firmware)).
 
 `news` in `SYNCED` is the node's [count](#news) as it answers: the
 `seq` its next news frame will carry. It is how a client knows it
@@ -542,7 +545,10 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 11. Version 10 is the same without `SELF`'s `pairing`.
+version 12. Version 11 is the same without
+[updates by the bootloader](#by-the-bootloader): the request
+`UPDATE_BOOTLOADER` and `INFO`'s `update`. Version 10 is version 11
+without `SELF`'s `pairing`.
 Version 9 is version 10 without
 [the most](#the-requests): `SET` 3's -128 and `SELF`'s `most`.
 Version 8 is version 9 without
@@ -572,7 +578,9 @@ not told of group messages or invites at all: their `id`s are ones it
 never sees. One of version 4 or earlier is told of no positions, and
 of no sharing. One of version 5 or earlier is told of no cards, and
 is sent a `SELF` without `cards` and `card_name`. One of version 7 or
-earlier is told of no fix. One of version 10 or earlier is sent a `SELF` without
+earlier is told of no fix. One of version 11 or earlier is sent an `INFO` without `update`, and
+with an empty `board` unless the node is updated over this protocol,
+since to such a client a board means that. One of version 10 or earlier is sent a `SELF` without
 `pairing`. One of version 9 or earlier is sent a `SELF`
 without `most`, and its `SET` 3 of -128 is a power, as its version has
 it, that no radio sends at: a node answers it with `ERROR` 3. A node MUST answer a request, or a setting,
@@ -586,7 +594,9 @@ version 6 answers a `SET` of setting 5 from a client of version 5 with
 `ERROR` 1, and a client of version 5 ignores a `CARD`; and a node of
 version 8 answers a `SET` of setting 7 from a client of version 7 with
 `ERROR` 1, and a client of version 7 ignores a `FIX`; and a node of
-version 9 answers an `OFF` from a client of version 8 with `ERROR` 1.
+version 9 answers an `OFF` from a client of version 8 with `ERROR` 1,
+and one of version 12 answers an `UPDATE_BOOTLOADER` from a client of
+version 11 with `ERROR` 1.
 Later versions only add types, settings, error codes and
 fields at the end of a frame, so any two versions can talk. A change
 that cannot be made that way is a new protocol, with its own magic and
@@ -889,28 +899,20 @@ user's.
 
 ## Updating the firmware
 
-A client can give a node new firmware over this protocol: an **image**,
-which is whatever the node's hardware runs, written as one file. What
-an image holds, and where a client finds one, is the business of the
-firmware and of whoever publishes it, not of this section: a client
-finds one by the `board` and `release` in [`INFO`](#answers). A node
-whose `board` is empty answers `UPDATE_BEGIN` with `ERROR` 5.
+A client can give a node new firmware: an **image**, which is whatever
+the node's hardware runs. What an image holds, and where a client finds
+one, is the business of the firmware and of whoever publishes it, not
+of this section: a client finds one by the `board` and `release` in
+[`INFO`](#answers). A node is updated in one of two ways, as `INFO`'s
+`update` says: over this protocol, where it has room to hold a second
+image beside the one it runs, or by its bootloader, where it has not.
+A node whose `board` is empty answers `UPDATE_BEGIN` and
+`UPDATE_BOOTLOADER` with `ERROR` 5, as does one that is updated the
+other way.
+
+### Over this protocol
 
 An update is three requests:
-
-```
-client                                 node
-UPDATE_BEGIN  size, digest        ─▶
-                                  ◀─  UPDATING  offset 0
-UPDATE_DATA   offset 0, 172 bytes ─▶
-                                  ◀─  OK
-UPDATE_DATA   offset 172, ...     ─▶
-                                  ◀─  OK
-...
-UPDATE_END                        ─▶
-                                  ◀─  OK
-                                        the node restarts, running the image
-```
 
 **`UPDATE_BEGIN`** says that an image of `size` bytes, whose SHA-256 is
 `digest`, follows. A node MUST refuse a `size` of 0 with `ERROR` 3, and
@@ -956,6 +958,42 @@ other time: it sends news, answers other requests, and is on the air.
 Anyone who can drive a node can update it: over Bluetooth, a client
 that has [paired](#bluetooth-le). The digest says only that the image
 arrived as the client sent it, not who made it.
+
+### By the bootloader
+
+A node whose `update` is 2 has a bootloader that takes an image itself,
+over Bluetooth LE, and this protocol only asks it to start:
+
+```
+client                                 node
+UPDATE_BOOTLOADER                 ─▶
+                                  ◀─  OK
+                                        the node restarts into its bootloader
+client ─── the image, by the bootloader's own protocol ───▶ bootloader
+                                        the bootloader starts the image
+```
+
+**`UPDATE_BOOTLOADER`** asks the node to restart into its bootloader's
+update. The node answers `OK`, then restarts: every connection drops,
+and the bootloader advertises its own service. What it speaks is the
+bootloader's, not this protocol's. A node of this version on an
+nRF52840 has a bootloader that speaks Nordic Semiconductor's legacy
+DFU over Bluetooth LE (the DFU service of the nRF5 SDK 11, UUID
+`00001530-1212-EFDE-1523-785FEABCD123`), and the image for it is a DFU
+package of an init packet and the application. The bootloader checks
+the image as that protocol has it, writes it and starts it; the node
+then answers `HELLO` with the new `release`. A client that sent
+`UPDATE_BOOTLOADER` and was not answered does not send it again: it
+looks for the bootloader, as the node may be restarting into it.
+
+A node's bootloader writes only its firmware: the node keeps everything
+else it holds, as over this protocol. A node SHOULD say its `update` is
+2 only if its bootloader, given an image that breaks off part of the
+way, waits for another over Bluetooth, rather than for one by cable,
+so that a link that drops does not leave it needing a computer. While
+the bootloader waits, it takes an image from anyone in range, not only
+the client that asked: a node goes into it only when a client that may
+drive it asks.
 
 ## Byte streams
 
@@ -1108,7 +1146,9 @@ An implementation conforms to this section if, for
   earlier no card, and a `SELF` without `cards` and `card_name`, and
   refuses a client of version 5 `SET` 5; and refuses a client of
   version 6 `JOIN_LINK`; and sends a client of version 7 no `FIX`, and
-  refuses it `SET` 7; and refuses a client of version 8 `OFF`;
+  refuses it `SET` 7; and refuses a client of version 8 `OFF`; and
+  sends a client of version 11 an `INFO` without `update`, and refuses
+  it `UPDATE_BOOTLOADER`;
 * **update:** as a client, given the `image` to send and the node's
   frames in order, it sends the client's frames of each of the two
   connections in `update`, in order, going on in the second from the
@@ -1116,7 +1156,11 @@ An implementation conforms to this section if, for
   digest is right, given the client's frames in order, it sends the
   node's, the second connection's after the first's link was lost. The
   node's frames in `refusals` are those of a node given the client's,
-  on one connection.
+  on one connection;
+* **bootloader:** as a node that is updated by its bootloader, and has
+  no room for an image itself, given the client's frames of each of
+  the connections in `bootloader`, it sends the node's, and restarts
+  into its bootloader after the first connection's last frame.
 
 What a node holds, and so which news it sends and when, depends on the
 rest of the node, and is checked by running a client against it. The
@@ -1403,6 +1447,22 @@ own client code in every app, and would not work over USB. One request
 at a time is slower than a stream of writes, about four minutes for an
 image of a megabyte over Bluetooth, and is what lets a node of any size
 take an update with the one buffer it already has.
+
+**Why some nodes hand an update to their bootloader.** An update over
+this protocol needs room for a second image while the first runs. An
+nRF52840 has a megabyte of flash, its bootloader and Nordic's
+SoftDevice keep a fifth of it, and a node's firmware is more than half
+of what is left: there is no room for two. Its bootloader can take an
+image itself, over Bluetooth, the way the boards' makers ship it, and
+Nordic's libraries for Android and iOS speak that protocol. So this
+protocol only asks the node to start it, and what makes an update over
+the companion link worth having, the open, paired link, is kept for
+the asking: no client that may not drive the node can start one. The
+cost is the bootloader's protocol in the app beside this one, and a
+window in which the bootloader takes an image from anyone in range.
+Some bootloaders, given an image that breaks off, wait for one by
+cable only; a node on one says it cannot be updated, so that a client
+offers the cable rather than an update that stalls.
 
 **Why a digest, and an offset from the node.** A link drops part of the
 way through an image of thousands of frames more often than not on a
