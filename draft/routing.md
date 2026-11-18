@@ -124,7 +124,8 @@ for now. A node may **use** a neighbour as the next hop to a
 destination only if the link to it is [up](#links), the neighbour is
 not [out of use](#leaves-that-move), and it is a relay or is the
 destination itself; a leaf's [default route](#a-leafs-default-route) is
-the one exception.
+the one exception. A leaf may also [sleep](sleeping.md), and then only
+its keeper may use it.
 
 ## Announces
 
@@ -136,20 +137,22 @@ A node's one periodic frame:
 | 1 | 4 | `sender` | the sender's routing id |
 | 5 | 2 | `number` | counts the sender's announces |
 | 7 | 2 | `seq` | the sequence number of the sender's route to itself |
-| 9 | 1 | `flags` | bit 0: the sender is a relay. Bit 1: it is [starting](#starting). Bit 2: the key follows. The rest are 0 |
+| 9 | 1 | `flags` | bit 0: the sender is a relay. Bit 1: it is [starting](#starting). Bit 2: the key follows. Bit 3: it [sleeps](sleeping.md#the-announce). The rest are 0 |
 | 10 | 2 | `promise` | the longest the sender may go before its next |
 | 12 | 2 | `round` | announces it takes the sender to name every neighbour |
 | 14 | 1 | `power` | what this frame was sent at, `i8` dBm, rounded up |
 | 15 | 1 | `h` | how many neighbours follow |
 | 16 | 1 | `r` | how many routes follow |
-| 17 | 32`a` | `key` | the sender's [routing key](#routing-ids) `B`, if bit 2 of `flags` is set |
-| 17 + 32`a` | 5`h` | neighbours | each `id` `u32`, `margin` `u8` |
-| 17 + 32`a` + 5`h` | 8`r` | routes | each `destination` `u32`, `seq` `u16`, `metric` `u16` |
+| 17 | 4`s` | `keeper` | the sender's [keeper](sleeping.md#the-announce), if bit 3 of `flags` is set |
+| 17 + 4`s` | 32`a` | `key` | the sender's [routing key](#routing-ids) `B`, if bit 2 of `flags` is set |
+| 17 + 4`s` + 32`a` | 5`h` | neighbours | each `id` `u32`, `margin` `u8` |
+| 17 + 4`s` + 32`a` + 5`h` | 8`r` | routes | each `destination` `u32`, `seq` `u16`, `metric` `u16` |
 | then | 64 | `sig` | |
 
 `hdr` has format `01` (draft 0), type `011` (routing) and flags `001`
-(announce). `a` is 1 if bit 2 of `flags` is set and 0 otherwise. The
-frame is exactly `81 + 32a + 5h + 8r` bytes, and at most 255. A
+(announce). `a` is 1 if bit 2 of `flags` is set and 0 otherwise, and
+`s` is 1 if bit 3 is set and 0 otherwise. The frame is exactly
+`81 + 4s + 32a + 5h + 8r` bytes, and at most 255. A
 receiver MUST discard one of any other length, one whose `sender` is
 its own id or a reserved id, and one whose `flags` has an unknown bit
 set.
@@ -675,6 +678,9 @@ changing its role, or its link going up or down.
 Anything that does is an **inconsistency**: if the interval is longer
 than `I_MIN`, a new interval of `I_MIN` begins at once. To **announce
 soon** is the same.
+
+A leaf that [sleeps](sleeping.md#the-announce) announces as that
+section says, and not by Trickle.
 
 Departing from RFC 6206:
 

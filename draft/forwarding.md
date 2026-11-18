@@ -58,20 +58,22 @@ Every frame that follows a route starts with eleven bytes:
 `hops`, `power` and `next` change at every node. Nothing after them
 does.
 
-Three kinds of frame are defined:
+Four kinds of frame are defined:
 
 | `hdr` | Frame | After the head |
 |---|---|---|
 | `0x48`, `0x49` | a **message**: a secured unicast frame, for the node's user or, with the low bit set, [for the node](unicast-security.md#the-frame) | `tag` is its destination tag; then its ciphertext and check |
 | `0x50` | an **acknowledgement** | `tag` is that of the message it answers; then 4 bytes, `proof` |
 | `0x51` to `0x54` | a **first-contact frame**, one of a handshake's four | `tag` is its contact tag; then, for `0x51`, the 4-byte routing id it came from; then the handshake's message |
+| `0x55` | a **held notice**, from the keeper of a [leaf that sleeps](sleeping.md#holding) | `tag` is that of the frame it holds; nothing after |
 
 A message is at least 23 bytes: the head, the tag and the 8-byte check
-of an empty message. An acknowledgement is exactly 19 bytes. A
+of an empty message. An acknowledgement is exactly 19 bytes, and a held
+notice exactly 15. A
 first-contact frame is exactly 56, 60, 80 or 24 bytes, for `0x51` to
 `0x54` ([First contact](first-contact.md#the-frame)). A receiver
-MUST discard a message shorter than 23 bytes, an acknowledgement or a
-first-contact frame of any other length, and a frame whose `next` or
+MUST discard a message shorter than 23 bytes, an acknowledgement, a
+held notice or a first-contact frame of any other length, and a frame whose `next` or
 `destination` is a reserved id.
 
 **The same frame.** Four bytes of tag do not tell every message from
@@ -160,6 +162,8 @@ A node that receives a frame first checks whether it
 1. An acknowledgement whose `destination` is the node's own id is for
    it, whatever its `next`: see [Messages](#messages).
 2. A frame whose `next` is not the node's id is otherwise ignored.
+   A held notice whose `next` is the node's id ends a hop, if it ends
+   one, and is otherwise ignored: no node passes one on.
 3. A message or a first-contact frame whose `destination` is the
    node's id is for it.
 4. Anything else is to be passed on. A leaf MUST NOT pass a frame on.
@@ -181,7 +185,10 @@ A node that has sent a frame to a neighbour **listens**. The hop has
 succeeded when the node receives:
 
 * [the same frame](#the-head), with `hops` one less than it sent; or
-* for a message, any acknowledgement with the message's `tag`.
+* for a message, any acknowledgement with the message's `tag`; or
+* a [held notice](sleeping.md#holding) from that neighbour, with the
+  frame's `destination` and `tag`: the neighbour is the keeper of a
+  leaf that sleeps, and holds the frame for it.
 
 An acknowledgement for another message with the same tag ends the hop
 too, wrongly, once in 2^32 for each pair of messages a node hears at
@@ -306,7 +313,9 @@ ACK_WAIT + ACK_FACTOR × the route's metric, in milliseconds
 ```
 
 from when the message first goes on the air: the metric is airtime, so
-this is a few journeys there and back. An acknowledgement is **valid**
+this is a few journeys there and back. For a destination that has said
+it [sleeps](sleeping.md#telling-the-source), it waits longer, as that
+section says. An acknowledgement is **valid**
 for a message if its `tag` is the message's destination tag and its
 `proof` is the one above for the message's direction and counter; a
 source MUST NOT take any other as showing that a message arrived. It

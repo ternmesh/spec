@@ -140,8 +140,10 @@ flags are reserved.
 
 **`node`** says who the plaintext is for. Clear, it is for the node's
 user: words to show. Set, it is for the node itself, and its first byte
-says what it is: `0x01` is [a group's invite](groups.md#invites), and
-`0x02` [a position](positions.md#the-position). A frame with `node`
+says what it is: `0x01` is [a group's invite](groups.md#invites),
+`0x02` [a position](positions.md#the-position), `0x03` [a group's
+new secret](groups.md#replacing-the-secret), and `0x04` that the sender
+[sleeps](sleeping.md#telling-the-source). A frame with `node`
 set is in every other way a frame like any other: it takes the next
 counter, is sealed and opened the same way, and is acknowledged. A
 receiver that accepts one whose plaintext is empty, or whose first byte
