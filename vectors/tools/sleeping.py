@@ -56,7 +56,7 @@ def poll_answer(a):
 
 
 def held(h):
-    return struct.pack(">BBbIII", HDR_HELD, 0, h["power"], h["next"], h["destination"], h["tag"])
+    return struct.pack(">BBbIII", HDR_HELD, 0, h["power"], h["keeper"], h["destination"], h["tag"])
 
 
 def read(frame, own):
@@ -82,7 +82,7 @@ def read(frame, own):
         _, _, power, nxt, dst, tag = struct.unpack(">BBbIII", frame)
         if nxt in RESERVED or dst in RESERVED:
             return None
-        return {"power": power, "next": nxt, "destination": dst, "tag": tag}
+        return {"power": power, "keeper": nxt, "destination": dst, "tag": tag}
     return None
 
 
@@ -161,6 +161,12 @@ def holds(since_ms, listen_s):
     return since_ms >= 1000 * listen_s
 
 
+def answers_poll(last, id_):
+    """Whether a keeper that last answered poll last from a leaf (None for none) answers one with
+    id_ from it."""
+    return last is None or routing.newer(id_, last)
+
+
 def hold_for_s(wake):
     return 2 * routing.promise_read(wake) + HOLD_EXTRA_S
 
@@ -174,7 +180,7 @@ def self_check():
     assert poll({"sender": 1, "keeper": 2, "id": 3, "wake": 300, "listen": 2, "power": -1}) == bytes.fromhex(
         "5d" "00000001" "00000002" "0003" "012c" "02" "ff"
     )
-    assert held({"power": 14, "next": 0x0A0B0C0D, "destination": 7, "tag": 0xDEADBEEF}) == bytes.fromhex(
+    assert held({"power": 14, "keeper": 0x0A0B0C0D, "destination": 7, "tag": 0xDEADBEEF}) == bytes.fromhex(
         "55" "00" "0e" "0a0b0c0d" "00000007" "deadbeef"
     )
     assert wake_ok(300) and wake_ok(3600) and wake_ok(0x8000 | 5) and wake_ok(0x8000 | 60)
@@ -182,6 +188,8 @@ def self_check():
     assert hold_for_s(300) == 660 and hold_for_s(0x8000 | 60) == 7260
     assert wait_ms(70, 300) == 5000 + 280 + 300000 + 2000
     assert holds(2000, 2) and not holds(1999, 2)
+    assert answers_poll(None, 7) and answers_poll(0xFFFF, 0) and not answers_poll(5, 5)
+    assert not answers_poll(5, 4) and not answers_poll(0, 0x8000)
 
 
 def build():
@@ -202,8 +210,8 @@ def build():
         {"sender": keeper, "leaf": leaf, "id": 0xFFFF, "margin": 255, "held": 255, "power": -9},
     ]
     notices = [
-        {"power": 14, "next": other, "destination": leaf, "tag": 0x01020304},
-        {"power": -9, "next": other, "destination": leaf, "tag": 0xFFFFFFFF},
+        {"power": 14, "keeper": keeper, "destination": leaf, "tag": 0x01020304},
+        {"power": -9, "keeper": keeper, "destination": leaf, "tag": 0xFFFFFFFF},
     ]
     for x in polls:
         x["frame"] = poll(x).hex()
@@ -264,6 +272,11 @@ def build():
         {"at_ms": at, "listen": l, "holds": holds(at, l)}
         for at, l in ((0, 2), (1999, 2), (2000, 2), (9000, 10), (10000, 10), (600000, 255))
     ]
+    poll_ids = [
+        {"last": last, "id": id_, "answers": answers_poll(last, id_)}
+        for last, id_ in ((None, 0x1234), (0x1234, 0x1235), (0x1234, 0x1234), (0x1234, 0x1233),
+                          (0xFFFF, 0), (0, 0x7FFF), (0, 0x8000))
+    ]
     hold_for = [{"wake": w, "hold_for": hold_for_s(w)} for w in (300, 900, 3600, 0x8000 | 60)]
     waits = [
         {"metric": m, "wake": w, "wait_ms": wait_ms(m, w)}
@@ -285,6 +298,7 @@ def build():
         "announces": announces,
         "sleep": sleep,
         "holds": hold_cases,
+        "poll_ids": poll_ids,
         "hold_for": hold_for,
         "source_waits": waits,
     }

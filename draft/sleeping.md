@@ -180,7 +180,10 @@ keeps MUST answer it once, by `sender` and `id`, after a random time up
 to `JITTER` × `airtime(14)`, at the power of a frame for that neighbour,
 with `held` the number of frames it [holds](#holding) for it. The
 answer is paid for as an acknowledgement is, and is never held or
-dropped for the budget ([Paid for](#paid-for)).
+dropped for the budget ([Paid for](#paid-for)). A keeper keeps, for
+each leaf, the `id` of the last poll it answered, and MUST NOT answer
+one whose `id` is not [newer](routing.md#notation) than that: a copy,
+or a poll delayed past a later one.
 
 **What the leaf does.** A leaf that hears the answer to its poll
 listens until it has received `held` frames from its keeper, or until
@@ -206,22 +209,26 @@ A frame held is not finished with ([Receiving](forwarding.md#receiving)):
 a copy that arrives is not held again, and is answered as the first was.
 
 **The held notice.** A keeper that holds a frame, or a copy of one it
-holds, sends the node it came from, once and not listened for:
+holds, sends it to the node it came from, once and not listened for:
 
 | Offset | Bytes | Field | |
 |---|---|---|---|
 | 0 | 1 | `hdr` | `0x55` |
 | 1 | 1 | `hops` | 0 |
 | 2 | 1 | `power` | what this frame was sent at, `i8` dBm, rounded up |
-| 3 | 4 | `next` | the routing id of the node the frame came from |
+| 3 | 4 | `keeper` | the keeper's own routing id |
 | 7 | 4 | `destination` | the frame's |
 | 11 | 4 | `tag` | the frame's |
 
 It is a frame of [Frames that follow routes](forwarding.md#the-head),
 exactly 15 bytes, sent at the power the node before needs, as any frame
-sent in answer to one received. To the node it is for, it ends the hop
-of a frame with that `destination` and `tag` sent to the keeper, as
-hearing the frame passed on would ([Hops](forwarding.md#hops)), and it
+sent in answer to one received. Where a frame that follows a route has
+`next`, a held notice has `keeper`: no frame says which node it came
+from, so the notice names who holds it instead, and is for whichever
+node sent that frame there. A node that sent a frame with that
+`destination` and `tag` to `keeper` takes the hop as ended, as hearing
+the frame passed on would ([Hops](forwarding.md#hops)); any other node
+ignores it. It
 teaches nothing: as of an acknowledgement, no node takes a sample from
 it or anything off a boost. Only the leaf's keeper sends one; no node
 passes one on.
@@ -360,6 +367,9 @@ An implementation conforms to this section if, for
 * **holds:** as a keeper, `at_ms` milliseconds after it received its
   leaf's last poll, that poll having given `listen`, it
   holds a frame for the leaf, or sends it, as `holds` says;
+* **poll_ids:** as a keeper whose last answered poll from a leaf had
+  `id` `last` (`null` for none), it answers a poll from it with `id`,
+  or does not, as `answers` says;
 * **hold_for:** given `wake`, it drops a frame held `hold_for` seconds;
 * **source_waits:** given `metric` and `wake`, a source waits `wait_ms`
   for each try.

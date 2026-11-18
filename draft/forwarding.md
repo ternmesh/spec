@@ -65,7 +65,7 @@ Four kinds of frame are defined:
 | `0x48`, `0x49` | a **message**: a secured unicast frame, for the node's user or, with the low bit set, [for the node](unicast-security.md#the-frame) | `tag` is its destination tag; then its ciphertext and check |
 | `0x50` | an **acknowledgement** | `tag` is that of the message it answers; then 4 bytes, `proof` |
 | `0x51` to `0x54` | a **first-contact frame**, one of a handshake's four | `tag` is its contact tag; then, for `0x51`, the 4-byte routing id it came from; then the handshake's message |
-| `0x55` | a **held notice**, from the keeper of a [leaf that sleeps](sleeping.md#holding) | `tag` is that of the frame it holds; nothing after |
+| `0x55` | a **held notice**, from the keeper of a [leaf that sleeps](sleeping.md#holding) | `next` is the keeper's own id, not the next node's; `tag` is that of the frame it holds; nothing after |
 
 A message is at least 23 bytes: the head, the tag and the 8-byte check
 of an empty message. An acknowledgement is exactly 19 bytes, and a held
@@ -161,9 +161,11 @@ A node that receives a frame first checks whether it
 
 1. An acknowledgement whose `destination` is the node's own id is for
    it, whatever its `next`: see [Messages](#messages).
-2. A frame whose `next` is not the node's id is otherwise ignored.
-   A held notice whose `next` is the node's id ends a hop, if it ends
-   one, and is otherwise ignored: no node passes one on.
+2. A frame other than a held notice whose `next` is not the node's id
+   is otherwise ignored.
+   A held notice ends a hop of this node's, if it ends one (its
+   `next` names the keeper that sent it, not this node), and is
+   otherwise ignored: no node passes one on.
 3. A message or a first-contact frame whose `destination` is the
    node's id is for it.
 4. Anything else is to be passed on. A leaf MUST NOT pass a frame on.
