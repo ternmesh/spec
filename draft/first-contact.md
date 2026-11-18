@@ -499,3 +499,10 @@ published as a standard.
   radios.
 * **Measured cost on the nRF52840:** X25519, and a handshake from end to
   end.
+* **Revoking an identity.** A node that is lost or taken has given up
+  its seed, and with it its address ([what holding a node
+  gives](companion.md#what-the-node-holds)). Nothing yet lets its owner
+  tell their contacts that the address is no longer theirs, nor move
+  them to a new one, so a contact goes on trusting it until told by
+  some other means. A revocation signed by the old key proves nothing
+  once the key is someone else's too; what it needs is still open.

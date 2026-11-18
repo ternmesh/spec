@@ -118,13 +118,14 @@ its field allows, or if a `str` is not valid UTF-8.
 | `0x25` | `JOIN` | `id` `u32` | `OK` |
 | `0x26` | `GROUP_LINK` | `group` `gid` | `LINK` |
 | `0x27` | `JOIN_LINK` | `link` `str` up to 102 | `MADE` |
-| `0x30` | `UPDATE_BEGIN` | `size` `u32`, `digest` `digest` | `UPDATING` |
+| `0x30` | `UPDATE_BEGIN` | `size` `u32`, `digest` `digest`, `signature` `bytes` up to 64 | `UPDATING` |
 | `0x31` | `UPDATE_DATA` | `offset` `u32`, `data` `bytes` up to 172 | `OK` |
 | `0x32` | `UPDATE_END` | | `OK` |
 | `0x33` | `SET_POSITION` | `lat` `i32`, `lon` `i32`, `altitude` `i16`, `accuracy` `u16`, `age` `u16` | `OK` |
 | `0x34` | `SHARE` | `contact` `addr`, `precision` `u8`, `fields` `u8`, `interval` `u16`, `minutes` `u16` | `OK` |
 | `0x35` | `SHARE_GROUP` | `group` `gid`, `precision` `u8`, `fields` `u8`, `interval` `u16`, `minutes` `u16` | `OK` |
 | `0x36` | `UPDATE_BOOTLOADER` | | `OK` |
+| `0x37` | `WIPE` | | `OK` |
 
 Any request may instead be answered by `ERROR`.
 
@@ -302,6 +303,19 @@ frame, 0 if it could now. A profile with no limit gives `allowed` and
 node cannot measure it. `percent` is the node's estimate of the charge
 left, 255 if it has none. `flags` bit 0: the battery is charging. Bit
 1: the node is running from external power. The other bits are 0.
+
+**What holding a node gives.** A node keeps its identity, the keys of
+its sessions, its groups' secrets, its contacts and its messages in its
+own flash, and nothing in this section protects them from whoever has
+the node in hand: they can read them over its USB port, or by putting
+firmware of their own on it. So a node that is lost or taken has given
+up its address, its sessions and every group it was in. Its user should
+tell their contacts, who should no longer trust that address, and should
+make new groups for the people still in them. `WIPE`
+([below](#the-requests)) erases a node that is still in hand, before it
+is given away or sent off to be mended. How a node's contacts learn that
+its address is no longer its owner's is
+[not yet specified](first-contact.md#not-yet-specified).
 
 ### Groups
 
@@ -552,7 +566,9 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 12. Version 11 is the same without
+version 13. Version 12 is the same without
+[signed images](#signed-images) and [wiping](#the-requests): `UPDATE_BEGIN`'s
+`signature` and the request `WIPE`. Version 11 is version 12 without
 [updates by the bootloader](#by-the-bootloader): the request
 `UPDATE_BOOTLOADER` and `INFO`'s `update`. Version 10 is version 11
 without `SELF`'s `pairing`.
@@ -603,7 +619,10 @@ version 8 answers a `SET` of setting 7 from a client of version 7 with
 `ERROR` 1, and a client of version 7 ignores a `FIX`; and a node of
 version 9 answers an `OFF` from a client of version 8 with `ERROR` 1,
 and one of version 12 answers an `UPDATE_BOOTLOADER` from a client of
-version 11 with `ERROR` 1.
+version 11 with `ERROR` 1, and one of version 13 a `WIPE` from a client
+of version 12. A client of version 12 or earlier sends `UPDATE_BEGIN`
+without a `signature`, and a node that [checks signatures](#signed-images)
+refuses it, as it refuses any image that is not signed.
 Later versions only add types, settings, error codes and
 fields at the end of a frame, so any two versions can talk. A change
 that cannot be made that way is a new protocol, with its own magic and
@@ -784,6 +803,26 @@ not one of the requests [sending twice](#requests-one-at-a-time) can
 harm. A node that is already off does not answer, and the client takes
 it as gone.
 
+**`WIPE`** erases the node. A node MUST answer it with `OK`, or with
+`ERROR` 8 if it cannot erase itself now, and after `OK` MUST erase
+everything it holds that this section names and restart as a node that
+has never been used: its identity, so that it starts with a new
+address; its sessions and every key of them; its contacts, groups and
+their secrets, messages, cards and positions; its settings, the
+passkey among them; and every Bluetooth bond. It MAY keep the time it
+has spent on the air, which a region's limit on transmitting counts
+([Profiles](phy.md#profiles)) and which is no secret. Every connection
+drops. A node SHOULD erase the storage that held these, not only mark
+its records unused, so that a reading of its flash afterwards finds
+none of them. As with `OFF`, a node acts only once its answer has gone.
+
+A client MUST NOT send `WIPE` unless its user asked it to, and SHOULD
+say first that the node's address, contacts, groups and messages will
+be gone for good, and that the node will have to be paired again. A
+client that has had `OK` to a `WIPE` forgets its Bluetooth bond with
+the node and everything it holds for it: the node it finds next is a
+new one.
+
 **`SEND`** sends `text` to the node at `to`, as a new message. The
 answer, `QUEUED`, means the node has the message and has given it the
 `id` in the answer. It says nothing about the air: that is what the
@@ -917,13 +956,23 @@ A node whose `board` is empty answers `UPDATE_BEGIN` and
 `UPDATE_BOOTLOADER` with `ERROR` 5, as does one that is updated the
 other way.
 
+Whoever publishes a node's firmware signs each image, so that a node or
+a client can tell an image is theirs, not only that it arrived whole
+([Signed images](#signed-images)).
+
 ### Over this protocol
 
 An update is three requests:
 
 **`UPDATE_BEGIN`** says that an image of `size` bytes, whose SHA-256 is
-`digest`, follows. A node MUST refuse a `size` of 0 with `ERROR` 3, and
-one larger than it has room to hold with `ERROR` 5. It answers
+`digest`, follows, and gives its `signature`: 64 bytes, or none if the
+client has none. A node MUST refuse a `size` of 0 with `ERROR` 3, one
+larger than it has room to hold with `ERROR` 5, and then one whose
+`signature` does not [verify](#signed-images) over `digest` with
+`ERROR` 11, unless it has been set to take images that are not signed.
+It checks the signature of every `UPDATE_BEGIN`, one that goes on with
+an update under way included, and a refused one leaves any update under
+way as it was. It answers
 `UPDATING` with the `offset` the client sends from. If an update with
 the same `size` and `digest` is under way, as when a client lost its
 link part of the way through, `offset` is how many bytes of it the
@@ -967,9 +1016,52 @@ that would read its sessions in the firmware it goes back to as they
 were before the update, not as they are, MUST erase them instead. While an update is under way, the node goes on as at any
 other time: it sends news, answers other requests, and is on the air.
 
-Anyone who can drive a node can update it: over Bluetooth, a client
-that has [paired](#bluetooth-le). The digest says only that the image
-arrived as the client sent it, not who made it.
+Anyone who can drive a node can ask it to update: over Bluetooth, a
+client that has [paired](#bluetooth-le). The digest says that the image
+arrived as the client sent it; the signature says who made it. A node
+that checks signatures takes only images its publisher signed, from
+whoever sends them.
+
+### Signed images
+
+A **release key** is an Ed25519 public key (RFC 8032), 32 bytes, of
+whoever publishes a node's firmware. The **signature** of an image is
+the 64-byte Ed25519 signature (RFC 8032, section 5.1.6, not prehashed)
+made with the release key's private key over the 48 bytes
+
+```
+message = "TERN-FIRMWARE-V1" || SHA-256(image)
+```
+
+where the first 16 bytes are those ASCII characters, and the image is
+the file exactly as it is published: for an update over this protocol,
+the bytes a client sends, and for one by the bootloader, the package it
+is given. A signature **verifies** if it is 64 bytes long and RFC 8032's
+verification (section 5.1.7), which refuses an `S` that is not less than
+the group order, succeeds over `message` with one of the release keys
+the verifier holds.
+
+A publisher SHOULD publish each image's signature beside it, as a file
+named as the image with `.sig` after the whole name, holding the 64
+bytes and nothing else, and SHOULD publish its release keys where its
+users can find them.
+
+A node holds its publisher's release keys in its firmware. A node that
+is updated over this protocol MUST check signatures as `UPDATE_BEGIN`
+says. It MAY instead be set to take images that are not signed, for
+whoever develops its firmware, but MUST NOT be settable so by anything a
+client can do over Bluetooth or over this protocol: a node set so takes
+an image from anyone who can pair with it. A node holds a short list of
+keys rather than one, so that a key can be changed: a release that adds
+the new key, then releases signed with it, then one that drops the old.
+A node that holds no release key takes no image over this protocol.
+
+A client SHOULD hold the same release keys, and check an image's
+signature before it sends the image either way. It MUST NOT send an
+image whose signature does not verify, or that has none, unless its
+user asks it to after being told that the image may not be the
+publisher's; a node that checks signatures refuses such an image
+anyway, and one updated by its bootloader does not.
 
 ### By the bootloader
 
@@ -999,13 +1091,24 @@ then answers `HELLO` with the new `release`. A client that sent
 looks for the bootloader, as the node may be restarting into it.
 
 A node's bootloader writes only its firmware: the node keeps everything
-else it holds, as over this protocol. A node SHOULD say its `update` is
-2 only if its bootloader, given an image that breaks off part of the
-way, waits for another over Bluetooth, rather than for one by cable,
-so that a link that drops does not leave it needing a computer. While
-the bootloader waits, it takes an image from anyone in range, not only
-the client that asked: a node goes into it only when a client that may
-drive it asks.
+else it holds, as over this protocol.
+
+**While the bootloader waits, anyone in range can install an image.**
+The bootloader is not this protocol and holds no bonds, so it takes an
+image from whoever connects to it first, not only from the client that
+asked, and a node of this version on an nRF52840 checks no
+[signature](#signed-images) there: its bootloader checks only the
+package's CRC. The window opens only when a client that may drive the
+node asks, and lasts until the bootloader has an image or gives up
+waiting. A bootloader that, given an image that breaks off part of the
+way, waits for another over Bluetooth leaves the node open for as long
+as it waits; one that keeps the firmware it had until a new image is
+whole, and goes back to it when none comes, closes the window sooner,
+at the cost of a cable for a user whose update failed. A node MAY say
+its `update` is 2 with either. A client SHOULD check the package's
+signature before it sends `UPDATE_BOOTLOADER`, SHOULD send the package
+as soon as the bootloader advertises, and SHOULD tell its user that the
+node is open to anyone in range until the update finishes.
 
 ## Byte streams
 
@@ -1076,8 +1179,31 @@ for each pairing, which the user types into the client. A node without
 a screen has the default passkey `123456`, which the user types from
 the node's documentation: it MUST NOT pair with any other passkey until
 one is set. A client that has paired, and keeps
-the bond, may drive the node from then on. A node keeps its bonds until
-the user clears them, on the node itself or over USB.
+the bond, may drive the node from then on: connecting again with a bond
+is not a pairing. A node keeps its bonds until the user clears them, on
+the node itself, over USB, or with `WIPE`.
+
+**Being at the node.** Whoever reads a passkey off the node's screen is
+at the node. A passkey that is not shown, the default `123456` or one
+set with `SET` 4, says nothing of where whoever types it is, so a node
+pairs with such a passkey only in its **pairing window**: the
+`PAIR_WINDOW` seconds after it is started by hand, or after its button
+is pressed, if it has a button. A node is started by hand when it is
+turned on, reset with its reset button or its power, or woken from off
+by its button. A restart the node makes itself, to apply a setting, to
+run an update, after `WIPE` or after a fault, does not open the window,
+so that nothing done over the air or by a client opens it; a node whose
+chip cannot tell one start from another opens it at every start. A node:
+
+* MUST NOT begin a pairing with the default passkey `123456` outside its
+  pairing window;
+* MUST NOT begin a pairing with a passkey set with `SET` 4 outside its
+  pairing window while it holds a bond;
+* MAY begin a pairing with a passkey it shows on its screen at any time.
+
+A client that cannot pair with a node SHOULD tell its user to press the
+node's button, or turn it off and on, and try again within
+`PAIR_WINDOW`.
 
 **Advertising.** A node advertises the service's UUID, so a client can
 find it. It MUST NOT advertise its address, its routing id or anything
@@ -1109,6 +1235,7 @@ advertises a tag SHOULD show it.
 | `GAP` | 500 ms | |
 | `REFS` | 16 | |
 | `QUIET` | 10 s | |
+| `PAIR_WINDOW` | 180 s | how long after a start by hand, or a press of the button, a node pairs with a passkey it does not show |
 | `UPDATE_CHUNK` | 172 bytes | the most `data` an `UPDATE_DATA` carries: a multiple of four that fits a frame, which is then 179 bytes |
 
 ## Conformance
@@ -1160,19 +1287,26 @@ An implementation conforms to this section if, for
   version 6 `JOIN_LINK`; and sends a client of version 7 no `FIX`, and
   refuses it `SET` 7; and refuses a client of version 8 `OFF`; and
   sends a client of version 11 an `INFO` without `update`, and refuses
-  it `UPDATE_BOOTLOADER`;
-* **update:** as a client, given the `image` to send and the node's
-  frames in order, it sends the client's frames of each of the two
-  connections in `update`, in order, going on in the second from the
-  offset the node gives; and as a node that runs any image whose
-  digest is right, given the client's frames in order, it sends the
-  node's, the second connection's after the first's link was lost. The
-  node's frames in `refusals` are those of a node given the client's,
-  on one connection;
+  it `UPDATE_BOOTLOADER`; and refuses a client of version 12 an update,
+  which carries no signature, and `WIPE`;
+* **signatures:** given `release_key` and `digest`, it builds
+  `message`, and takes `signature` as verifying exactly when `verifies`
+  is true. A conforming client and a conforming node both do this;
+* **update:** as a client, given the `image` to send, its
+  `image_signature`, and the node's frames in order, it sends the
+  client's frames of each of the two connections in `update`, in order,
+  going on in the second from the offset the node gives; and as a node
+  that holds `release_key` as its one release key and runs any image
+  whose digest is right, given the client's frames in order, it sends
+  the node's, the second connection's after the first's link was lost.
+  The node's frames in `refusals` are those of a node given the
+  client's, on one connection;
 * **bootloader:** as a node that is updated by its bootloader, and has
   no room for an image itself, given the client's frames of each of
   the connections in `bootloader`, it sends the node's, and restarts
-  into its bootloader after the first connection's last frame.
+  into its bootloader after the first connection's last frame;
+* **wipe:** as a node, given the client's frames in `wipe`, it sends
+  the node's, and erases itself after the last.
 
 What a node holds, and so which news it sends and when, depends on the
 rest of the node, and is checked by running a client against it. The
@@ -1444,7 +1578,8 @@ also kept out every user without a computer, so such a node pairs with
 a default printed in its documentation, as many such devices do, and
 says so in `SELF`'s `pairing`, so the client can ask the user to choose
 another once they have paired. Until they do, anyone in range who knows
-the default can pair with it.
+the default can pair with it while its [pairing window](#bluetooth-le)
+is open, and only then.
 
 **Why nothing derived from the address in advertisements.** The radio
 protocol keeps a node's address out of the clear. A Bluetooth
@@ -1489,6 +1624,80 @@ must not decide from it. An image built for other hardware does not
 start, at best, so a client needs a name it can match to choose one,
 and a node needs a way to say it cannot be updated at all.
 
+**Why images are signed.** Pairing says who may drive a node, and a
+digest that an image arrived whole; neither says who made it. An image
+from a look-alike download page, or one an attacker who paired with the
+default passkey sends, is as whole as any. Firmware is everything a node
+is: whoever installs their own reads every key it holds, and can make it
+anything, a beacon that follows its owner or a jammer. A signature by
+the publisher's key is the one check that ties an image to its
+publisher, and it costs a node only a check it already has the code
+for, since addresses are Ed25519 keys.
+
+**Why over the digest, and with a prefix.** The digest is in
+`UPDATE_BEGIN` already, so a node can check the signature before a byte
+of the image arrives, and refuse in a second what would otherwise take
+four minutes to send, and it needs no second pass over an image it has
+already hashed. Signing the digest rather than the image keeps the
+signature the same wherever the image is checked, a browser, a phone or
+a node, each of which hashes the file anyway. The prefix keeps the key
+from being made to sign anything that reads as an image's message by
+accident, and names the format, so a later one can differ.
+
+**Why the signature is checked at `UPDATE_BEGIN`, and on every one.**
+`UPDATE_END` checks that the bytes are the digest's, and the digest is
+what was signed, so checking the signature at the start loses nothing.
+Checking on every `UPDATE_BEGIN`, a resumed one too, keeps the rule one
+sentence long and asks a node to remember nothing about who began an
+update. A refused one leaves an update under way alone, so that a
+stranger's bad `UPDATE_BEGIN` cannot throw away the owner's progress.
+
+**Why `bytes`, and not a field of 64.** An empty `signature` says
+plainly that the client has none, as a developer with an image of their
+own does, and a node set to take such images reads it so. A field that
+had to be filled would have needed a value that means none.
+
+**Why a list of keys.** A key held only in a release workflow may have
+to be replaced: lost, or exposed. With one key compiled in, the next
+image would have to be signed by the old key to be taken at all. With a
+short list, a release that adds the new key is signed by the old, and
+those after it by the new.
+
+**Why the bootloader is not covered.** A node updated by its
+bootloader never has the image pass through it: the bootloader takes it
+straight from the client, and checks only its CRC. A check in the node
+before it restarts into the bootloader would check nothing that the
+bootloader then takes. Only a bootloader that checks signatures closes
+that, and replacing a bootloader in the field can leave a board that
+only a debugger mends, so this version says what the window is rather
+than pretend it is shut. The signature still lets an honest client
+refuse a tampered package before it starts the update.
+
+**Why a pairing window.** A passkey that everyone knows is no check on
+who pairs: anyone in range who knows `123456` could pair with a node
+without a screen and then drive it, read its messages, and update it.
+A node cannot tell the owner's phone from a stranger's, but it can tell
+when someone has just touched it. So a passkey that is not shown is
+taken only for a few minutes after a start by hand or a press of the
+button, which the owner, setting a node up, does anyway, and a stranger
+across a field cannot. Once a node has a bond, a set passkey is held to
+the same rule, so that a passkey that leaks, or is guessed, does not let
+a stranger add themselves to a node the owner has left on a hill. A
+passkey shown on the screen needs no window: reading it is being there.
+Three minutes is long enough to find an app and type six digits, and a
+start the node makes itself does not count, so that a fault someone can
+cause over the air does not open it.
+
+**Why `WIPE`.** A node that changes hands, or goes off to be mended,
+carries its owner's identity, sessions, groups and messages. Erasing it
+on the node needs a screen to choose the page; erasing it over USB needs
+a computer. The phone already driving the node is the thing the owner
+has. Anyone who can send `WIPE` could already read all of it, so it
+gives nothing new to someone who pairs. It has no field to confirm it:
+over a byte stream a frame has a CRC and a type, and a client is held to
+asking its user first. The airtime is kept because a region's limit
+does not start again because a board was erased.
+
 ## Not yet specified
 
 * **Who is in a group.** A node does not know, and nor does a client:
@@ -1524,8 +1733,13 @@ and a node needs a way to say it cannot be updated at all.
   contact acknowledged it.
 * **Developer frames**: routes, links and counters for whoever is
   debugging the mesh, which the console shows today.
-* **Signed firmware**: an image a node checks was made by whoever
-  publishes its firmware, not only that it arrived whole.
+* **Signatures checked by a bootloader**, so that a node updated by
+  its bootloader takes only signed images too. Until then it takes any,
+  from anyone in range, while its bootloader waits.
+* **Withdrawing a release key** sooner than a release that drops it can
+  reach every node.
+* **Erasing on the node**, for a node without a screen: a gesture of its
+  button that does what `WIPE` does.
 * **Sleeping leaves**: what a client sees of a node that is off the
   air most of the time.
 * **Turning a node off for a while**: an `OFF` that says when the node

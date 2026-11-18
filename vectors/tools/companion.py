@@ -4,10 +4,11 @@
     python3 vectors/tools/companion.py generate   # rewrite vectors/companion.json
     python3 vectors/tools/companion.py check      # fail if the file differs from what this computes
 
-Needs nothing outside the standard library; routing ids come from routing.py, and base32 from
-sharing.py, beside this file.
+Needs the `cryptography` package, for the Ed25519 signatures of signed images; routing ids come
+from routing.py, and base32 from sharing.py, beside this file.
 Before computing anything it checks its CRC against the published check value for CRC-16/IBM-3740,
-its HKDF-Expand against RFC 5869, and its encoder against frames worked by hand.
+its HKDF-Expand against RFC 5869, its Ed25519 against RFC 8032, and its encoder against frames
+worked by hand.
 
 Like everything under vectors/, this file is dedicated to the public domain (CC0-1.0).
 """
@@ -19,13 +20,17 @@ import struct
 import sys
 from pathlib import Path
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import routing  # noqa: E402
 import sharing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 12
+VERSION = 13
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -35,6 +40,7 @@ NAME_MAX, TEXT_MAX, FIRMWARE_MAX, REGION_MAX = 31, 128, 31, 15
 BOARD_MAX, RELEASE_MAX = 31, 31
 LINK_MAX = 102  # the longest join code (draft/groups.md#join-codes)
 UPDATE_CHUNK = 172
+SIGNATURE = 64  # an Ed25519 signature
 
 # Each field is (name, kind, and for a string or bytes its longest). Kinds: u8, i8, u16, i16, u32,
 # i32, addr (32 bytes), gid (a group's id, 8 bytes), digest (a SHA-256, 32 bytes), str (a u8
@@ -65,7 +71,7 @@ FRAMES = {
     0x25: ("JOIN", [("id", U32)]),
     0x26: ("GROUP_LINK", [("group", GID)]),
     0x27: ("JOIN_LINK", [("link", STR, LINK_MAX)]),
-    0x30: ("UPDATE_BEGIN", [("size", U32), ("digest", DIGEST)]),
+    0x30: ("UPDATE_BEGIN", [("size", U32), ("digest", DIGEST), ("signature", RAW, SIGNATURE)]),
     0x31: ("UPDATE_DATA", [("offset", U32), ("data", RAW, UPDATE_CHUNK)]),
     0x32: ("UPDATE_END", []),
     0x33: ("SET_POSITION", [("lat", I32), ("lon", I32), ("altitude", I16), ("accuracy", U16),
@@ -75,6 +81,7 @@ FRAMES = {
     0x35: ("SHARE_GROUP", [("group", GID), ("precision", U8), ("fields", U8), ("interval", U16),
                            ("minutes", U16)]),
     0x36: ("UPDATE_BOOTLOADER", []),
+    0x37: ("WIPE", []),
     # Answers, node to client.
     0x40: ("OK", []),
     0x41: ("ERROR", [("code", U8)]),
@@ -127,7 +134,8 @@ NEWS_NAMES = {name for t, (name, _) in FRAMES.items() if t >= 0x80}
 # Fields a later version added to a frame, and the version that added them. A frame is built and
 # read by the version both ends speak, and has none of the fields a later version added.
 SINCE = {(0x43, "news"): 3, (0x42, "board"): 4, (0x42, "release"): 4, (0x80, "cards"): 6,
-         (0x80, "card_name"): 6, (0x80, "most"): 10, (0x80, "pairing"): 11, (0x42, "update"): 12}
+         (0x80, "card_name"): 6, (0x80, "most"): 10, (0x80, "pairing"): 11, (0x42, "update"): 12,
+         (0x30, "signature"): 13}
 
 # SET 4's value for the node's default passkey, and the default of a node without a screen.
 PASSKEY_DEFAULT = 0xFFFFFFFF
@@ -156,6 +164,7 @@ TYPE_SINCE = {
     0x94: 8,  # the node's own fix
     0x06: 9,  # turning the node off
     0x36: 12,  # updating by the bootloader
+    0x37: 13,  # wiping the node
 }
 
 
@@ -205,6 +214,39 @@ def join_link(secret, name):
     raw = name.encode("utf-8")
     check = hashlib.sha256(b"tern group code" + secret + raw).digest()[:2]
     return "HTTPS://TERNMESH.ORG/G#" + sharing.b32(secret + check + raw)
+
+
+# Signed images (draft/companion.md#signed-images): Ed25519, RFC 8032, over a prefix of 16 ASCII
+# bytes and the image's SHA-256.
+IMAGE_PREFIX = b"TERN-FIRMWARE-V1"
+GROUP_ORDER = 2**252 + 27742317777372353535851937790883648493  # L, RFC 8032 section 5.1
+
+
+def image_message(digest):
+    """What a release key signs for an image whose SHA-256 is digest."""
+    assert len(IMAGE_PREFIX) == 16 and len(digest) == 32
+    return IMAGE_PREFIX + digest
+
+
+def release_key(seed):
+    """The release key, the Ed25519 public key, of a private key's 32-byte seed."""
+    return Ed25519PrivateKey.from_private_bytes(seed).public_key().public_bytes(
+        Encoding.Raw, PublicFormat.Raw)
+
+
+def sign_image(seed, digest):
+    return Ed25519PrivateKey.from_private_bytes(seed).sign(image_message(digest))
+
+
+def verifies(key, digest, signature):
+    """Whether signature verifies over the image whose SHA-256 is digest, with the release key."""
+    if len(signature) != SIGNATURE:
+        return False
+    try:
+        Ed25519PublicKey.from_public_bytes(key).verify(signature, image_message(digest))
+    except InvalidSignature:
+        return False
+    return True
 
 
 def expand(prk, info, length):
@@ -350,6 +392,19 @@ def parse(stream):
 
 def self_check():
     assert crc16(b"123456789") == 0x29B1  # the published check value
+    # RFC 8032, section 7.1, TEST 1: the empty message.
+    seed = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+    assert release_key(seed) == ALICE
+    sig = Ed25519PrivateKey.from_private_bytes(seed).sign(b"")
+    assert sig.hex() == ("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590"
+                         "a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b")
+    # And the library refuses an S that is not less than the group order, as RFC 8032 has it.
+    s_ = int.from_bytes(sig[32:], "little") + GROUP_ORDER
+    try:
+        Ed25519PublicKey.from_public_bytes(ALICE).verify(sig[:32] + s_.to_bytes(32, "little"), b"")
+        raise AssertionError("a signature with S past the group order verified")
+    except InvalidSignature:
+        pass
     # RFC 5869, test case 1, cut to one block.
     assert expand(bytes.fromhex("077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5"),
                   bytes.fromhex("f0f1f2f3f4f5f6f7f8f9"), 32).hex() == (
@@ -405,6 +460,13 @@ MISTYPED = _hut[:23] + ("B" if _hut[23] != "B" else "C") + _hut[24:]
 # its hardware.
 IMAGE = bytes((i * 151 + 7) & 0xFF for i in range(400))
 DIGEST_OF_IMAGE = hashlib.sha256(IMAGE).digest()
+# The release key the vectors' node holds, and its private key's seed. A TEST KEY: its seed is
+# published here, so anyone can sign with it, and no node or client in use may hold it.
+RELEASE_SEED = hashlib.sha256(b"Tern test release key. Published: never trust it.").digest()
+RELEASE_KEY = release_key(RELEASE_SEED)
+IMAGE_SIGNATURE = sign_image(RELEASE_SEED, DIGEST_OF_IMAGE)
+# Another key, which the node does not hold: a signature by it does not verify.
+OTHER_SEED = hashlib.sha256(b"Tern test key the node does not hold.").digest()
 FIRMWARE = dict(firmware="tern 0.2.0 heltec-v3", board="heltec-v3", release="0.2.0",
                 update=UPDATES_LINK)
 # A node whose bootloader takes an update over Bluetooth, and that has no room for one itself.
@@ -433,6 +495,7 @@ def build():
     self_check()
 
     examples = [
+        ("HELLO", 1, {"version": 13}),
         ("HELLO", 1, {"version": 12}),
         ("HELLO", 1, {"version": 11}),
         ("HELLO", 1, {"version": 10}),
@@ -467,7 +530,9 @@ def build():
         ("SEND_GROUP", 20, {"ref": 0xC0FFEE02, "group": HUT, "text": "Anyone at the hut?"}),
         ("SEND_INVITE", 21, {"group": HUT, "to": BOB}),
         ("JOIN", 22, {"id": 22}),
-        ("UPDATE_BEGIN", 23, {"size": len(IMAGE), "digest": DIGEST_OF_IMAGE}),
+        ("UPDATE_BEGIN", 23, {"size": len(IMAGE), "digest": DIGEST_OF_IMAGE,
+                              "signature": IMAGE_SIGNATURE}),
+        ("UPDATE_BEGIN", 23, {"size": len(IMAGE), "digest": DIGEST_OF_IMAGE, "signature": b""}),
         ("UPDATE_DATA", 24, {"offset": 0, "data": IMAGE[:UPDATE_CHUNK]}),
         ("UPDATE_DATA", 25, {"offset": 2 * UPDATE_CHUNK, "data": IMAGE[2 * UPDATE_CHUNK :]}),
         ("UPDATE_END", 26, {}),
@@ -491,6 +556,7 @@ def build():
         ("OFF", 41, {}),
         ("SET", 42, {"setting": 3, "value": POWER_MOST}),
         ("UPDATE_BOOTLOADER", 43, {}),
+        ("WIPE", 44, {}),
         ("OK", 4, {}),
         ("ERROR", 15, {"code": 4}),
         ("INFO", 1, {"version": VERSION, **FIRMWARE}),
@@ -617,7 +683,10 @@ def build():
         encode("GROUP", 16, group=HUT, name="Hut")[:-1],
         encode("INVITE", 22, id=22, contact=BOB, group=RIDGE, time=0, flags=0, state=4, reason=0,
                wait=0, name="Ridge")[:-6],
-        encode("UPDATE_BEGIN", 23, size=1, digest=DIGEST_OF_IMAGE)[:-1],
+        encode("UPDATE_BEGIN", 23, size=1, digest=DIGEST_OF_IMAGE, signature=b"")[:-1],
+        encode("UPDATE_BEGIN", 23, size=1, digest=DIGEST_OF_IMAGE, signature=IMAGE_SIGNATURE)[:-1],
+        encode("UPDATE_BEGIN", 23, size=1, digest=DIGEST_OF_IMAGE, signature=b"")[:-1]
+        + bytes([SIGNATURE + 1]) + IMAGE_SIGNATURE + b"\x00",
         encode("UPDATE_DATA", 24, offset=0, data=IMAGE[:10])[:-1],
         encode("UPDATE_DATA", 24, offset=0, data=b"")[:-1] + bytes([UPDATE_CHUNK + 1])
         + IMAGE[: UPDATE_CHUNK + 1],
@@ -690,6 +759,9 @@ def build():
                 # A request the client must not send, refused: named by the latest version.
                 assert side == "client" and fields in UNKNOWN, fields
                 fields = decode(frame)
+                if isinstance(fields, str):
+                    # One without the fields a later version added to its type.
+                    fields = decode(frame, TYPE_SINCE[frame[0]])
             out.append({"from": side, "type": fields["type"], "seq": fields["seq"],
                         "frame": frame.hex()})
         return out
@@ -892,7 +964,7 @@ def build():
     # Clients of versions 3 and 4, to a node that also holds a position from Bob and shares its
     # own with him: neither is told of either. Each sends a request its version does not define.
     for speak, refused in [
-        (3, encode("UPDATE_BEGIN", 3, size=len(IMAGE), digest=DIGEST_OF_IMAGE)),
+        (3, encode("UPDATE_BEGIN", 3, speak=4, size=len(IMAGE), digest=DIGEST_OF_IMAGE)),
         (4, encode("SHARE", 3, contact=BOB, precision=0, fields=0, interval=0, minutes=0)),
     ]:
         older.append({"version": speak, "frames": connection([
@@ -1039,6 +1111,28 @@ def build():
         ("node", encode("ERROR", 3, code=1)),
     ], 11)})
 
+    # A client of version 12, to the node as the exchange begins: the same sync as the exchange's.
+    # Its UPDATE_BEGIN has no signature, which the node refuses, and its last request is one its
+    # version does not define.
+    older.append({"version": 12, "frames": connection([
+        ("client", encode("HELLO", 1, version=12)),
+        ("node", info(12)),
+        ("client", encode("SYNC", 2, after=0)),
+        ("node", encode("SELF", 0, speak=12, **self_)),
+        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("MESSAGE", 2, flags=0, **where)),
+        ("node", encode("NEIGHBOUR", 3, **neighbour)),
+        ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
+        ("node", encode("AIRTIME", 5, **airtime)),
+        ("node", encode("POWER", 6, **power)),
+        ("node", encode("FIX", 7, receiver=2, **NO_FIX)),
+        ("node", encode("SYNCED", 2, news=8)),
+        ("client", encode("UPDATE_BEGIN", 3, speak=12, size=len(IMAGE), digest=DIGEST_OF_IMAGE)),
+        ("node", encode("ERROR", 3, code=11)),
+        ("client", encode("WIPE", 4)),
+        ("node", encode("ERROR", 4, code=1)),
+    ], 12)})
+
     # Frames a later version defines, as a receiver of an earlier version reads them: a type it
     # does not know. A node answers such a request with ERROR 1; a client ignores such news.
     unknown_to_older = []
@@ -1047,7 +1141,8 @@ def build():
         ("ASKED", 0, {"address": CAROL, "why": 1}),
         ("MAKE_GROUP", 1, {"name": "Hut"}),
         ("GROUP", 1, {"group": HUT, "name": "Hut"}),
-        ("UPDATE_BEGIN", 3, {"size": len(IMAGE), "digest": DIGEST_OF_IMAGE}),
+        ("UPDATE_BEGIN", 3, {"size": len(IMAGE), "digest": DIGEST_OF_IMAGE,
+                             "signature": IMAGE_SIGNATURE}),
         ("UPDATE_END", 3, {}),
         ("UPDATING", 3, {"offset": 0}),
         ("SHARE", 4, {"contact": BOB, "precision": 20, "fields": 0, "interval": 900,
@@ -1068,6 +1163,7 @@ def build():
         ("FIX", 7, {"receiver": 3, **RECEIVED}),
         ("OFF", 8, {}),
         ("UPDATE_BOOTLOADER", 11, {}),
+        ("WIPE", 12, {}),
     ]:
         frame = encode(name, 5, **values)
         assert isinstance(decode(frame), dict)
@@ -1097,7 +1193,8 @@ def build():
     def data(seq, at, n=chunk, image=IMAGE):
         return encode("UPDATE_DATA", seq, offset=at, data=image[at : at + n])
 
-    begin = encode("UPDATE_BEGIN", 4, size=size, digest=DIGEST_OF_IMAGE)
+    begin = encode("UPDATE_BEGIN", 4, size=size, digest=DIGEST_OF_IMAGE,
+                   signature=IMAGE_SIGNATURE)
     update = [
         connection(start() + [
             ("client", begin),
@@ -1116,7 +1213,22 @@ def build():
             ("node", encode("OK", 6)),
         ]),
     ]
+    # An image of the same size whose digest is not its own, signed: the signature is right for
+    # the digest given, and the bytes are not that digest's.
     wrong = hashlib.sha256(b"").digest()
+    signed_wrong = sign_image(RELEASE_SEED, wrong)
+    s_past = int.from_bytes(IMAGE_SIGNATURE[32:], "little") + GROUP_ORDER
+    past_order = IMAGE_SIGNATURE[:32] + s_past.to_bytes(32, "little")
+    by_other = sign_image(OTHER_SEED, DIGEST_OF_IMAGE)
+    assert verifies(RELEASE_KEY, DIGEST_OF_IMAGE, IMAGE_SIGNATURE)
+    assert verifies(RELEASE_KEY, wrong, signed_wrong)
+    for refused in (b"", by_other, IMAGE_SIGNATURE[:63], past_order):
+        assert not verifies(RELEASE_KEY, DIGEST_OF_IMAGE, refused)
+    assert not verifies(RELEASE_KEY, wrong, IMAGE_SIGNATURE)
+
+    def begin_with(seq, digest, signature, n=size):
+        return encode("UPDATE_BEGIN", seq, size=n, digest=digest, signature=signature)
+
     refusals = connection([
         ("client", encode("HELLO", 1, version=VERSION)),
         ("node", info()),
@@ -1124,32 +1236,72 @@ def build():
         ("node", encode("ERROR", 2, code=10)),
         ("client", encode("UPDATE_END", 3)),
         ("node", encode("ERROR", 3, code=10)),
-        ("client", encode("UPDATE_BEGIN", 4, size=0, digest=DIGEST_OF_IMAGE)),
+        ("client", begin_with(4, DIGEST_OF_IMAGE, IMAGE_SIGNATURE, n=0)),
         ("node", encode("ERROR", 4, code=3)),
-        ("client", encode("UPDATE_BEGIN", 5, size=size, digest=wrong)),
-        ("node", encode("UPDATING", 5, offset=0)),
-        ("client", data(6, 0)),
-        ("node", encode("OK", 6)),
-        ("client", data(7, 0)),
-        ("node", encode("OK", 7)),
-        ("client", data(8, 300)),
-        ("node", encode("ERROR", 8, code=10)),
-        ("client", data(9, chunk)),
-        ("node", encode("OK", 9)),
-        ("client", encode("UPDATE_DATA", 10, offset=2 * chunk, data=bytes(chunk))),
-        ("node", encode("ERROR", 10, code=3)),
-        ("client", encode("UPDATE_DATA", 11, offset=2 * chunk, data=b"")),
-        ("node", encode("ERROR", 11, code=3)),
-        ("client", encode("UPDATE_END", 12)),
-        ("node", encode("ERROR", 12, code=10)),
-        ("client", data(13, 2 * chunk)),
-        ("node", encode("OK", 13)),
-        ("client", encode("UPDATE_END", 14)),
-        ("node", encode("ERROR", 14, code=11)),
-        ("client", encode("UPDATE_END", 15)),
-        ("node", encode("ERROR", 15, code=10)),
-        ("client", encode("UPDATE_BOOTLOADER", 16)),
-        ("node", encode("ERROR", 16, code=5)),
+        # Signatures that do not verify: none, another key's, one byte short, S past the group
+        # order, and the image's own given with another digest.
+        ("client", begin_with(5, DIGEST_OF_IMAGE, b"")),
+        ("node", encode("ERROR", 5, code=11)),
+        ("client", begin_with(6, DIGEST_OF_IMAGE, by_other)),
+        ("node", encode("ERROR", 6, code=11)),
+        ("client", begin_with(7, DIGEST_OF_IMAGE, IMAGE_SIGNATURE[:63])),
+        ("node", encode("ERROR", 7, code=11)),
+        ("client", begin_with(8, DIGEST_OF_IMAGE, past_order)),
+        ("node", encode("ERROR", 8, code=11)),
+        ("client", begin_with(9, wrong, IMAGE_SIGNATURE)),
+        ("node", encode("ERROR", 9, code=11)),
+        ("client", begin_with(10, wrong, signed_wrong)),
+        ("node", encode("UPDATING", 10, offset=0)),
+        ("client", data(11, 0)),
+        ("node", encode("OK", 11)),
+        ("client", data(12, 0)),
+        ("node", encode("OK", 12)),
+        ("client", data(13, 300)),
+        ("node", encode("ERROR", 13, code=10)),
+        ("client", data(14, chunk)),
+        ("node", encode("OK", 14)),
+        # Refused, it leaves the update under way as it was: the next goes on from it.
+        ("client", begin_with(15, wrong, b"")),
+        ("node", encode("ERROR", 15, code=11)),
+        ("client", begin_with(16, wrong, signed_wrong)),
+        ("node", encode("UPDATING", 16, offset=2 * chunk)),
+        ("client", encode("UPDATE_DATA", 17, offset=2 * chunk, data=bytes(chunk))),
+        ("node", encode("ERROR", 17, code=3)),
+        ("client", encode("UPDATE_DATA", 18, offset=2 * chunk, data=b"")),
+        ("node", encode("ERROR", 18, code=3)),
+        ("client", encode("UPDATE_END", 19)),
+        ("node", encode("ERROR", 19, code=10)),
+        ("client", data(20, 2 * chunk)),
+        ("node", encode("OK", 20)),
+        ("client", encode("UPDATE_END", 21)),
+        ("node", encode("ERROR", 21, code=11)),
+        ("client", encode("UPDATE_END", 22)),
+        ("node", encode("ERROR", 22, code=10)),
+        ("client", encode("UPDATE_BOOTLOADER", 23)),
+        ("node", encode("ERROR", 23, code=5)),
+    ])
+
+    # Signatures, as a node or a client checks them, with the release key the vectors' node holds.
+    signatures = []
+    for why, digest, signature in [
+        ("the image's own", DIGEST_OF_IMAGE, IMAGE_SIGNATURE),
+        ("another image's, signed", wrong, signed_wrong),
+        ("the image's own, given with another digest", wrong, IMAGE_SIGNATURE),
+        ("by a key the node does not hold", DIGEST_OF_IMAGE, by_other),
+        ("S past the group order", DIGEST_OF_IMAGE, past_order),
+        ("one byte short", DIGEST_OF_IMAGE, IMAGE_SIGNATURE[:63]),
+        ("none", DIGEST_OF_IMAGE, b""),
+    ]:
+        signatures.append({"why": why, "release_key": RELEASE_KEY.hex(), "digest": digest.hex(),
+                           "message": image_message(digest).hex(), "signature": signature.hex(),
+                           "verifies": verifies(RELEASE_KEY, digest, signature)})
+
+    # A node told to wipe itself: it answers, and then erases everything and restarts.
+    wipe = connection([
+        ("client", encode("HELLO", 1, version=VERSION)),
+        ("node", info()),
+        ("client", encode("WIPE", 2)),
+        ("node", encode("OK", 2)),
     ])
 
     # A node whose bootloader takes its updates, and that has no room for an image itself: as a
@@ -1167,7 +1319,7 @@ def build():
             ("client", encode("HELLO", 1, version=11)),
             ("node", encode("INFO", 1, speak=11, version=VERSION,
                             **{**BOOTLOADER_FIRMWARE, "board": ""})),
-            ("client", begin),
+            ("client", encode("UPDATE_BEGIN", 4, speak=11, size=size, digest=DIGEST_OF_IMAGE)),
             ("node", encode("ERROR", 4, code=5)),
         ], 11),
     ]
@@ -1176,7 +1328,7 @@ def build():
                  for g in (MADE_SECRET, INVITED_SECRET, bytes(16), bytes([0xFF] * 16))]
 
     return {
-        "description": "The companion protocol, version 12 (draft/companion.md). Frames, streams, "
+        "description": "The companion protocol, version 13 (draft/companion.md). Frames, streams, "
         "addresses and group ids are hex; numbers are numbers; strings are text. In frames, "
         "frame is the frame alone, as one BLE write or notification carries it, and stream is "
         "the same frame as it goes on a byte stream. In extended, frame carries bytes past the "
@@ -1226,20 +1378,30 @@ def build():
         "which its version does not take as the most and no radio sends at. To the client of "
         "version 10 it holds what the exchange begins with, and sends a SELF without pairing. To "
         "the client of version 11 it holds what the exchange begins with, sends an INFO without "
-        "update, and the client's last request is one its version does not define. "
+        "update, and the client's last request is one its version does not define. To the "
+        "client of version 12 it holds what the exchange begins with, refuses its UPDATE_BEGIN, "
+        "which has no signature, and the client's last request is one its version does not "
+        "define. "
         "Positions are in units of "
         "10^-7 degree. Each connection's frames are read by the "
         "version its client speaks, and each client of an earlier version is sent an INFO "
-        "without board and release. Update is one update of image, whose SHA-256 is "
-        "image_digest, over two connections to a node that holds only itself, and has no "
-        "satellite receiver: the link is lost "
+        "without board and release. Release_key is a release key (draft/companion.md, Signed "
+        "images), and release_seed the seed of its private key: a TEST KEY, published so that "
+        "anyone can check a signer, which no node or client in use may hold. Image_signature is "
+        "its signature of image. In signatures, message is what a release key signs for the "
+        "image whose SHA-256 is digest, and verifies is whether signature verifies over it with "
+        "release_key. Update is one update of image, whose SHA-256 is "
+        "image_digest, over two connections to a node that holds only itself, holds release_key "
+        "as its one release key, and has no satellite receiver: the link is lost "
         "after the first connection's last frame, and the node keeps what it was sent. "
-        "Refusals is one connection to a node with no update under way, given an image of the "
-        "same size whose digest is not its own, and that updates over this protocol, not by "
-        "its bootloader. Bootloader is two connections to a node whose bootloader takes its "
+        "Refusals is one connection to the same node with no update under way, given UPDATE_BEGINs "
+        "whose signatures do not verify, and then an image of the "
+        "same size whose digest is not its own, signed, and that updates over this protocol, not "
+        "by its bootloader. Bootloader is two connections to a node whose bootloader takes its "
         "updates over Bluetooth, which has no room for an image itself: one by a client of this "
         "version, after whose last frame the node restarts into its bootloader, and one by a "
-        "client of version 11, which is sent an INFO with no board. The four addresses are the public keys of RFC "
+        "client of version 11, which is sent an INFO with no board. Wipe is one connection to the "
+        "node of update, which answers WIPE and then erases itself and restarts. The four addresses are the public keys of RFC "
         "8032's first four Ed25519 test vectors (section 7.1: TEST 1, 2, 3 and 1024).",
         "generator": "vectors/tools/companion.py",
         "crc_check": {"input": b"123456789".hex(), "crc": crc16(b"123456789")},
@@ -1255,9 +1417,14 @@ def build():
         "unknown_to_older": unknown_to_older,
         "image": IMAGE.hex(),
         "image_digest": DIGEST_OF_IMAGE.hex(),
+        "release_key": RELEASE_KEY.hex(),
+        "release_seed": RELEASE_SEED.hex(),
+        "image_signature": IMAGE_SIGNATURE.hex(),
+        "signatures": signatures,
         "update": update,
         "refusals": refusals,
         "bootloader": bootloader,
+        "wipe": wipe,
     }
 
 
