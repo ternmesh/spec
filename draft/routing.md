@@ -42,8 +42,9 @@ produced by [`vectors/tools/routing.py`](../vectors/tools/routing.py).
 
 As in [unicast-security.md](unicast-security.md#notation). Every number
 on the air is big-endian. In frame layouts, `u8`, `u16` and `u32` are
-unsigned and `i8` is a signed byte. `Sign` and `Verify` are Ed25519 as
-[Presence cards](cards.md#notation) has them, under the node's
+unsigned and `i8` is a signed byte. `Verify` is Ed25519 as
+[Presence cards](cards.md#notation) has it, and `SignB` is signing
+with the node's [routing key](#routing-ids), made from its
 [identity key](first-contact.md#addresses).
 
 Sequence numbers are 16 bits and wrap. `a` is **newer** than `b` if
@@ -57,17 +58,62 @@ The values this section names in `CAPITALS` are in
 
 ## Routing ids
 
-Routing knows a node by a four-byte **routing id**, not by its
-[address](first-contact.md#addresses) `A`:
+Routing knows a node by a four-byte **routing id**. It is made from the
+node's **routing key** `B`, a key blinded from its
+[address](first-contact.md#addresses) `A` as Tor's v3 onion services
+blind theirs, and not from the address itself, so that nothing routing
+puts on the air gives the address away:
 
 ```
-H       = SHA-256("tern routing id" || A)
+h       = SHA-512("tern v0 blind" || A || u32be(e)), as a little-endian number, mod L
+B       = [h] A                                   the routing key, 32 bytes
+H       = SHA-256("tern routing id" || B)
 rid(A)  = the first of H[0..4], H[4..8], ... H[28..32], as a u32,
           that is neither 0x00000000 nor 0xFFFFFFFF
 ```
 
+`[h] A` is the Ed25519 group's scalar multiplication, and `B` is
+encoded as RFC 8032, section 5.1.2, encodes a point. `L` is the order
+in [Addresses](first-contact.md#addresses). `e` is the **epoch**, and
+is 0: a node's routing id does not change (see [Not yet
+specified](#not-yet-specified)). A node derives a routing id only from
+a valid address, and MUST NOT derive one from any other: one of small
+order, or with a part of small order, has none.
+
 `0xFFFFFFFF` means every neighbour. `0x00000000` is never used. (That
 all eight are reserved has probability 2^-248.)
+
+A node signs its [announces](#announces) with the secret behind `B`.
+With `s` and `prefix` the secret scalar and the prefix Ed25519 makes
+from the node's seed `sk` (RFC 8032, section 5.1.5: `s` from the first
+half of `SHA-512(sk)`, clamped, and `prefix` the second half):
+
+```
+b       = h * s  mod L                                        the blinded secret scalar
+p       = SHA-512("tern v0 blind prefix" || prefix || u32be(e))[0..32]
+SignB(M) = R || S, where
+          r = SHA-512(p || M), as a little-endian number, mod L
+          R = [r] G,  k = SHA-512(R || B || M) mod L,  S = (r + k * b) mod L
+```
+
+`G` is the base point. That is RFC 8032's signing, section 5.1.6,
+steps 2 to 6, with `b` for `s`, `p` for `prefix` and `B` for `A`, so
+`[b] G = [h * s] G = [h] A = B`, and the signature checks as any
+Ed25519 signature does: `Verify(B, M, sig)`. A node computes `b` and
+`p` from its seed, and keeps no other secret. `s`, `b` and `r` are
+secret, and are handled as any Ed25519 signing handles its own: in
+constant time.
+
+`B` is valid as an address is valid (`[L] B = [h][L] A`, the neutral
+element) whenever `A` is and `h` is not 0, which has probability
+2^-252. `B` is not an address. No seed makes it, so
+[first contact](first-contact.md) made to it would reach no one.
+
+Anyone who knows `A` can compute `B` and the routing id, with one
+scalar multiplication, and so route to the node and check that the
+announces for its routing id are its own. Anyone who does not know
+`A` cannot recover it from `B`. Only the holder of `sk` can sign as
+`B`, as only it could sign as `A`.
 
 ## Roles
 
@@ -90,13 +136,13 @@ A node's one periodic frame:
 | 1 | 4 | `sender` | the sender's routing id |
 | 5 | 2 | `number` | counts the sender's announces |
 | 7 | 2 | `seq` | the sequence number of the sender's route to itself |
-| 9 | 1 | `flags` | bit 0: the sender is a relay. Bit 1: it is [starting](#starting). Bit 2: the address follows. The rest are 0 |
+| 9 | 1 | `flags` | bit 0: the sender is a relay. Bit 1: it is [starting](#starting). Bit 2: the key follows. The rest are 0 |
 | 10 | 2 | `promise` | the longest the sender may go before its next |
 | 12 | 2 | `round` | announces it takes the sender to name every neighbour |
 | 14 | 1 | `power` | what this frame was sent at, `i8` dBm, rounded up |
 | 15 | 1 | `h` | how many neighbours follow |
 | 16 | 1 | `r` | how many routes follow |
-| 17 | 32`a` | `address` | the sender's [address](first-contact.md#addresses), if bit 2 of `flags` is set |
+| 17 | 32`a` | `key` | the sender's [routing key](#routing-ids) `B`, if bit 2 of `flags` is set |
 | 17 + 32`a` | 5`h` | neighbours | each `id` `u32`, `margin` `u8` |
 | 17 + 32`a` + 5`h` | 8`r` | routes | each `destination` `u32`, `seq` `u16`, `metric` `u16` |
 | then | 64 | `sig` | |
@@ -110,47 +156,52 @@ set.
 
 ```
 M    = "tern v0 announce" || the frame up to sig
-sig  = Sign(sk, M)
+sig  = SignB(M)
 ```
 
 ### Signed
 
-An announce is signed by its sender, and a node takes nothing from one
-it cannot check. For each neighbour a node keeps that neighbour's
-address, once it has one, and forgets it with the neighbour. On
+An announce is signed by its sender's routing key, and a node takes
+nothing from one it cannot check. For each neighbour a node keeps that
+neighbour's key, once it has one, and forgets it with the neighbour. On
 hearing an announce, after the checks above, a node:
 
-1. if the announce carries an address, MUST discard it unless the
-   address is [valid](first-contact.md#addresses), `rid` of it is
-   `sender`, and it is the address the node holds for `sender`, if it
-   holds one. This comes before the signature, as for a
-   [card](cards.md#receiving);
-2. MUST discard it if it carries no address and the node holds none for
+1. if the announce carries a key, MUST discard it unless the key is
+   [valid](first-contact.md#addresses) as an address is, the routing
+   id it makes (`H` and the first of its words, as in [Routing
+   ids](#routing-ids), with this key for `B`) is `sender`, and it is
+   the key the node holds for `sender`, if it holds one. This comes
+   before the signature, as for a [card](cards.md#receiving);
+2. MUST discard it if it carries no key and the node holds none for
    `sender`: there is nothing to check it with;
-3. MUST discard it unless `Verify(address, M, sig)` passes, with the
-   address carried or held;
+3. MUST discard it unless `Verify(key, M, sig)` passes, with the key
+   carried or held;
 4. takes the announce as the rest of this section says, and holds the
-   address with `sender`'s entry only if that leaves it a neighbour.
+   key with `sender`'s entry only if that leaves it a neighbour.
    An announce discarded or not taken later, out of order or with no
-   room for its sender, adds no address and takes none away: one held
+   room for its sender, adds no key and takes none away: one held
    before stays held.
+
+A receiver needs no address for any of this, and learns none: the key
+is all it checks with.
 
 A frame discarded here is not heard at all: it is no sample for a
 floor, no sign of life, and no inconsistency.
 
-**Carrying the address.** A node MUST carry its address in every
-announce while it is [starting](#starting); in each of the
-`ADDRESS_AFTER` announces after it finds a neighbour, which may not
-hold it; and in at least one of every `ADDRESS_EVERY` announces, for a
-neighbour that missed those. It MAY carry it in any other. It is 32
-bytes a frame, so a node that carries it when no neighbour needs it
-spends airtime on nothing.
+**Carrying the key.** A node MUST carry its key in every announce
+while it is [starting](#starting); in each of the `ADDRESS_AFTER`
+announces after it finds a neighbour, which may not hold it; and in at
+least one of every `ADDRESS_EVERY` announces, for a neighbour that
+missed those. It MAY carry it in any other. It is 32 bytes a frame, so
+a node that carries it when no neighbour needs it spends airtime on
+nothing. A node MUST NOT put its address in an announce: the key takes
+its place.
 
 Requests are not signed: see [Not yet specified](#not-yet-specified).
 
 **`number`** goes up by one with each announce sent, across restarts
 too: a node MUST NOT send an announce whose `number` is not newer than
-that of the last announce it sent with its address, before a restart
+that of the last announce it sent with its key, before a restart
 or since. So it keeps a number `kept` where a restart does not lose it.
 It never sends an announce numbered `kept` or newer: before it would,
 it stores a later one in its place, `NUMBER_SAVE` later once an
@@ -583,7 +634,7 @@ the leaf asks again at the next `SOLICIT_GAP`. Then:
    asked is among those that went out of use, and it has an anchor now
    among the relays it may still use, it **re-attaches** to it: it
    raises its `seq` by one, and its next announce comes within the shortest
-   interval, at full power, carrying its address, and is not suppressed.
+   interval, at full power, carrying its key, and is not suppressed.
    It does not re-attach to the anchor it last re-attached to; and
    having asked after none and never re-attached, it takes its anchor
    as the one it last re-attached to without raising its `seq`, since
@@ -708,7 +759,7 @@ routing's frames.
 | `LEAF_PLACES` | 32 | the fewest a leaf may keep |
 | `DEFAULT_HOPS` | 6 | a default route's metric, in links |
 | `DEFAULT_BUSY` | 50% | of a leaf's time, past which it takes no default route |
-| `ADDRESS_AFTER` | 3 | announces that carry the address after a neighbour is found |
+| `ADDRESS_AFTER` | 3 | announces that carry the key after a neighbour is found |
 | `ADDRESS_EVERY` | 8 | announces of which at least one carries it |
 | `NUMBER_SAVE` | 256 | announce numbers a node stores ahead |
 | `FORGOTTEN_KEPT` | 64 | forgotten neighbours whose numbers a node keeps |
@@ -726,18 +777,22 @@ routing's frames.
 An implementation conforms to this section if, for
 [`vectors/routing.json`](../vectors/routing.json):
 
-* **ids:** given `address`, it derives `id`;
+* **ids:** given `address`, it derives `blind` (`h`), `key` and `id`;
+  given `seed`, it derives `blinded_scalar` (`b`) and
+  `blinded_prefix` (`p`) as well, and the same `key`;
+* **no ids:** it derives no routing id from each `address` of
+  `no_ids`;
 * **newer:** it finds `a` newer than `b`, or not, as `newer` says;
 * **promises:** it encodes `seconds` as `code`, and reads `code` as
   `read_seconds` (`null` for no promise);
 * **announces** and **requests:** it builds `frame` from the fields
-  given, an announce signed with `seed`, and reads the fields from
-  `frame`;
+  given, an announce signed by the routing key of `seed`'s address and
+  carrying `key` if `carries_key`, and reads the fields from `frame`;
 * **rejected:** it discards each `frame`, whether or not it holds the
-  sender's address;
-* **verified:** holding `held_address` for the sender of the announce
+  sender's key;
+* **verified:** holding `held_key` for the sender of the announce
   given (`null` for none), it takes the announce or discards it as
-  `takes` says, and then holds `holds_address`;
+  `takes` says, and then holds `holds_key`;
 * **floors:** hearing announces at each `power` and `snr_quarter_db` in
   turn, at `spreading_factor`, it holds each `floor_sixteenths`, and
   with `full_power` names the neighbour with each `margin`;
@@ -890,13 +945,13 @@ means nothing by itself: it may be suppressed. The promise says how
 long silence is still ordinary.
 
 **Four-byte routing ids.** A route costs eight bytes in an announce,
-and a signed frame holds 21. With the 32-byte address it would hold
-four. A hash of the address rather than its first bytes, so that a
-route names a destination without giving its address away. A node's
-own address does go on the air, to its neighbours: see
-[Signed](#signed) and [What an
-observer learns](#what-an-observer-learns). Two nodes in four billion
-pairs share an id; see below.
+and a signed frame holds 21. With the 32-byte key it would hold
+four. A hash of the key rather than its first bytes, so that a route
+is as short as it can be and an id is spread evenly. A node's key goes
+on the air to its neighbours, and its address does not: see [A
+blinded key, not the address](#rationale) and [What an observer
+learns](#what-an-observer-learns). Two nodes in four billion pairs
+share an id; see below.
 
 **Big-endian**, as the rest of the specification is. The simulator's
 frames are little-endian.
@@ -1083,8 +1138,8 @@ an announce in another node's name: list routes it does not have, claim
 to be a destination and draw its frames, say a neighbour is
 [starting](#starting) so that every route through it is dropped, or
 name a node with a margin it never gave. With a signature, only the
-holder of an address can say anything as the routing id made from it,
-and a node takes no announce it cannot check. Meshtastic signs none of
+holder of a routing key can say anything as the routing id made from
+it, and a node takes no announce it cannot check. Meshtastic signs none of
 its routing; MeshCore signs its adverts with Ed25519 and carries the
 public key in each.
 
@@ -1116,13 +1171,14 @@ and request:
 | signed, as here | 90.1% | 80.4% | 14.6% | 32.3% |
 
 The last row is the firmware's router, signing as this section says,
-with the address carried by `ADDRESS_AFTER` and `ADDRESS_EVERY`. At
+with the address, now the key, carried by `ADDRESS_AFTER` and
+`ADDRESS_EVERY`. At
 SF7 the difference between seeds is as large as the cost of a
 signature. At SF8 on 62.5 kHz, where the channel is full, signing costs
 two fifths of the unicasts delivered, and the broadcasts gain the
 airtime routes lose; there a full table of neighbours changes often,
-and each neighbour found costs `ADDRESS_AFTER` addresses. Carrying the
-address in every frame (96) cost more than that at SF7. Carrying it
+and each neighbour found costs `ADDRESS_AFTER` keys. Carrying the
+key in every frame (96) cost more than that at SF7. Carrying it
 while any neighbour gave no margin carried it almost always, since in a
 crowd most nodes a node hears do not hear it back: 87.1% and 13.1% of
 unicasts.
@@ -1185,25 +1241,68 @@ rest of the time the slowest setting needs is the cap's own, which the
 [airtime budget](airtime.md#the-parts) keeps as it is, as its routing
 part.
 
-How often the address goes, swept with signed announces: carrying it
+How often the key goes, swept with signed announces: carrying it
 in almost no announce after a neighbour is found (`ADDRESS_EVERY` 255)
 saved nothing once settled at SF7, 856 s against 759 s on the same two
 seeds, and held fewer routes, 96.6% against 97.3%. `ADDRESS_AFTER` and
 `ADDRESS_EVERY` stay as they are.
 
-**Your address to your neighbours.** A signature is checked with the
-signer's public key, and a Tern node's public key is its address. So a
-node's neighbours, and anyone listening near it, learn its address,
-which is what [first contact](first-contact.md) needs to reach it, and
-which a node that has not turned [cards](cards.md) on otherwise keeps
-to itself. A key of its own for routing would keep the address back,
-but nothing would tie that key to the routing id, and a node could
-then claim the id of any destination its neighbours had not heard
-from. That a routing id is tied to the one address that makes it is
-what lets a node trust a route to a destination it knows only by its
-address, so the address is given up.
+**A blinded key, not the address.** A signature is checked with the
+signer's public key. Were that key the address, as it once was, every
+announce that carried it would tell anyone listening which address
+each routing id is, and a node that never turned [cards](cards.md) on
+would have given its address to everyone in earshot of it. A key of
+the node's own for routing, unrelated to its address, would keep the
+address back, but then a node that knew only an address could not
+find its routing id, and [first contact](first-contact.md) to an
+address would need the id handed over some other way. The blinded key
+is both: only the holder of the identity key can sign as it, so only
+that node can speak for its routing id, as before; anyone who knows
+the address computes the key and the id, and can route to it; and no
+one else can get the address from what is on the air. It costs
+nothing on the air, since the key takes the address's 32 bytes, and
+the routing id is as stable as it was.
 
-**What a signature does not stop.** A node with an address of its own
+The construction is the one Tor's v3 onion services use (the Tor
+Project's rend-spec-v3, appendix A.2, "Key blinding"), whose security
+for Ed25519 is argued by Hopper ("Proving Security of Tor's Hidden
+Service Identity Blinding Protocol", 2013) and which the IRTF's
+draft-irtf-cfrg-signature-key-blinding generalises. Telling whether a
+given `B` is the key of a given `A`, without the computation that
+anyone holding `A` can do, is as hard as the decisional Diffie-Hellman
+problem in the group. Tern's differs in its hash only: the blinding
+factor is SHA-512 reduced mod `L`, as Ed25519 makes its own scalars,
+where Tor clamps a SHA3-256; so an implementation needs nothing it did
+not already have for Ed25519. The label keeps `h` apart from every
+other hash of an address in the specification.
+
+The prefix is blinded too. A signature's `r` comes from the prefix and
+the message, and `h` is public: were one message ever signed with the
+same `r` by both `s` and `b = h * s`, the two `S` would give `s` to
+anyone holding both. Announces and every other signature are over
+different labels, so that never happens; the prefix's own label makes
+it hold whatever else is ever signed, as Tor's derived prefix does.
+
+`e` is in the formulas, and is 0, so that routing ids that change, if
+they are ever turned on, change nothing else here.
+
+The alternatives considered, besides a key unrelated to the address
+above ([analysis/metadata-privacy.md](../analysis/metadata-privacy.md#options)):
+
+* **The address sent encrypted** to neighbours that already know the
+  node. A neighbour new to it, which most are, could check nothing.
+* **A tag for each neighbour** in place of a signature, as rejected
+  under [Signed announces](#rationale) above: more bytes once a node
+  has more than eight neighbours, and a key to agree with each.
+* **A key shared with each neighbour**, one tag an announce: any
+  neighbour holding it could forge the node's announces to the others.
+
+What it costs: one variable-base scalar multiplication for each
+address a node routes to, once, which a node may keep with the
+address; for its own key, one at start. A node's `b` and `p` take two
+hashes and a product mod `L` whenever it signs, or 64 bytes kept.
+
+**What a signature does not stop.** A node with a key of its own
 can still announce routes it does not have, at metrics it does not
 have, and draw frames to drop them. [Forwarding](forwarding.md#hops)
 already listens for each frame to be passed on, gives up neighbours
@@ -1240,13 +1339,15 @@ Announces are sent in clear. From them a listener learns:
 * each nearby node's routing id, role, the power it sent at, and the
   neighbours it names, so the shape of the network around it;
 * the routes relays list: which destinations they reach and how far;
-* the address of each node that carries it, so which addresses are
-  near it, and which routing id each has. Anyone who already knew an
-  address could find its routing id before; now anyone near can learn
-  the address from the id.
+* each nearby node's routing key, which does not give its address
+  away. Only someone who already knows an address, a contact or anyone
+  it was [shared](sharing.md) with or who heard its
+  [card](cards.md), can tell which key and routing id are that
+  address's, by computing them.
 
 A routing id does not change, so a node can be followed by its
-announces, as before: see [Not yet specified](#not-yet-specified).
+announces, under a name that is not its address: see [Not yet
+specified](#not-yet-specified).
 
 ## Not yet measured
 
@@ -1272,7 +1373,7 @@ announces, as before: see [Not yet specified](#not-yet-specified).
 * **Closing the wait.** A starting node that knew which neighbours had
   heard it could select through those at once, and would never select
   through one that had not.
-* **Nodes that lie.** A node with an address of its own can announce
+* **Nodes that lie.** A node with a key of its own can announce
   routes it does not have, or a destination's `seq` one newer than the
   destination gave, and starve every node that takes it until the
   destination is asked. A destination could sign each `seq` it takes,
@@ -1282,13 +1383,14 @@ announces, as before: see [Not yet specified](#not-yet-specified).
 * **Signed requests.** A request names no sender, and anyone may send
   one. The most it can do is make a node take a newer `seq`, or send a
   request on, within the requests' share of [the cap](#the-cap).
-* **Two nodes with one routing id.** A node holds the address of the
+* **Two nodes with one routing id.** A node holds the key of the
   first it hears and discards the other's announces, so the second has
   no neighbour that holds the first; elsewhere either may be taken.
   This need not be an accident. A routing id is four bytes, so making
   keys until one has a chosen node's id takes about 2^32 tries, a day
-  or so on one desktop processor. A node that holds the real address
-  discards the copy, but one that does not yet hold it may take the
+  or so on one desktop processor; nothing requires a key to be blinded
+  from any address, so the keys need not be. A node that holds the real
+  key discards the copy, but one that does not yet hold it may take the
   copy's routes in the real node's name. The copy can then stop frames
   reaching that node; it cannot read or forge them, which their own
   encryption and signatures prevent. Eight-byte ids would put this out
@@ -1300,8 +1402,16 @@ announces, as before: see [Not yet specified](#not-yet-specified).
   close nothing, as routes and frames still name the node by its four
   bytes. Nor would eight-byte ids stop the same harm while a node may
   lie about its routes, above, which needs no chosen id.
-* **Rotating routing ids**, so that a node cannot be followed by its
-  announces.
+* **Routing ids that change**, so that a node cannot be followed by
+  its announces: `e` taken from the time, a week to an epoch, so that
+  every node's routing id changes at once, with the old one retired.
+  [analysis/metadata-privacy.md](../analysis/metadata-privacy.md#part-2-routing-ids-that-change)
+  measured it on the firmware's routing code: with the boards' 1024
+  places, changing every id at once left unicast at 3 to 10% for at
+  least five hours, since a relay needs a place for each old name and
+  each new one until the old is forgotten. It waits for a retired id to
+  free its place everywhere at once, or for relays with room for both.
+  Until then `e` is 0.
 * **Who is a relay.** The simulator has nodes elect themselves from
   what they hear. Here it is configured.
 * **Signed solicits and answers.** Anyone may send either. A forged

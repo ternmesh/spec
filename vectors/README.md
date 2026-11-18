@@ -29,4 +29,4 @@ disagree. To change a vector, change the generator and run it with
 RFC vectors before computing anything (`tools/companion.py` for the Ed25519 signatures of
 signed images). `tools/phy.py`,
 `tools/forwarding.py`, `tools/flooding.py`, `tools/sharing.py` and `tools/airtime.py` need nothing, and check their arithmetic against values worked by hand;
-`tools/forwarding.py` and `tools/companion.py` use `tools/routing.py`'s rules, but not its signatures, and `tools/airtime.py` uses `tools/flooding.py`'s allowances.
+`tools/forwarding.py` and `tools/companion.py` use `tools/routing.py`'s rules and routing ids, but not its signatures, and `tools/airtime.py` uses `tools/flooding.py`'s allowances.

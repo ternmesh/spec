@@ -6,8 +6,11 @@
 
 Needs the Python `cryptography` package, for Ed25519, through cards.py, which checks it against
 RFC 8032's test vectors. Time on air and the profiles come from phy.py, beside this file. Every
-announce is signed with a seed of first-contact.json, so it is one a node with that address could
-send.
+announce is signed by the routing key of a seed of first-contact.json, so it is one a node with
+that address could send. Routing keys, and the blinded signatures, are made here in plain integer
+arithmetic, which needs nothing outside the standard library: it is checked first against RFC
+8032's TEST 1, and each blinded signature is then checked by the cryptography package's own
+Ed25519.
 
 Like everything under vectors/, this file is dedicated to the public domain (CC0-1.0).
 """
@@ -38,7 +41,7 @@ INF = 0xFFFF
 HDR_ANNOUNCE, HDR_REQUEST, HDR_SOLICIT, HDR_ANSWER = 0x59, 0x5A, 0x5B, 0x5C
 FLAG_RELAY = 0x01
 FLAG_STARTING = 0x02
-FLAG_ADDRESS = 0x04
+FLAG_KEY = 0x04
 LABEL = b"tern v0 announce"
 SIG = 64
 REF_LEN = 32
@@ -59,13 +62,117 @@ ANSWER_WINDOW = 16
 SOLICIT_LEN, ANSWER_LEN = 12, 13
 
 
-def rid(address):
-    h = hashlib.sha256(b"tern routing id" + address).digest()
+# The Ed25519 group (RFC 8032, section 5.1), in plain integers, for the routing key: a key blinded
+# from the address. Affine (x, y) points; nothing here is constant time, and nothing needs to be.
+P = 2**255 - 19
+L = 2**252 + 27742317777372353535851937790883648493
+D = -121665 * pow(121666, -1, P) % P
+NEUTRAL = (0, 1)
+BASE_Y = 4 * pow(5, -1, P) % P
+BLIND_LABEL = b"tern v0 blind"
+PREFIX_LABEL = b"tern v0 blind prefix"
+EPOCH = 0  # routing ids do not change (draft/routing.md, Not yet specified)
+
+
+def point(a):
+    """RFC 8032, section 5.1.3: the point an encoding names, or None."""
+    y = int.from_bytes(a, "little")
+    sign, y = y >> 255, y & ((1 << 255) - 1)
+    if len(a) != 32 or y >= P:
+        return None
+    x2 = (y * y - 1) * pow(D * y * y + 1, -1, P) % P
+    x = pow(x2, (P + 3) // 8, P)
+    if (x * x - x2) % P:
+        x = x * pow(2, (P - 1) // 4, P) % P
+    if (x * x - x2) % P or (x == 0 and sign):
+        return None
+    return (P - x if x & 1 != sign else x, y)
+
+
+def encode(pt):
+    return (pt[1] | (pt[0] & 1) << 255).to_bytes(32, "little")
+
+
+def add(p1, p2):
+    (x1, y1), (x2, y2) = p1, p2
+    t = D * x1 * x2 * y1 * y2 % P
+    return ((x1 * y2 + y1 * x2) * pow(1 + t, -1, P) % P, (y1 * y2 + x1 * x2) * pow(1 - t, -1, P) % P)
+
+
+def mul(k, pt):
+    r = NEUTRAL
+    while k:
+        if k & 1:
+            r = add(r, pt)
+        pt, k = add(pt, pt), k >> 1
+    return r
+
+
+BASE = point(encode((0, BASE_Y)))  # x even, as RFC 8032 has it
+
+
+def valid(a):
+    """first-contact.md's valid address: a point of the prime-order subgroup but the neutral one."""
+    pt = point(a)
+    return pt is not None and pt != NEUTRAL and mul(L, pt) == NEUTRAL
+
+
+def blind(address, e=EPOCH):
+    """h, the blinding factor, for a valid address and epoch e."""
+    h = hashlib.sha512(BLIND_LABEL + address + e.to_bytes(4, "big")).digest()
+    return int.from_bytes(h, "little") % L
+
+
+def key(address, e=EPOCH):
+    """The routing key B = [h]A of a valid address."""
+    if not valid(address):
+        raise ValueError("not a valid address: it has no routing key")
+    return encode(mul(blind(address, e), point(address)))
+
+
+def key_id(k):
+    """The routing id an announce's key makes."""
+    h = hashlib.sha256(b"tern routing id" + k).digest()
     for i in range(0, 32, 4):
         v = int.from_bytes(h[i : i + 4], "big")
         if v not in (0, EVERYONE):
             return v
     raise ValueError("no routing id")
+
+
+def rid(address, e=EPOCH):
+    """A node's routing id, from its address: the id of its routing key."""
+    return key_id(key(address, e))
+
+
+def secret(seed):
+    """Ed25519's secret scalar s and prefix (RFC 8032, section 5.1.5), from a seed."""
+    h = hashlib.sha512(seed).digest()
+    s = int.from_bytes(h[:32], "little")
+    s = (s & ((1 << 254) - 8)) | (1 << 254)
+    return s, h[32:]
+
+
+def blinded_secret(seed, e=EPOCH):
+    """The secret behind the routing key: b = h s mod L, and the prefix its signatures use."""
+    s, prefix = secret(seed)
+    a = encode(mul(s, BASE))
+    p = hashlib.sha512(PREFIX_LABEL + prefix + e.to_bytes(4, "big")).digest()[:32]
+    return blind(a, e) * s % L, p, encode(mul(blind(a, e) * s % L, BASE))
+
+
+def sign_with(b, prefix, public, msg):
+    """RFC 8032, section 5.1.6, steps 2 to 6, given the scalar, the prefix and the public key."""
+    r = int.from_bytes(hashlib.sha512(prefix + msg).digest(), "little") % L
+    big_r = encode(mul(r, BASE))
+    k = int.from_bytes(hashlib.sha512(big_r + public + msg).digest(), "little") % L
+    return big_r + ((r + k * b) % L).to_bytes(32, "little")
+
+
+def blinded_sign(seed, msg, e=EPOCH):
+    """A signature by the routing key of seed's address."""
+    b, prefix, public = blinded_secret(seed, e)
+    return sign_with(b, prefix, public, msg)
 
 
 def newer(a, b):
@@ -86,8 +193,8 @@ def promise_read(code):
 
 
 def announce(a, seed):
-    """The frame, signed with seed, whose address is the sender's; it carries the address if
-    a["carries_address"]."""
+    """The frame, signed by the routing key of seed's address; it carries the key if
+    a["carries_key"]."""
     out = struct.pack(
         ">BIHHBHHbBB",
         HDR_ANNOUNCE,
@@ -96,50 +203,50 @@ def announce(a, seed):
         a["seq"],
         (FLAG_RELAY if a["relay"] else 0)
         | (FLAG_STARTING if a["starting"] else 0)
-        | (FLAG_ADDRESS if a["carries_address"] else 0),
+        | (FLAG_KEY if a["carries_key"] else 0),
         a["promise"],
         a["round"],
         a["power"],
         len(a["neighbours"]),
         len(a["routes"]),
     )
-    cards, _ = _crypto()
-    if a["carries_address"]:
-        out += cards.address(seed)
+    if a["carries_key"]:
+        out += blinded_secret(seed)[2]
     for n in a["neighbours"]:
         out += struct.pack(">IB", n["id"], n["margin"])
     for r in a["routes"]:
         out += struct.pack(">IHH", r["destination"], r["seq"], r["metric"])
-    out += cards.sign(seed, LABEL + out)
+    out += blinded_sign(seed, LABEL + out)
     assert len(out) <= 255
     return out
 
 
 def announce_read(frame, own, held):
-    """Whether a node with routing id own, holding the address held for the sender (None if it
-    holds none), takes the announce: the address it then holds, or None if it MUST discard it."""
+    """Whether a node with routing id own, holding the key held for the sender (None if it holds
+    none), takes the announce: the key it then holds, or None if it MUST discard it. The signature
+    is checked by the cryptography package, apart from the arithmetic that made it."""
     if len(frame) < 17 + SIG or len(frame) > 255 or frame[0] != HDR_ANNOUNCE:
         return None
     flags, h, r = frame[9], frame[15], frame[16]
-    carries = bool(flags & FLAG_ADDRESS)
+    carries = bool(flags & FLAG_KEY)
     if len(frame) != 17 + 32 * carries + 5 * h + 8 * r + SIG:
         return None
     sender = struct.unpack(">I", frame[1:5])[0]
-    if flags & ~(FLAG_RELAY | FLAG_STARTING | FLAG_ADDRESS) or sender in (0, EVERYONE, own):
+    if flags & ~(FLAG_RELAY | FLAG_STARTING | FLAG_KEY) or sender in (0, EVERYONE, own):
         return None
     cards, valid_address = _crypto()
-    key = held
+    k = held
     if carries:
-        key = frame[17:49]
-        if not valid_address(key) or rid(key) != sender or (held is not None and held != key):
+        k = frame[17:49]
+        if not valid_address(k) or key_id(k) != sender or (held is not None and held != k):
             return None
-    if key is None:
+    if k is None:
         return None
     try:
-        cards.Ed25519PublicKey.from_public_bytes(key).verify(frame[-SIG:], LABEL + frame[:-SIG])
+        cards.Ed25519PublicKey.from_public_bytes(k).verify(frame[-SIG:], LABEL + frame[:-SIG])
     except (cards.InvalidSignature, ValueError):
         return None
-    return key
+    return k
 
 
 def request(q):
@@ -434,7 +541,32 @@ def default_metric(cost):
 
 
 def self_check():
-    _crypto()[0].self_check()
+    cards, valid_address = _crypto()
+    cards.self_check()
+    # The integer arithmetic here against RFC 8032, section 7.1, TEST 1: an address from its seed,
+    # and a signature by the secret scalar and prefix, as Ed25519 itself makes them.
+    seed = bytes.fromhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+    s, prefix = secret(seed)
+    a = encode(mul(s, BASE))
+    assert a.hex() == "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+    assert sign_with(s % L, prefix, a, b"").hex() == (
+        "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155"
+        "5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b")
+    assert mul(L, BASE) == NEUTRAL and valid(a) == valid_address(a)
+    # The blinded key: [b]B is [h]A, it is of order L, and a signature by b checks against it, by
+    # the cryptography package's own Ed25519. Another epoch gives another key.
+    for seed in cards.seeds():
+        a = cards.address(seed)
+        b, prefix, public = blinded_secret(seed)
+        assert public == key(a) and valid(public) and valid_address(public)
+        assert mul(L, point(public)) == NEUTRAL and 0 < b < L
+        assert public != a and key(a, 1) != public and blinded_secret(seed, 1)[1] != prefix
+        cards.Ed25519PublicKey.from_public_bytes(public).verify(blinded_sign(seed, b"m"), b"m")
+        try:
+            cards.Ed25519PublicKey.from_public_bytes(a).verify(blinded_sign(seed, b"m"), b"m")
+            raise AssertionError("a signature by the routing key checked against the address")
+        except cards.InvalidSignature:
+            pass
     assert newer(1, 0) and newer(0, 0xFFFF) and not newer(0, 0) and not newer(0, 1)
     assert newer(0x7FFF, 0) and not newer(0x8000, 0)
     assert promise_code(32767) == 32767 and promise_code(32768) == 0x8000 | 547
@@ -477,22 +609,24 @@ def self_check():
 
 def build():
     self_check()
-    addresses = [bytes([i]) * 32 for i in (0x00, 0x11, 0xA5)] + [bytes(range(32))]
+    cards, _ = _crypto()
+    addresses = [cards.address(bytes([i]) * 32) for i in (0x00, 0x11, 0xA5)]
+    addresses.append(cards.address(bytes(range(32))))
     a, b, c, d = (rid(x) for x in addresses)
 
-    cards, _ = _crypto()
     seeds = cards.seeds()
     signers = [cards.address(x) for x in seeds]
+    keys = [key(x) for x in signers]
     sa, sb, sc = (rid(x) for x in signers)
     announces = [
         {
             "sender": sa, "number": 0xFFFF, "seq": 0, "relay": False, "starting": True,
-            "carries_address": True, "promise": 600, "round": 0, "power": 22, "neighbours": [],
+            "carries_key": True, "promise": 600, "round": 0, "power": 22, "neighbours": [],
             "routes": [],
         },
         {
             "sender": sb, "number": 0x0102, "seq": 0x8001, "relay": True, "starting": False,
-            "carries_address": False, "promise": promise_code(40000), "round": 2, "power": -9,
+            "carries_key": False, "promise": promise_code(40000), "round": 2, "power": -9,
             "neighbours": [{"id": a, "margin": 128}, {"id": c, "margin": 255}],
             "routes": [
                 {"destination": c, "seq": 7, "metric": 54},
@@ -501,19 +635,19 @@ def build():
         },
         {
             "sender": sc, "number": 5, "seq": 9, "relay": True, "starting": False,
-            "carries_address": False, "promise": 0xFFFF, "round": 1, "power": 2,
+            "carries_key": False, "promise": 0xFFFF, "round": 1, "power": 2,
             "neighbours": [],
             "routes": [{"destination": 0x10000 + i, "seq": i, "metric": 54 * i} for i in range(1, 22)],
         },
         {
             "sender": sb, "number": 0x0103, "seq": 0x8001, "relay": True, "starting": False,
-            "carries_address": True, "promise": 600, "round": 1, "power": 14,
+            "carries_key": True, "promise": 600, "round": 1, "power": 14,
             "neighbours": [{"id": a, "margin": 130}],
             "routes": [{"destination": c, "seq": 7, "metric": 54}],
         },
         {
             "sender": sc, "number": 6, "seq": 9, "relay": True, "starting": False,
-            "carries_address": False, "promise": 600, "round": 1, "power": 8,
+            "carries_key": False, "promise": 600, "round": 1, "power": 8,
             "neighbours": [],
             "routes": [
                 {"destination": a, "seq": 0x0100, "metric": listed_write(True, 54)},
@@ -537,6 +671,7 @@ def build():
         k = signer[x["sender"]]
         x["seed"] = seeds[k].hex()
         x["address"] = signers[k].hex()
+        x["key"] = keys[k].hex()
         x["frame"] = announce(x, seeds[k]).hex()
     for x in requests:
         x["frame"] = request(x).hex()
@@ -556,15 +691,15 @@ def build():
         assert short_read(answer(x), 0x12345678) == {k: v for k, v in x.items() if k != "frame"}
     assert len(bytes.fromhex(announces[2]["frame"])) == 249
 
-    good = bytes.fromhex(announces[1]["frame"])  # carries no address
+    good = bytes.fromhex(announces[1]["frame"])  # carries no key
     full = bytes.fromhex(announces[3]["frame"])  # carries it
     ask = request(requests[1])
-    mine = announce({**announces[0], "sender": d, "carries_address": False}, seeds[0])
+    mine = announce({**announces[0], "sender": d, "carries_key": False}, seeds[0])
     small = cards.ORDER_8
-    stranger = announce({**announces[3], "sender": rid(small)}, seeds[1])
+    stranger = announce({**announces[3], "sender": key_id(small)}, seeds[1])
     stranger = stranger[:17] + small + stranger[49:]
-    other = announce({**announces[3], "sender": sa}, seeds[1])  # b's address, as a's routing id
-    other = other[:17] + signers[1] + other[49:]
+    other = announce({**announces[3], "sender": sa}, seeds[1])  # b's key, as a's routing id
+    other = other[:17] + keys[1] + other[49:]
     flipped = bytearray(good)
     flipped[-1] ^= 0x01
     tampered = bytearray(good)
@@ -582,8 +717,8 @@ def build():
         {"why": "an announce from the receiver's own routing id", "frame": mine.hex()},
         {"why": "an announce whose signature is not its sender's", "frame": bytes(flipped).hex()},
         {"why": "an announce changed after it was signed", "frame": bytes(tampered).hex()},
-        {"why": "an announce carrying an address of small order", "frame": stranger.hex()},
-        {"why": "an announce carrying an address not its sender's", "frame": other.hex()},
+        {"why": "an announce carrying a key of small order", "frame": stranger.hex()},
+        {"why": "an announce carrying a key not its sender's", "frame": other.hex()},
         {"why": "a request a byte short", "frame": ask[:-1].hex()},
         {"why": "a request a byte long", "frame": (ask + b"\x00").hex()},
         {"why": "a request with nothing in it", "frame": (ask[:5] + b"\x00").hex()},
@@ -610,34 +745,53 @@ def build():
         f = bytes.fromhex(x["frame"])
         if f[0] == HDR_ANNOUNCE:
             sender = struct.unpack(">I", f[1:5])[0] if len(f) >= 5 else 0
-            for held in (None, signers[signer[sender]] if sender in signer else None):
+            for held in (None, keys[signer[sender]] if sender in signer else None):
                 assert announce_read(f, own, held) is None, x["why"]
         elif f[0] in (HDR_SOLICIT, HDR_ANSWER):
             assert short_read(f, own) is None, x["why"]
 
-    # Whether a node takes an announce depends on the address it holds for the sender.
+    # Whether a node takes an announce depends on the key it holds for the sender.
     verified = []
     for which, held, takes in [
-        (3, None, True),  # it carries the address
+        (3, None, True),  # it carries the key
         (3, 1, True),  # and it is the one held
         (1, 1, True),  # it does not, and the node holds it
         (1, None, False),  # it does not, and the node holds none: nothing to check it with
-        (1, 2, False),  # it does not, and the signature is not that of the address held
+        (1, 2, False),  # it does not, and the signature is not that of the key held
         (0, None, True),
     ]:
         f = bytes.fromhex(announces[which]["frame"])
-        key = None if held is None else signers[held]
-        got = announce_read(f, own, key)
+        held_key = None if held is None else keys[held]
+        got = announce_read(f, own, held_key)
         assert (got is not None) == takes, (which, held)
-        holds = got if got is not None else key  # a discarded frame changes nothing
+        holds = got if got is not None else held_key  # a discarded frame changes nothing
         verified.append(
             {
                 "announce": which,
-                "held_address": None if key is None else key.hex(),
+                "held_key": None if held_key is None else held_key.hex(),
                 "takes": takes,
-                "holds_address": None if holds is None else holds.hex(),
+                "holds_key": None if holds is None else holds.hex(),
             }
         )
+
+    ids = [{"address": x.hex(), "blind": blind(x).to_bytes(32, "little").hex(),
+            "key": key(x).hex(), "id": rid(x)} for x in addresses]
+    for seed, x in zip(seeds, signers):
+        b, prefix, public = blinded_secret(seed)
+        assert public == key(x)
+        ids.append({"seed": seed.hex(), "address": x.hex(),
+                    "blind": blind(x).to_bytes(32, "little").hex(), "key": key(x).hex(),
+                    "id": rid(x), "blinded_scalar": b.to_bytes(32, "little").hex(),
+                    "blinded_prefix": prefix.hex()})
+    no_ids = []
+    for why, x in [
+        ("the neutral element", cards.NEUTRAL),
+        ("a point of order 8", cards.ORDER_8),
+        ("an address plus a point of order 8", encode(add(point(signers[0]), point(cards.ORDER_8)))),
+        ("no point: no x has this y", (2).to_bytes(32, "little")),
+    ]:
+        assert not valid(x)
+        no_ids.append({"why": why, "address": x.hex()})
 
     floors = []
     for sf, full, heard in [
@@ -1120,12 +1274,16 @@ def build():
         "selected, selects and replaces are indexes into routes. In defaults, each neighbour's "
         "out_of_use says whether it is out of use, tried and next are indexes into neighbours, "
         "busy_ppm is the leaf's busy share in millionths, and metric is the default route's. "
-        "Each announce is signed with seed, whose address is address, and carries the address "
-        "in the frame if carries_address is true. A rejected frame MUST be "
-        "discarded whether or not the receiver holds its sender's address. In verified, announce "
-        "is an index into announces, held_address is the address the receiver holds for its "
+        "In ids, blind is h as 32 bytes little-endian, key the routing key [h]A, and id the "
+        "routing id, each at epoch 0; where seed is given, blinded_scalar is b and "
+        "blinded_prefix the prefix its signatures are made with. No routing id is derived from "
+        "an address in no_ids. Each announce is signed by the routing key of the address of "
+        "seed, address, whose key is key, and carries the key in the frame if carries_key is "
+        "true. A rejected frame MUST be "
+        "discarded whether or not the receiver holds its sender's key. In verified, announce "
+        "is an index into announces, held_key is the key the receiver holds for its "
         "sender (null for none), takes whether it takes the announce rather than discarding it, "
-        "and holds_address the address it then holds for the sender, if the rest of the "
+        "and holds_key the key it then holds for the sender, if the rest of the "
         "section then takes the announce from a neighbour. In listed, metric_field is a listed "
         "route's metric as it goes on the air, retracts whether it retracts the route, leaf and "
         "metric what it says otherwise (null for a retraction), and field what a node writes for "
@@ -1178,7 +1336,8 @@ def build():
         "announce it takes, one it discards (as a copy, by its number), a frame the neighbour "
         "passed on, a solicit or an answer; out_of_use_after is whether it is then out of use.",
         "generator": "vectors/tools/routing.py",
-        "ids": [{"address": x.hex(), "id": rid(x)} for x in addresses],
+        "ids": ids,
+        "no_ids": no_ids,
         "newer": [
             {"a": x, "b": y, "newer": newer(x, y)}
             for x, y in [
