@@ -21,11 +21,12 @@ Everything in this directory is dedicated to the public domain under
 | `positions.json` | [Positions](../draft/positions.md) | `tools/positions.py` |
 | `cards.json` | [Presence cards](../draft/cards.md) | `tools/cards.py` |
 | `airtime.json` | [The airtime budget](../draft/airtime.md) | `tools/airtime.py` |
+| `sleeping.json` | [Leaves that sleep](../draft/sleeping.md) | `tools/sleeping.py` |
 
 Each file is the output of its generator, and CI fails if the two
 disagree. To change a vector, change the generator and run it with
 `generate`; `check` confirms the file matches. The first two generators,
-`tools/groups.py`, `tools/positions.py`, `tools/cards.py`, `tools/routing.py` and `tools/companion.py` also need the Python `cryptography` package, and check it against published
+`tools/groups.py`, `tools/positions.py`, `tools/cards.py`, `tools/routing.py`, `tools/sleeping.py` and `tools/companion.py` also need the Python `cryptography` package, and check it against published
 RFC vectors before computing anything (`tools/companion.py` for the Ed25519 signatures of
 signed images). `tools/phy.py`,
 `tools/forwarding.py`, `tools/flooding.py`, `tools/sharing.py` and `tools/airtime.py` need nothing, and check their arithmetic against values worked by hand;

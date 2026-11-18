@@ -89,7 +89,10 @@ bucket for those it passes on **and** by the relayed part.
 | `0x48`, `0x49` | a [message](forwarding.md#the-head) | own: waits | relayed: dropped |
 | `0x50` | an [acknowledgement](forwarding.md#messages) | own: never held | relayed: never held |
 | `0x51` to `0x54` | a [first-contact frame](first-contact.md#the-frame) | own: waits | relayed: dropped |
+| `0x55` | a [held notice](sleeping.md#holding) | own: never held | |
 | `0x59` to `0x5C` | an [announce, request, solicit or answer](routing.md#announces) | routing | routing |
+| `0x5D` | a [poll](sleeping.md#polls) | routing | |
+| `0x5E` | a [poll answer](sleeping.md#polls) | own: never held | |
 | `0x60`, `0x61`, `0x68` | a [flooded frame](flooding.md#the-head) | own and the flood bucket for its own: waits | relayed and the flood bucket for those passed on: dropped |
 
 A first-contact frame that answers another, such as the responder's
@@ -497,4 +500,6 @@ Each of these is a choice for the maintainer.
 * **A node's own choice.** A node may fill a part at less than its
   share, but nothing says how its user chooses that, or whether a relay
   on a mains supply and a good mast should ever get more.
-* **Sleeping leaves**, whose budget would fill while they sleep.
+* **Sleeping leaves** are [their own section](sleeping.md#paid-for):
+  a bucket fills while its node sleeps, and holds no more than its
+  window, so nothing here changes for them.
