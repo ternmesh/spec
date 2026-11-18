@@ -11,6 +11,7 @@ first-contact.json, so every card is one a node with that address could send.
 Like everything under vectors/, this file is dedicated to the public domain (CC0-1.0).
 """
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -23,7 +24,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from first_contact import valid_address  # noqa: E402
+from first_contact import L, add, decode, encode, mul, valid_address  # noqa: E402
 
 VECTORS = Path(__file__).resolve().parent.parent
 OUT = VECTORS / "cards.json"
@@ -53,6 +54,9 @@ def self_check():
     for seed, public, msg, sig in cases:
         assert address(bytes.fromhex(seed)).hex() == public
         assert sign(bytes.fromhex(seed), bytes.fromhex(msg)).hex() == sig
+        assert verify(bytes.fromhex(public), bytes.fromhex(msg), bytes.fromhex(sig))
+        a, prefix = secret(bytes.fromhex(seed))
+        assert encode(mul(a, BASE)).hex() == public
 
 
 def address(seed: bytes) -> bytes:
@@ -98,6 +102,100 @@ def read(frame: bytes, own: bytes):
 def seeds():
     fc = json.loads((VECTORS / "first-contact.json").read_text())
     return [bytes.fromhex(a["seed"]) for a in fc["addresses"]]
+
+
+# Verify, as draft/cards.md's Notation pins it: strict, and without the cofactor. Written out here,
+# on first_contact.py's point arithmetic, because libraries differ on exactly these points.
+
+BASE = decode(bytes.fromhex("58" + "66" * 31))
+
+
+def _h(*parts: bytes) -> int:
+    return int.from_bytes(hashlib.sha512(b"".join(parts)).digest(), "little") % L
+
+
+def verify(addr: bytes, msg: bytes, sig: bytes) -> bool:
+    """True exactly when the address is valid, S is below L, and R's 32 bytes are the encoding of
+    [S]B - [k]A. R is never decoded, so an encoding of it that is not canonical never matches."""
+    if len(sig) != 64 or not valid_address(addr):
+        return False
+    s = int.from_bytes(sig[32:], "little")
+    if s >= L:
+        return False
+    k = _h(sig[:32], addr, msg)
+    x, y = mul(k, decode(addr))
+    return encode(add(mul(s, BASE), ((-x) % (2**255 - 19), y))) == sig[:32]
+
+
+def secret(seed: bytes):
+    """Ed25519's secret scalar and prefix from a seed (RFC 8032, section 5.1.5)."""
+    h = hashlib.sha512(seed).digest()
+    a = int.from_bytes(h[:32], "little")
+    a &= (1 << 254) - 8
+    a |= 1 << 254
+    return a, h[32:]
+
+
+def verifications(seed: bytes):
+    """Signatures on which implementations of RFC 8032 disagree, and how Verify takes each."""
+    a, prefix = secret(seed)
+    addr = address(seed)
+    msg = signed(HDR, addr, 9, b"Ada")
+    good = sign(seed, msg)
+    assert verify(addr, msg, good)
+    r = _h(prefix, msg)
+    order_8 = decode(ORDER_8)
+    cases = [("valid", "an ordinary signature", addr, msg, good, True)]
+
+    s = int.from_bytes(good[32:], "little")
+    cases.append(("s-not-reduced", "S + L in place of S: [S + L]B is [S]B, so a verifier that "
+                  "does not check that S is below L takes it", addr, msg,
+                  good[:32] + (s + L).to_bytes(32, "little"), False))
+
+    # R the neutral point, as r = 0 makes it, written with y = p + 1: not canonical.
+    r_bytes = (2**255 - 19 + 1).to_bytes(32, "little")
+    k = _h(r_bytes, addr, msg)
+    cases.append(("r-not-canonical", "R the neutral point, its y written as p + 1; S = k s, so "
+                  "[S]B - [k]A is the neutral point, which a verifier that decodes R and compares "
+                  "points takes", addr, msg, r_bytes + (k * a % L).to_bytes(32, "little"), False))
+
+    # R with a point of order 8 added: [S]B - [k]A is R without it. Only the cofactor hides that.
+    r_mixed = encode(add(mul(r, BASE), order_8))
+    k = _h(r_mixed, addr, msg)
+    cases.append(("r-mixed-order", "R with a point of order 8 added, S as for R without it: a "
+                  "verifier that multiplies by the cofactor takes it", addr, msg,
+                  r_mixed + ((r + k * a) % L).to_bytes(32, "little"), False))
+
+    # An address of order 8 and a message whose k is a multiple of 8: [k]A is the neutral point,
+    # and R = [S]B holds with no key at all.
+    i = 0
+    while _h(encode(mul(r, BASE)), ORDER_8, msg + bytes([i])) % 8:
+        i += 1
+    cases.append(("address-small-order", "an address of order 8, and a message whose k is a "
+                  "multiple of 8: R = [S]B, made with no key, and a verifier that does not check "
+                  "the address takes it", ORDER_8, msg + bytes([i]),
+                  encode(mul(r, BASE)) + r.to_bytes(32, "little"), False))
+
+    # The address with a point of order 8 added, and again k a multiple of 8: [k]A' is [k]A.
+    mixed = encode(add(decode(addr), order_8))
+    i = 0
+    while _h(encode(mul(r, BASE)), mixed, msg + bytes([i])) % 8:
+        i += 1
+    k = _h(encode(mul(r, BASE)), mixed, msg + bytes([i]))
+    cases.append(("address-mixed-order", "the address with a point of order 8 added, signed by "
+                  "its key with a k that is a multiple of 8: a verifier that checks only for "
+                  "small order takes it", mixed, msg + bytes([i]),
+                  encode(mul(r, BASE)) + ((r + k * a) % L).to_bytes(32, "little"), False))
+
+    cases.append(("another-message", "the ordinary signature, on the message with its last "
+                  "byte changed", addr, msg[:-1] + bytes([msg[-1] ^ 1]), good, False))
+
+    out = []
+    for name, note, ad, m, sig, valid in cases:
+        assert verify(ad, m, sig) == valid, name
+        out.append({"name": name, "note": note, "address": ad.hex(), "message": m.hex(),
+                    "signature": sig.hex(), "valid": valid})
+    return out
 
 
 def build():
@@ -182,7 +280,9 @@ def build():
             "among them two whose address first-contact.json rejects. "
             "Given each of deliveries in order, holding no cards, a node whose address is self "
             "MUST keep exactly those whose keep is true. A card's hops and power are not signed: "
-            "relayed_still_valid is good with them changed, and MUST be accepted."
+            "relayed_still_valid is good with them changed, and MUST be accepted. For each of "
+            "verifications, Verify(address, message, signature), as draft/cards.md's Notation "
+            "has it, MUST be valid: strict, and without the cofactor."
         ),
         "generator": "vectors/tools/cards.py",
         "hdr": HDR,
@@ -192,6 +292,7 @@ def build():
         "rejected": [{"why": why, "frame": f.hex()} for why, f in rejected],
         "relayed_still_valid": bytes(moved).hex(),
         "deliveries": deliveries,
+        "verifications": verifications(s[0]),
     }
 
 

@@ -346,9 +346,13 @@ hop has been paid for already; held, its source sends the message
 again over the whole path. It is charged so that it counts, but the
 bucket goes no lower than empty: copies of a message sent to a node
 again and again would otherwise run its own part into a debt that held
-its user's frames long after the copies stopped. A node made to send
-acknowledgements so is sent at least as much: a copy is 23 bytes or
-more, an acknowledgement 19.
+its user's frames long after the copies stopped. A node can be made to
+send acknowledgements so only with copies of messages it has accepted,
+no more than `COPY_ACKS` of each and for no longer than `COPY_TIME`
+([Messages](forwarding.md#messages)). Each acknowledgement then goes
+the whole way back to the message's source, paid for by every relay on
+the way from its relayed part: what bounds that is `COPY_ACKS`, not the
+budget.
 
 **Neighbours do not learn each other's load.** A byte in each announce
 with the share a relay has left, and routes that avoided relays with

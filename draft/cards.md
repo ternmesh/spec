@@ -56,7 +56,21 @@ What this does **not** give, and a reader should know before the rest:
 As in [Groups](groups.md#notation). `Sign(sk, M)` is Ed25519 (RFC 8032,
 section 5.1.6) of the message `M` under the node's key, whose public key
 is its [address](first-contact.md#addresses); `Verify(A, M, sig)` is
-its check (section 5.1.7). Fields are big-endian.
+its check (section 5.1.7), made strict and without the cofactor.
+`Verify(A, M, sig)` is true exactly when:
+
+* `A` is a [valid address](first-contact.md#addresses);
+* `S`, the last 32 bytes of `sig` read least significant first, is
+  below `L`; and
+* `R`, the first 32 bytes of `sig`, is the encoding of `[S]B - [k]A`,
+  where `B` is the base point and `k` is `SHA-512(R || A || M)` read
+  least significant first, mod `L`.
+
+`R` is compared as bytes, never decoded, so an encoding of it that is
+not canonical never matches. Every signature in this specification,
+those of [Routes](routing.md#signed) among them, is checked so.
+
+Fields are big-endian.
 
 ## The frame
 
@@ -170,7 +184,10 @@ An implementation conforms to this section if, for
   changes them;
 * **deliveries:** as a node whose address is `self`, holding no cards,
   given each `frame` in order, it holds the card of exactly those whose
-  `keep` is true.
+  `keep` is true;
+* **verifications:** `Verify(address, message, signature)` is `valid`.
+  These are the signatures on which implementations of RFC 8032
+  differ.
 
 That a node sends no card until its user turns cards on, and how often
 it sends them, cannot be checked by vectors. They are requirements
@@ -193,6 +210,17 @@ What a card does **not** tell an observer is who the node talks to:
 its sessions and its groups' frames look as they did.
 
 ## Rationale
+
+**One rule for checking a signature.** RFC 8032 lets a verifier check
+`[8][S]B = [8]R + [8][k]A` or the same without the 8s, and
+implementations of it differ there, on whether `S` may be `L` or more,
+on encodings that are not canonical, and on addresses of small order.
+Cards and announces are checked by every node that hears them, so a
+signature some take and others refuse would leave nodes holding
+different views of the same mesh. The rule above is the strictest of
+them: every signature it takes, the others take too. It is what the
+reference implementation does, and an address it takes is one first
+contact takes.
 
 **A card, and not a public channel.** A channel every node holds the
 key to is the one thing in a mesh whose cost no one bounds: it grows

@@ -85,9 +85,11 @@ relabelled as another kind among them.
 
 ## Sending
 
-A node floods a frame of its own with `hops` set to `FLOOD_HOPS`, or
-fewer where the section that defines its kind says so, and
-`power` to what it is sent at, once, and again only as
+A node floods a frame of its own with `hops` set to `FLOOD_HOPS` or
+`FLOOD_HOPS - 1`, drawn afresh for each frame with even chances, or to
+fewer where the section that defines its kind says so, and then to
+exactly that. It sets `power` to what it is sent at. It sends the frame
+once, and again only as
 [Sending again](#sending) below says. It takes the frame's id as
 [seen](#receiving) before it sends, and waits for
 [its allowance](#the-allowance).
@@ -296,7 +298,9 @@ An implementation conforms to this section if, for
   `spreading_factor` and `bandwidth_hz`, full at time 0, offered each
   frame of `frames` in order, of `airtime_ns` at `at_ns`, it finds the
   bucket holds the frame's airtime, or not, as `pays` says. A frame
-  paid for is sent and charged then; one that is not is not sent.
+  paid for is sent and charged then; one that is not is not sent;
+* **starts:** a frame of its own whose `hdr` is `hdr` goes with `hops`
+  one of `hops`, and over many such frames, each of them.
 
 When frames go depends on random times and on what is heard. That a
 flood reaches the nodes it should is checked by running implementations
@@ -305,10 +309,14 @@ against each other and against the simulator.
 ## What an observer learns
 
 Nothing in the head names a node. An observer learns that a frame is a
-flood, how long it is, and from `hops` roughly how far it has come: a
+flood, how long it is, and from `hops` roughly how far it has come. A
 frame whose `hops` is `FLOOD_HOPS` was sent by the node it began at, or
-by a bridge next to it, so an observer in earshot of a writer can tell
-which transmitter the writing came from, as it can for any radio. It
+by a bridge next to it; but half of the frames that would start there
+start at `FLOOD_HOPS - 1`, as a frame one relay on is, so one heard at that
+does not say whether the transmitter wrote it or passed it on. An
+observer in earshot of a writer can still often tell which transmitter
+the writing came from, as it can for any radio, by where the signal
+comes from and when. It
 learns nothing that joins one flood to another, unless the frame's kind
 gives it: a [group frame](groups.md#what-an-observer-learns) does not.
 
@@ -326,6 +334,20 @@ not. A relay waits, and stays silent if it hears one more copy. The
 wait is long, eight airtimes where a frame that follows a route waits
 two, because the wait is what lets a copy be heard: with three, the
 simulator's relays heard fewer copies in time and sent more.
+
+**A writer's frame starts one lower half the time.** A frame that
+always started at `FLOOD_HOPS` told anyone in earshot that its
+transmitter wrote it. Starting half of them at `FLOOD_HOPS - 1` makes
+the first relay's copy and the writer's look alike, at the cost of one
+hop of reach for half the frames. In the simulator's region on the
+fast preset, with the board's tables and a quarter of each node's
+messages broadcast (three seeds), broadcasts reached 87.3% of their
+destinations in time against 87.9%, on 4.5% less airtime; on the slow
+preset, 12.7% against 13.3%. Both differences are within the seeds'
+spread. Starting at random anywhere from 1 to `FLOOD_HOPS` would hide
+more and reach much less. Kinds that start lower, cards and positions,
+start where their sections say: a card names its writer anyway, and a
+position's two hops have none to spare.
 
 **Bridges spend no hop.** Where relays are few, a flood costs a frame a
 relay and no more, and a hop limit that suits a crowd stops it short.

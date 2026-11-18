@@ -68,6 +68,12 @@ def ends(sent, heard):
     return passed or answered
 
 
+def teaches(sent, heard):
+    """Whether hearing it is a sample of the neighbour's floor: only the frame passed on. An
+    acknowledgement ends a hop and teaches nothing, since no node on the way can check it."""
+    return sent[AT_DEST:] == heard[AT_DEST:] and sent[0] == heard[0] and heard[1] + 1 == sent[1]
+
+
 def hop_heard(frame):
     """Whether a node that has sent a frame listens for the hop to succeed. On the last hop of an
     acknowledgement or a first-contact frame there is nothing to hear."""
@@ -263,6 +269,7 @@ def build():
         ("a message for the node, acknowledged", message(20, hdr=0x49), ack(32)),
         ("the same bytes as a message for the user: another frame", message(20, hdr=0x49), message(19)),
         ("acknowledged", message(20), ack(32)),
+        ("acknowledged by the node it went to: still no sample", message(20, nxt=77), ack(32, nxt=7)),
         ("acknowledged, heard further off", message(20), ack(5)),
         ("another message acknowledged", message(20), ack(32, t=other)),
         ("an acknowledgement passed on", ack(20, destination=9), ack(19, destination=9, nxt=8)),
@@ -276,7 +283,9 @@ def build():
         ("a message is not ended by first contact with its tag", message(20), contact(4, 19)),
     ]:
         assert accepted(s) and accepted(h)
-        hops.append({"why": why, "sent": s.hex(), "heard": h.hex(), "ends": ends(s, h)})
+        assert ends(s, h) or not teaches(s, h)
+        hops.append({"why": why, "sent": s.hex(), "heard": h.hex(), "ends": ends(s, h),
+                     "teaches": teaches(s, h)})
 
     waits = []
     for why, f in [
@@ -331,7 +340,8 @@ def build():
     return {
         "description": "Frames that follow routes, draft 0 (draft/forwarding.md). Routing ids "
         "are numbers; frames and tags are hex. In hops, sent is the frame the node sent and "
-        "heard the one it then received. In waits, listens is whether a node that has sent the "
+        "heard the one it then received; ends is whether that ends the hop, and teaches whether the "
+        "node takes it as a sample of its neighbour's floor. In waits, listens is whether a node that has sent the "
         "frame listens for its hop to succeed, and sends it again if it does not. In backs, power is what a frame was sent at in dBm and "
         "snr_quarter_db what it was heard at, and needs is what an answer must go at for its "
         "sender to hear it, between the node's lowest and full power. In powers, neighbour is "
