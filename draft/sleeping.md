@@ -1,10 +1,10 @@
 # Leaves that sleep
 
 **Status:** strawman, draft 0. Not frozen. Open for review under the
-seven-day rule in [GOVERNANCE.md](../GOVERNANCE.md). Unlike the
-sections on routes and forwarding, it was **not** measured in the
-simulator before it was written: what needs measuring is under [Not yet
-measured](#not-yet-measured). Every number here is **provisional**.
+seven-day rule in [GOVERNANCE.md](../GOVERNANCE.md). It was first
+written ahead of the simulator, then measured there and changed where
+the first draft failed: [What was measured](#what-was-measured). Every
+number here is **provisional**, and none has been measured on radios.
 
 A [leaf](routing.md#roles) passes nothing on, so nothing but its own
 frames needs it on the air. Yet a leaf as [Routes](routing.md) has it
@@ -26,8 +26,8 @@ produced by [`vectors/tools/sleeping.py`](../vectors/tools/sleeping.py).
 ## Goals
 
 1. **Asleep nearly all the time.** A leaf that sleeps is on the air
-   only to send its own frames and for a short listen after each, and
-   a frame for it costs it nothing until it wakes.
+   only to send its own frames and for a short listen after each poll,
+   and a frame for it costs it nothing until it wakes.
 2. **What is sent to it arrives.** A message for a sleeping leaf is
    held, not lost, and its source waits for it rather than giving it up.
 3. **Nothing kept in step.** No node needs to know when another will
@@ -65,15 +65,18 @@ It keeps that keeper until it [changes it](#changing-keeper).
 A sleeping leaf has a **wake** `w`, from `WAKE_MIN` to `WAKE_MAX`: the
 longest it lets pass between one [poll](#polls) and the next. It has
 a **listen** `l`, in whole seconds from `LISTEN_MIN` to 255: how long
-it listens after each poll, and after every frame it sends.
+it listens after each poll.
 
-**Awake.** A sleeping leaf MUST listen from each frame it sends until
-`l` seconds after it went on the air, and MAY listen at any other time.
-So a frame of its own, whose hop it listens for, and the
-acknowledgement of a message of its own, which its keeper hands on in
-that time, both find it awake. A leaf whose own message waits for an
-acknowledgement longer than `l` SHOULD poll again before `l` runs out,
-to keep listening.
+**Awake.** A sleeping leaf MUST listen from each poll it sends until
+`l` seconds after it went on the air. After any other frame of its own
+it listens for that frame's [hop](forwarding.md#hops), as any node
+does, and no longer. It MAY listen at any other time, but its keeper
+does not count on it. In particular it sleeps while a message of its
+own waits for its acknowledgement: the keeper holds the acknowledgement
+as it holds any frame for the leaf, and hands it over at the next poll.
+So a sleeping leaf, as a source, waits for each try as a source waits
+for a destination that sleeps ([Waiting longer](#telling-the-source)),
+with its own `w`.
 
 **Its own frames.** A sleeping leaf sends every frame of its own to its
 keeper, whatever routes it holds, as by its [default
@@ -104,7 +107,11 @@ rest. A receiver MUST discard one whose `keeper` is a reserved id.
 
 **When a sleeping leaf announces.** Not by Trickle: a sleeping leaf
 announces just before a poll, once at least every `SLEEP_ANNOUNCE`, and
-also before the first poll after it changes its keeper or its `seq`.
+also before the first poll after it changes its keeper. It MUST raise
+its `seq` by one for each announce it sends while it sleeps. A
+[request](routing.md#starving-and-asking) for its `seq` cannot reach it
+while it sleeps; a newer `seq` every `SLEEP_ANNOUNCE` is what lets a
+node that has lost its route to the leaf select one again.
 Its `promise` is at least what is left until the poll after its next
 announce is due, plus `l`. A sleeping leaf names first, among its
 neighbours, its keeper. It carries its key as Routes requires, counting
@@ -172,8 +179,8 @@ announce it took, whichever came later.
 keeps MUST answer it once, by `sender` and `id`, after a random time up
 to `JITTER` × `airtime(14)`, at the power of a frame for that neighbour,
 with `held` the number of frames it [holds](#holding) for it. The
-requests' bucket of [the cap](routing.md#the-cap) pays for the answer;
-one it cannot pay for is not sent, and the leaf asks again.
+answer is paid for as an acknowledgement is, and is never held or
+dropped for the budget ([Paid for](#paid-for)).
 
 **What the leaf does.** A leaf that hears the answer to its poll
 listens until it has received `held` frames from its keeper, or until
@@ -182,10 +189,10 @@ frames still held MAY poll again at once.
 
 ## Holding
 
-A keeper takes its leaf as **awake** from when it receives any frame
-from it until `l` seconds have passed since then, by the `l` of the
-leaf's last poll: awake while less than `l` has passed, and asleep from
-`l` on.
+A keeper takes its leaf as **awake** from when it receives a poll from
+it until `l` seconds have passed since then, by that poll's `l`: awake
+while less than `l` has passed, and asleep from `l` on. Any other frame
+from the leaf does not wake it, to its keeper.
 
 **What is held.** A keeper that has a frame to send to its sleeping
 leaf as the next hop, while the leaf is not awake, MUST NOT send it. It
@@ -308,7 +315,8 @@ tries come that much later.
 
 | `hdr` | Frame | Pays |
 |---|---|---|
-| `0x5D`, `0x5E` | a poll or a poll answer | routing: the requests' bucket of [the cap](routing.md#the-cap) |
+| `0x5D` | a poll | routing: the requests' bucket of [the cap](routing.md#the-cap); one it cannot pay for waits |
+| `0x5E` | a poll answer | own, as an acknowledgement is: never held |
 | `0x55` | a held notice | own, as an acknowledgement is: never held |
 
 A frame a keeper hands over is passed on, and paid for by the relayed
@@ -323,13 +331,13 @@ nothing here changes [the airtime budget](airtime.md).
 
 | Name | Value | |
 |---|---|---|
-| `WAKE_MIN` | 30 s | the shortest wake |
+| `WAKE_MIN` | 300 s | the shortest wake |
 | `WAKE_MAX` | 3600 s | the longest wake |
 | `LISTEN_MIN` | 2 s | the shortest listen |
-| `HOLD_LEAF` | 8 | frames a keeper holds for each leaf, at least |
+| `HOLD_LEAF` | 16 | frames a keeper holds for each leaf, at least |
 | `HOLD_EXTRA` | 60 s | |
-| `SLEEP_ANNOUNCE` | 3600 s | the longest between a sleeping leaf's announces |
-| `POLL_TRIES` | 3 | polls in a row unanswered before a leaf changes keeper |
+| `SLEEP_ANNOUNCE` | 600 s | the longest between a sleeping leaf's announces |
+| `POLL_TRIES` | 6 | polls in a row unanswered before a leaf changes keeper |
 | `POLL_RETRY` | 10 s | after a poll unanswered |
 | `KEEPER_BAND` | 6 dB | |
 | `JITTER` | 2 | airtimes, as in Routes |
@@ -350,7 +358,7 @@ An implementation conforms to this section if, for
 * **sleep:** given `wake`, it produces exactly `content`; and it
   accepts, or ignores, each `content` as `valid` says;
 * **holds:** as a keeper, `at_ms` milliseconds after it received its
-  leaf's last frame, the leaf's last poll having given `listen`, it
+  leaf's last poll, that poll having given `listen`, it
   holds a frame for the leaf, or sends it, as `holds` says;
 * **hold_for:** given `wake`, it drops a frame held `hold_for` seconds;
 * **source_waits:** given `metric` and `wake`, a source waits `wait_ms`
@@ -375,12 +383,15 @@ holds sessions with how long it sleeps.
 **Why sleeping leaves at all.** A LoRa radio listening draws about
 4.6 mA (SX1262, 125 kHz, datasheet) and asleep about 1 µA, and an
 nRF52840 idle with its clock running a few µA. A leaf that listens all
-the time draws its radio's receive current around the clock: about
-two and a half weeks on a 2000 mAh cell. A leaf that wakes every five
-minutes, sends a 15-byte poll (49 ms on `US915`, 55 ms on `EU868`) and
-listens two seconds draws, by the same datasheets, around 50 µA on
-average, and one that wakes every hour around 10 µA: years, where the
-cell's own self-discharge matters more. These are estimates from
+the time draws its radio's receive current around the clock, about
+4.65 mA: two and a half weeks on a 2000 mAh cell. In the simulator
+([What was measured](#what-was-measured)) a sleeping leaf's radio was on
+1.5% of the time at a wake of five minutes and 0.5% at an hour, which
+by the same datasheets is around 150 µA and 50 µA: some eight months
+and over four years on that cell, before its own self-discharge. The
+first draft of this section guessed a third of that, counting only the
+poll and its listen; announces, a leaf's own frames, and polls sent
+again after a loss make up the rest. These are estimates from
 datasheet currents, not measurements: see [Not yet
 measured](#not-yet-measured). They are why a leaf that sleeps is worth
 a section: sensors and trackers that run on a small cell for a season,
@@ -422,6 +433,37 @@ hop ends as if the frame had been passed on. It is no more forgeable
 than an acknowledgement, and a forged one costs what a forged
 acknowledgement does: a source's retry.
 
+**Why a poll answer is paid for as an acknowledgement.** The first
+draft paid for it from the requests' share of the keeper's cap, as a
+solicit's answer is. A relay spends that share on asking for routes,
+and on a busy mesh it was spent: one poll in ten was answered, and
+leaves gave their keepers up over and over. An answer is the one frame
+a sleeping leaf waits awake for, as a source waits for an
+acknowledgement, and it is 14 bytes once a wake.
+
+**Why the leaf sleeps while its message waits.** The first draft kept
+a leaf listening `l` after every frame of its own, so that the
+acknowledgement would find it awake. Acknowledgements take longer than
+any listen worth having to come back over a few hops, so leaves polled
+again to keep listening, and their radios were on six times as long
+for no more delivered. The keeper holds an acknowledgement as it holds
+anything else.
+
+**Why a newer `seq` at every announce.** A node that loses its route to
+a leaf asks for a newer `seq` ([Starving, and
+asking](routing.md#starving-and-asking)), and the leaf answers by
+announcing one. A sleeping leaf hears no request, so a route lost to it
+stayed lost until it next moved. Raising its `seq` with each announce,
+at most `SLEEP_ANNOUNCE` apart, answers every request made in the
+meantime. `seq` is 16 bits and wraps, which [newer](routing.md#notation)
+allows for: at one a `SLEEP_ANNOUNCE`, it wraps in over a year.
+
+**Why `WAKE_MIN` is five minutes.** A poll and its answer are small,
+but every sleeping leaf sends one a wake. With wakes of two minutes or
+less, polls took 13 to 17% of all the airtime a busy mesh spent, and
+delivery to every leaf, sleeping or not, fell. A leaf that needs to
+hear sooner than every five minutes should listen all the time.
+
 **Why the source is told end to end.** No frame on the way to a sleeping
 leaf carries its source, so a keeper cannot tell the source that its
 message waits. Routes could say the destination sleeps, but a route's
@@ -442,17 +484,65 @@ specified](#not-yet-specified).
 sent through it meanwhile, and its neighbours give up hops at it until
 they forget it. A relay on a small cell should be a leaf.
 
+## What was measured
+
+In the simulator ([ternmesh/sim#83](https://github.com/ternmesh/sim/pull/83),
+candidate 3), on its region scenario at 10 dBm: 1000 nodes, 200 of
+them relays, and of the 800 leaves half asleep, over three seeds. With
+every leaf listening, 98.1% of unicast messages arrived on time.
+"Within the wake" is within `w` plus 60 s of being sent. A sleeping
+leaf's radio is on while it sends or listens; its current is from
+SX1262 datasheet figures.
+
+| | Delivered to sleeping leaves | Within the wake | Median latency | Within 60 s, to leaves listening | A sleeping leaf's radio on | Current, est. |
+|---|---|---|---|---|---|---|
+| First draft, `w` 300 s | 64.6% | 34.2% | 354 s | 69.5% | 26.9% | 1,492 µA |
+| This draft, `w` 30 to 120 s | 57 to 84% | 30 to 59% | 85 to 111 s | 69 to 78% | 3.8 to 5.5% | 341 to 476 µA |
+| **This draft, `w` 300 s** | **98.4%** | 82.4% | 197 s | 91.4% | 1.5% | 150 µA |
+| This draft, `w` 900 s | 99.7% | 86.4% | 519 s | 94.8% | 0.9% | 87 µA |
+| This draft, `w` 3600 s | 99.7% | 88.5% | 2033 s | 95.8% | 0.5% | 51 µA |
+
+What the first draft got wrong, and what changed it, each of the first
+four checked by running with and without the change on one seed:
+
+1. Poll answers paid for from the requests' share: one poll in ten was
+   answered. Paid for as acknowledgements now.
+2. `POLL_TRIES` of 3: some 40% of polls were lost on this channel, and
+   leaves changed keeper about 15 times an hour. 6 now.
+3. Listening after every frame of its own: a leaf's radio was on 9.3%
+   of the time. Sleeping while its message waits took that to 1.3%,
+   with no fewer delivered.
+4. `SLEEP_ANNOUNCE` of an hour, with no newer `seq`: routes lost to a
+   sleeping leaf stayed lost. Ten minutes, with a newer `seq` each
+   time, took delivery to sleeping leaves from 90% to 99.7%.
+5. `WAKE_MIN` of 30 s: polls took 13 to 17% of the airtime at wakes of
+   two minutes or less (the second row). 300 s now.
+6. `HOLD_LEAF` of 8: at a wake of an hour keepers dropped 47 frames.
+   With 16 no keeper held more than 12, and none was dropped.
+
+`LISTEN_MIN` of 2 s was enough at SF7: 1 s lost 1.3 points of
+delivery, and 4 s gained nothing.
+
+What the simulator left out: it gives every source each destination's
+`w` without the `0x04` frame going on the air; relays learn a leaf's
+keeper from its polls, the announce not carrying `keeper`; it has no
+first-contact frames to hold; and its leaves begin to sleep 30 minutes
+after they start.
+
 ## Not yet measured
 
-* **Delivery.** How many messages to sleeping leaves arrive, and how
-  late, in the simulator's scenarios, against leaves that listen all
-  the time: at several `w`, and with leaves that move. Nothing here
-  has been simulated.
-* **`HOLD_LEAF`, and how much a keeper needs.** How many frames wait
-  for a leaf at each `w`, and how many leaves a keeper keeps.
-* **`LISTEN_MIN`.** Whether two seconds covers a poll's answer and the
-  first held frame on a busy channel, given the answer's random wait
-  and listening first.
+* **Leaves that move.** The runs above were of leaves that stay put.
+* **The firmware.** The simulator's run of the firmware's own core
+  does not yet sleep: that needs the firmware to implement this
+  section.
+* **Slower profiles.** `LISTEN_MIN` was measured at SF7 only.
+* **How many leaves a keeper keeps**, and what it needs for them.
+* **Current drawn.** The currents here are from datasheets. What a
+  board draws asleep, polling and listening needs measuring on each
+  board the firmware supports.
+* **The floor.** Samples arrive once a wake, not once an announce; the
+  simulator's [recommendation](https://github.com/ternmesh/sim) leaves
+  a floor for sleeping leaves as an open question.
 * **Current drawn.** The estimates under [Rationale](#rationale) are
   from datasheets. What a board draws asleep, polling and listening
   needs measuring on each board the firmware supports.

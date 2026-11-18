@@ -29,7 +29,7 @@ KIND_SLEEP = 0x04
 FLAG_SLEEPS = 0x08
 RESERVED = (0, 0xFFFFFFFF)
 
-WAKE_MIN_S, WAKE_MAX_S = 30, 3600
+WAKE_MIN_S, WAKE_MAX_S = 300, 3600
 LISTEN_MIN_S = 2
 HOLD_EXTRA_S = 60
 # Forwarding's (draft/forwarding.md).
@@ -157,7 +157,7 @@ def sleep_valid(content):
 
 def holds(since_ms, listen_s):
     """Whether a keeper holds a frame for its leaf, since_ms after it received the leaf's last
-    frame, the leaf's last poll having given listen_s: it does while the leaf is not awake."""
+    poll, which gave listen_s: it does while the leaf is not awake."""
     return since_ms >= 1000 * listen_s
 
 
@@ -177,8 +177,8 @@ def self_check():
     assert held({"power": 14, "next": 0x0A0B0C0D, "destination": 7, "tag": 0xDEADBEEF}) == bytes.fromhex(
         "55" "00" "0e" "0a0b0c0d" "00000007" "deadbeef"
     )
-    assert wake_ok(30) and wake_ok(3600) and wake_ok(0x8000 | 60) and not wake_ok(0x8000 | 61)
-    assert not wake_ok(29) and not wake_ok(0xFFFF)
+    assert wake_ok(300) and wake_ok(3600) and wake_ok(0x8000 | 5) and wake_ok(0x8000 | 60)
+    assert not wake_ok(299) and not wake_ok(0x8000 | 61) and not wake_ok(0xFFFF)
     assert hold_for_s(300) == 660 and hold_for_s(0x8000 | 60) == 7260
     assert wait_ms(70, 300) == 5000 + 280 + 300000 + 2000
     assert holds(2000, 2) and not holds(1999, 2)
@@ -195,7 +195,7 @@ def build():
         {"sender": leaf, "keeper": keeper, "id": 0x1234, "wake": 300, "listen": 2, "power": 2},
         {"sender": leaf, "keeper": keeper, "id": 0xFFFF, "wake": 0x8000 | 60, "listen": 255,
          "power": -9},
-        {"sender": leaf, "keeper": keeper, "id": 0, "wake": 30, "listen": 10, "power": 22},
+        {"sender": leaf, "keeper": keeper, "id": 0, "wake": 0x8000 | 15, "listen": 10, "power": 22},
     ]
     answers = [
         {"sender": keeper, "leaf": leaf, "id": 0x1234, "margin": 140, "held": 0, "power": 2},
@@ -222,7 +222,7 @@ def build():
     rejected = [
         {"why": "too short", "frame": good[:-1].hex()},
         {"why": "too long", "frame": (good + b"\x00").hex()},
-        {"why": "wake under WAKE_MIN", "frame": poll({**p, "wake": 29}).hex()},
+        {"why": "wake under WAKE_MIN", "frame": poll({**p, "wake": 299}).hex()},
         {"why": "wake over WAKE_MAX", "frame": poll({**p, "wake": 0x8000 | 61}).hex()},
         {"why": "wake not a wake time", "frame": poll({**p, "wake": 0xFFFF}).hex()},
         {"why": "listen under LISTEN_MIN", "frame": poll({**p, "listen": 1}).hex()},
@@ -255,7 +255,7 @@ def build():
 
     sleep = [
         {"wake": w, "content": sleep_content(w).hex(), "valid": sleep_valid(sleep_content(w))}
-        for w in (0, 30, 300, 0x8000 | 60, 29, 0x8000 | 61, 0xFFFF)
+        for w in (0, 300, 0x8000 | 5, 0x8000 | 60, 30, 299, 0x8000 | 61, 0xFFFF)
     ]
     sleep.append({"content": "0400", "valid": False})
     sleep.append({"content": "04012c00", "valid": False})
@@ -264,10 +264,10 @@ def build():
         {"at_ms": at, "listen": l, "holds": holds(at, l)}
         for at, l in ((0, 2), (1999, 2), (2000, 2), (9000, 10), (10000, 10), (600000, 255))
     ]
-    hold_for = [{"wake": w, "hold_for": hold_for_s(w)} for w in (30, 300, 3600, 0x8000 | 60)]
+    hold_for = [{"wake": w, "hold_for": hold_for_s(w)} for w in (300, 900, 3600, 0x8000 | 60)]
     waits = [
         {"metric": m, "wake": w, "wait_ms": wait_ms(m, w)}
-        for m, w in ((70, 30), (420, 300), (0x7FFE, 0x8000 | 60))
+        for m, w in ((70, 300), (420, 900), (0x7FFE, 0x8000 | 60))
     ]
 
     return {
