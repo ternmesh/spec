@@ -314,8 +314,11 @@ gid = Expand(G, "tern v0 group id", 8)
 ```
 
 with `Expand` as in [Secured unicast frames](unicast-security.md#notation).
-The id is the same on every node that holds the group, and gives
-nothing of the secret away. Like the name, it is for the node and its
+A node works the id out when it takes the group, and keeps it when the
+group's [secret is replaced](groups.md#replacing-the-secret), so that a
+client knows the group by one id however many secrets it has had. So
+the id is the same on every node that took the group under the same
+secret, and gives nothing of any secret away. Like the name, it is for the node and its
 clients: a node MUST NOT send either on the air, but for the name in an
 [invite](groups.md#invites). No frame of this protocol carries a
 group's secret, but for a [join code](groups.md#join-codes), which
@@ -327,9 +330,10 @@ received from one. Its `id` is from the same count as a `MESSAGE`'s,
 so `READ`, `STATE` and a sync's `after` mean for it what they mean for
 a `MESSAGE`. `from` is the routing id the frame gave for its writer,
 and 0 for a message this node wrote. It is
-[what a member claimed](groups.md#receiving), and a client that shows
-it as a name it knows by that [routing id](routing.md#routing-ids)
-SHOULD NOT show it as proved. `time`, `flags` and `text` are as for a
+[what a member claimed](groups.md#receiving): a client MUST show it as
+claimed wherever it shows it, a name it knows by that
+[routing id](routing.md#routing-ids) included, and MUST NOT show it as
+it shows a contact. `time`, `flags` and `text` are as for a
 `MESSAGE`.
 
 A group message this node wrote is **waiting** until it has gone on the
@@ -853,7 +857,7 @@ group the node holds, with the name the node holds it under, and
 `LINK` answers it with the code's link, as that section writes it. A
 node MUST refuse a group it does not hold with `ERROR` 9. Nothing goes
 on the air, and nothing changes: the same group's link is the same
-until it is renamed.
+until it is renamed, or its secret is replaced.
 
 **`JOIN_LINK`** takes the group a join code is for, under the name the
 code gives, and `MADE` answers it with the group's id. A node MUST read
@@ -1481,6 +1485,10 @@ and a node needs a way to say it cannot be updated at all.
 
 * **Who is in a group.** A node does not know, and nor does a client:
   it sees the routing ids that have written.
+* **Replacing a group's secret** from a client: a request for it, and
+  news that a member replaced it. [Groups](groups.md#replacing-the-secret)
+  defines what goes on the air; a node follows a replacement whatever
+  its client's version, and the group keeps its id.
 * **What is left of the airtime budget**: `reason` 4 names
   [the budget](airtime.md), and `AIRTIME` gives only the region's
   limit. Fields for what is left are

@@ -8,7 +8,8 @@ A **group** is a set of nodes that share a secret. This section defines
 the frame one of them writes for all the others, the keys it is sealed
 with, what a member does with one it receives, and the two ways a node
 is handed a group's secret: an invite over a session, and a join code
-off the air. The frame reaches the others as [a flood](flooding.md).
+off the air, and how the members move the group to a new secret. The
+frame reaches the others as [a flood](flooding.md).
 
 Test vectors: [`vectors/groups.json`](../vectors/groups.json), produced
 by [`vectors/tools/groups.py`](../vectors/tools/groups.py).
@@ -32,22 +33,31 @@ by [`vectors/tools/groups.py`](../vectors/tools/groups.py).
    A frame recorded and sent again is not read again by a member that
    read it, nor by one that has since read later frames from the same
    writer, for as long as the member [holds that writer](#receiving):
-   until it forgets it for another, or restarts without keeping it.
+   until it forgets it for another. A restart does not forget it.
 6. **Standard primitives only**, and the ones a node already has:
    HKDF-SHA-256, AES-128 and AES-128-CCM.
 
 What this does **not** give, and a reader should know before the rest:
 
 * **A member can write as any other.** Every member holds the one key,
-  so the group can tell that a member wrote a frame and not which.
+  so the group can tell that a member wrote a frame and not which. Who
+  wrote a frame is [shown as a claim](#receiving), never as proved.
 * **No forward secrecy.** Whoever comes to hold the secret, by being
-  invited or by taking a member's node, can read every frame the group
-  ever sent that they recorded.
+  invited, by seeing a join code or by taking a member's node, can read
+  every frame sent under it that they recorded, before they joined as
+  well as after.
 * **Nobody can be removed.** A member who leaves, or is no longer
-  wanted, still holds the secret. The others start a new group.
+  wanted, still holds the secret. [Replacing the
+  secret](#replacing-the-secret) does not remove anyone who is listening
+  when it is replaced. To leave someone out, the others start a new
+  group.
 * **A member can silence another.** A frame that claims another's
   routing id and a high `count` makes the members that accept it refuse
-  that writer's own frames from then on. It follows from the first.
+  that writer's own frames, until the group's secret is replaced. It
+  follows from the first.
+* **A join code is the secret.** Anyone who has seen one, or a photograph
+  of one, or the link in a browser's history, holds the group, with all
+  of the above, until the secret is replaced.
 
 [Rationale](#rationale) says why, and what each would cost.
 
@@ -126,7 +136,14 @@ frame    = hdr || hops || power || N || gtag(N) || CCM(GK, 0^5 || N, A, P)
 
 1. The writer MUST draw `N`, 8 bytes, at random for each frame, from a
    generator fit for keys. It MUST NOT count, and MUST NOT make `N` from
-   anything that names the node or the time.
+   anything that names the node or the time. The generator MUST have
+   been seeded from a true source of randomness since the node last
+   started, and a node MUST NOT write a group frame while its generator,
+   or the source it draws on, reports a fault. A writer MUST NOT send a
+   frame whose `N` is the `N` it drew for the frame before, to any
+   group, nor one whose eight bytes are all the same: it draws again,
+   and if the second is as bad, it sends nothing until the generator
+   has been seeded again.
 2. `from` is the writer's own routing id.
 3. `count` MUST be greater than the `count` of every frame the writer
    has sent to that group under that routing id, whatever became of
@@ -158,7 +175,9 @@ copies arrive:
 
 1. A node MUST discard a frame shorter than 31 bytes, or whose `hdr`
    is neither `0x60` nor `0x61`.
-2. For each group it holds, it computes `gtag(N)` from the frame's
+2. For each group it holds, and for a group's
+   [old secret](#replacing-the-secret) as for a group of its own, it
+   computes `gtag(N)` from the frame's
    `nonce` and compares it with the frame's `gtag`. If none matches,
    the frame is not for this node, and it MUST NOT treat that as an
    error. Most frames a node hears are for groups it is not in.
@@ -176,11 +195,19 @@ copies arrive:
 6. If it does not hold `from` as a writer of that group, it accepts the
    frame whatever its `count`, and holds `from` as a writer, with that
    `count` as `H` and no other accepted. If it then holds more than
-   `WRITERS` for the group, it forgets the one it last accepted a frame
-   from longest ago.
+   `WRITERS` for the group, it forgets one writer other than `from`:
+   of those it has accepted only one frame from, the one it accepted
+   that frame from longest ago; or, if it has accepted more than one
+   frame from every one of them, the one it last accepted a frame from
+   longest ago.
 
-A member SHOULD keep its writers when it restarts. One that does not
-accepts again, after a restart, frames it accepted before it.
+A member MUST keep its writers when it restarts. After a restart it
+MUST NOT accept a frame it could not have accepted had it not
+restarted: one whose `count` it had accepted, or that is `H - WINDOW`
+or less for its writer as it was. It MAY keep only each writer's
+routing id and `H`, and take every count from `H - (WINDOW - 1)` to
+`H` as accepted, and it MAY take every writer it kept to be one it has
+accepted more than one frame from.
 
 Whether a node passes the frame on is [the flood's](flooding.md#passing-on)
 to say, and does not depend on any of this: a relay that holds no group
@@ -194,8 +221,13 @@ one whose
 one that does not go in a group frame, MUST do nothing more with it,
 and MUST NOT show it as words.
 
-`from` is what the frame says. A member that shows it to a user as a
-name it knows by that routing id is showing what a member claimed.
+`from` is what the frame says, and any member, or anyone who has seen a
+join code, can say it. An implementation that shows a user who wrote a
+group frame, by a name it knows that routing id by or otherwise, MUST
+show it as claimed, everywhere it shows it: in the conversation, in a
+list of conversations, in a notification and on a map. It MUST NOT
+show it as it shows a contact whose frames a
+[session](unicast-security.md) authenticates.
 
 ## Invites
 
@@ -233,8 +265,11 @@ a QR code or sent as text, that holds the group secret and a name for
 the group. Whoever has the code can join the group, with no session and
 nothing on the air, and can read every frame of it they hear from then
 on, and every one they recorded before. A join code is the group, for
-as long as the group lasts: it cannot be taken back, and it does not
-run out. [Rationale](#rationale) says why a group has one anyway.
+as long as the group keeps that secret: it cannot be taken back, and it
+does not run out. Once the secret is [replaced](#replacing-the-secret),
+the code reads only what was sent before, for anyone who was not
+listening when it was replaced. [Rationale](#rationale) says why a
+group has one anyway.
 
 The code's **payload** is:
 
@@ -281,7 +316,8 @@ is everything before it.
 * A node MUST NOT take a group from a join code on its own: as for an
   [invite](#invites), its user says so. It holds the group under
   `name`, which is a suggestion, and which the user may change. A node
-  that holds the group already holds it as it was.
+  that holds the group already, with that secret or with it as the
+  [old secret](#replacing-the-secret), holds it as it was.
 
 **What is at the link.** A browser that opens it fetches a page from
 `ternmesh.org`, which reads the payload from the link in the browser
@@ -289,10 +325,92 @@ and offers to join the group from there. A browser does not send what
 follows a `#`, neither in its request for the page nor in a `Referer`,
 so the site learns that a join code was opened, and not which group.
 The page's own code sees the secret, as any app that reads the code
-does. An app MAY claim the link, as for an address's.
+does. So a page served at the link:
+
+* MUST NOT send the payload, or anything made from it, anywhere, and
+  MUST NOT load a script, a style, an image or anything else from
+  another site;
+* MUST be served with a content security policy that allows it to load
+  only its own scripts and styles from its own site, and to connect to
+  nothing;
+* MUST, before it does anything else, take the payload out of the
+  address the browser shows and keeps for the page (in a browser,
+  `history.replaceState()`), and MUST NOT put it into another address:
+  a page that hands the code on to another page of its site does so in
+  storage the browser keeps for that tab alone.
+
+What a page cannot undo is that the browser saw the link before the
+page did. A browser can keep the address as it was opened in its
+history, and can copy that history to its maker's servers; a phone's
+camera or a messaging app can keep it too. Someone who later reads that
+history holds the group. An app that claims the link is opened in place
+of the browser, and so an app that reads join codes SHOULD claim the
+link, as for [an address's](sharing.md#the-link).
 
 A join code goes nowhere on the air: a node MUST NOT send one, or any
 part of one, and tells no other node that it joined from one.
+
+## Replacing the secret
+
+Any member can move its group to a new secret, and every member that
+hears it follows. It is how a group ends what a join code, or a secret
+handed on, gives someone who is not listening, and how it keeps one
+secret from sealing too many frames. It does not take the group from a
+member who is listening: [Rationale](#rationale) says why.
+
+The **replacement** is a frame with `node` set, written to the group
+under its secret like any other, whose `content` is:
+
+| Offset | Bytes | Field | |
+|---|---|---|---|
+| 0 | 1 | `kind` | `0x03`: a new secret |
+| 1 | 16 | `G'` | the new secret |
+
+A member that replaces its group's secret `G`:
+
+1. MUST draw `G'` as whoever makes a group draws `G`.
+2. Writes the replacement under `G`, with its next `count`, as it would
+   any frame.
+3. Then holds `G'` in place of `G`: under the same name, with no
+   writers for `G'`, and writing under `G'` from then on. It keeps `G`
+   as the group's **old secret**, below.
+
+A member that accepts a frame with `node` set whose `content` begins
+with `0x03`:
+
+1. MUST do nothing more with it if `content` is not 17 bytes, or if
+   `G'` is the secret or the old secret of a group it holds.
+2. If it accepted the frame under the group's secret, it MUST hold `G'`
+   in place of that secret, as in step 3 above, and keep the secret it
+   replaced as the old secret. An old secret it held before is
+   forgotten, with its writers.
+3. If it accepted the frame under the group's old secret, it MUST hold
+   `G'` in place of the group's secret if `G'` is less than that
+   secret, the two compared as 16-byte numbers, most significant byte
+   first. The secret it replaced is forgotten, with its writers, and
+   the old secret stays as it was. If `G'` is greater, it does nothing
+   more with the frame.
+4. MUST NOT wait for its user to agree: the user chose to hold the
+   group, and the secret is the group's. It SHOULD tell its user that
+   the secret was replaced.
+
+**The old secret.** A member receives under a group's old secret as
+under its secret: it compares the tag of every frame with the old
+secret's (step 2 of [Receiving](#receiving)), opens the frames whose
+tags match with the old secret's key, keeps the old secret's writers
+apart from the secret's, and takes what it accepts as the group's. It
+MUST NOT write under the old secret, but for the replacement again,
+below. It holds the old secret until the group's secret is replaced
+again, or it leaves the group, and MAY forget it, with its writers,
+sooner, to make room for a group.
+
+**Again, for those who missed it.** A member out of reach when the
+secret was replaced still writes under the old one. The member that
+wrote the replacement SHOULD write it again under the old secret, as a
+new frame with its next `count`, when it accepts under the old secret a
+frame from a writer it held for that secret when it replaced it; and it
+MUST NOT write it again more than once for each such writer. No other
+member writes it again.
 
 ## Parameters
 
@@ -329,7 +447,17 @@ An implementation conforms to this section if, for
   eight bytes, it accepts exactly those whose `accept` is true. These
   check both edges of the window, that a count is accepted once
   whatever the nonce, that a writer may skip, and which writer is
-  forgotten when there are more than `WRITERS`;
+  forgotten when there are more than `WRITERS`: one heard from once
+  before one heard from more often;
+* **replacements:** as a member holding `group_secret` and no writers,
+  whose routing id is `self`, given each frame of `deliveries` in
+  order, it accepts exactly those whose `accept` is true, under the
+  secret `under`, with that `from` and `content`; and after each, the
+  group's secret is `secret` and its old secret `old`, or none if
+  `old` is null. These check that a member follows a replacement, reads
+  under the old secret and the new, keeps their writers apart, takes
+  the lesser of two replacements of one old secret, and forgets the old
+  secret when the new one is replaced in turn;
 * **invites:** it builds `plaintext` from `group_secret` and `name`,
   and reads them from it;
 * **bad_invites:** it ignores each `plaintext`;
@@ -338,10 +466,12 @@ An implementation conforms to this section if, for
   and from each of `reads`;
 * **bad_join_codes:** it reads no group from any `link`.
 
-That a nonce is random, that a writer's `count` never goes back, and
-that an invite or a join code waits for the user, cannot be checked by
-vectors. They are requirements nonetheless, checked by reviewing an
-implementation.
+That a nonce is random and its generator seeded and sound, that a
+writer's `count` never goes back, that writers are kept across a
+restart, that a writer is shown as claimed, what a page at the link
+does, and that an invite or a join code waits for the user, cannot be
+checked by vectors. They are requirements nonetheless, checked by
+reviewing an implementation.
 
 Each `accepted` case also gives the intermediate values (the two keys,
 the CCM nonce, the tag and the plaintext) to help find where an
@@ -355,8 +485,11 @@ that only members can compute, so two frames of one group look no more
 alike than two frames of different groups, and nothing in either names
 a node. [The flood](flooding.md#what-an-observer-learns) says what its
 own three bytes give away. `hdr` is in clear, so the flag `node` tells
-an observer which group frames are not words: today, that they are
-[positions](positions.md#what-an-observer-learns).
+an observer which group frames are not words: a
+[position](positions.md#what-an-observer-learns), or, if it is 48
+bytes, perhaps a [replacement](#replacing-the-secret). That a group
+replaced its secret is not hidden; which group, and the new secret,
+are.
 
 What it can still do is count. Frames that leave one place soon after
 each other are likely one conversation, whatever they carry.
@@ -377,7 +510,16 @@ mesh on LoRa has least of.
 * *Signing each frame* would stop a member writing as another. An
   Ed25519 signature is 64 bytes: more than the whole of a short
   message's frame, on every frame, for every relay that passes it on.
-  A flag in `hdr` is free for it.
+  A 20-byte message is a 51-byte frame; signed, it is 115, more than
+  twice the airtime at every hop of the flood, and the most a frame
+  can say falls from 224 bytes to 160. A member would also need every
+  writer's public key, 32 bytes each, handed round before it could
+  check anything. A flag in `hdr` is free for it.
+* *A tag for each member*, from a key each pair of members shares,
+  proves the writer to each reader for 4 bytes a reader: 36 bytes a
+  frame in a group of ten, more than a short message, and every pair
+  of members
+  first needs a session.
 * *A key for each writer*, handed to every member over sessions and
   moved forward as it is used, gives forward secrecy and lets a group
   drop a member by handing new keys to the rest. It costs a unicast
@@ -393,6 +535,15 @@ A group here is for a conversation among people who are content to
 trust each other with it. Two nodes that want more have a
 [session](unicast-security.md).
 
+**Who wrote it, as a claim.** That a member can write as another is
+safe only if nobody is shown otherwise. A name beside a group message
+looks like a contact's beside a message in a session, which is proved,
+and a person reads the two alike unless they are shown differently.
+As first drafted, a client SHOULD NOT have shown a writer as proved;
+that left a client that did conforming, so it is a MUST, and it covers
+every place a writer is shown, since a notification or a list of
+conversations is often all a person reads.
+
 **A random nonce, not a counter.** Every writer seals under the one
 key, and CCM must never see a nonce twice under a key. Writers cannot
 share a counter without talking to each other first. A counter for each
@@ -405,6 +556,18 @@ without pause, at [the flood's allowance](flooding.md#the-allowance).
 Two frames that
 did share a nonce would give an observer the XOR of their plaintexts,
 and not the key.
+
+That bound holds only for a generator that is random. One that is not
+seeded, or whose source has failed, can give the same eight bytes
+again and again, and then every frame shares a nonce. So the generator
+is seeded from a true source each time the node starts, a fault stops
+group frames, and a writer checks each nonce against the one before
+it: the continuous test that FIPS 140-2 asked of a generator, which
+catches a source stuck on one value for the cost of eight bytes of
+RAM. A nonce of eight equal bytes is as likely as any other from a
+sound generator, and far more likely from a broken one. The bound is
+for the frames sealed under one secret, so a group that
+[replaces](#replacing-the-secret) its secret starts again from none.
 
 **A tag from the nonce.** A member could find its frames by trying to
 open every one. The tag costs four bytes and saves all but one AES
@@ -431,15 +594,62 @@ price is four bytes on every frame.
 order, since each finds its own way through the flood. A member that
 took only a `count` above the last would drop the one that was passed.
 Thirty-two is what [a session's receiver](unicast-security.md#receiving)
-allows behind its highest, and is a bit for each in one word. There is
-no limit ahead: a writer may skip, as one does that restarts from a
-count it saved some frames before.
+allows behind its highest, and is a bit for each in one word.
+
+**No limit ahead.** A writer may skip, as one does that restarts from a
+count it saved some frames before, or that keeps one count for all its
+groups and has written to the others. That is also what lets a member
+silence another: a frame under the other's routing id with a `count`
+of `2^32 - 1` makes every member that accepts it refuse the other's own
+frames from then on. A limit on how far a count can move at once was
+considered, and does not stop it:
+
+* *Refusing a count more than some `AHEAD` past `H`* turns one frame
+  into a few: the silencer steps up, `AHEAD` at a time, to the last
+  count, in `2^32 / AHEAD` frames, 65,536 of them for an `AHEAD` of
+  `2^16` and 256 for `2^24`. Each step already silences the writer
+  until it has written `AHEAD` frames, which for a person is never. And
+  a writer that rightly skips further, after months of positions to
+  another group, would be refused for good by every member that holds
+  it.
+* *Taking a far count only provisionally*, in a second window, until
+  more frames confirm it, costs eight bytes more for every writer, and
+  confirms nothing: the silencer sends the confirming frames too.
+* *Letting the writer answer*, by moving its own count past a frame
+  under its routing id that it hears, helps only where it hears that
+  frame; and with any limit ahead, members that did not hear it then
+  refuse the writer's next frame as too far.
+
+The remedy for a member who abuses the key is to stop it holding the
+key: [replacing the secret](#replacing-the-secret), for someone who is
+not listening, and a new group for someone who is. It ends the silence
+too, since nobody holds a writer for the new secret.
 
 **Sixteen writers.** A member cannot keep a count for every routing
 id: `from` is a claim, and a member could make any number of them. The
 group this section is for is a few people. In one where more than
-`WRITERS` write, the writer forgotten is the one unheard longest, and
-its old frames can be read again until it writes.
+`WRITERS` write, a writer is forgotten, and its old frames can be read
+again until it writes. As first drafted, the one forgotten was simply
+the one unheard longest, so a member could make up sixteen routing ids,
+write once under each, and have every member forget every real writer.
+Now a writer heard from once goes before one heard from more often: a
+made-up id forgets another made-up id, and one burst of them forgets at
+most one real writer. Writing twice under each made-up id still forgets
+them all, at twice the cost; the bar is low, and it is the one that
+costs nothing. More writers would cost RAM a node does not have: a
+writer is 16 bytes, so 16 writers are 256 bytes for each group and a
+kilobyte for a node's four, and a classic ESP32 has under a kilobyte of
+static RAM to spare. Which writers were heard from more than once costs
+one bit each.
+
+**Writers kept across a restart.** A member that forgets its writers
+when it restarts reads again every frame anyone recorded and floods
+back to it, so a restart, which anyone can cause by taking a node's
+power away, undoes goal 5. As first drafted, keeping them was only
+SHOULD. Keeping only the routing id and `H`, eight bytes a writer, and
+taking the window as full, refuses a few frames that arrive late after
+a restart and reads none twice; which writers were heard more than once
+need not be kept either.
 
 **A new label for the key.** As first drafted, the plaintext had no
 `count`, and the group key was `Expand(G, "tern v0 group key", 16)`. A
@@ -502,6 +712,69 @@ address](sharing.md#rationale) could not afford that in a version 3
 code, and a join code, which a phone or a computer shows and not a
 node's 64-pixel screen, can. `G` in the path leaves `A` for addresses.
 
+**A page that keeps the code to itself.** After a `#`, the secret
+reaches the page's script, and stays in the address bar, in the tab's
+history, and in the browser's history. The script is the site's, so
+it is held to sending nothing, and a content security policy makes
+that hold even for a script that tried: it can connect to nothing and
+load nothing from anywhere else. Taking the payload out of the address
+at once keeps it out of a bookmark, a shared screen and the back
+button. None of that reaches the history the browser recorded when the
+link was opened, which some browsers copy to their maker's servers;
+the page says so, and so does this section.
+
+**A link and not an app's scheme.** A link of the app's own, such as
+`tern:`, would keep the secret out of a browser's history, but only on
+a device that has an app for it: anywhere else, a phone's camera
+offers nothing, or a search. Any app can say it handles a scheme, so a
+code could open someone else's app, while a phone opens a link in an
+app only if `ternmesh.org` names that app. An app that claims the link
+gets what a scheme would give on a device that has it, and the link
+still works on one that does not.
+
+**Replacing the secret, in the group.** A join code and a secret handed
+on cannot be taken back, and a member can silence another; each lasts
+for as long as the secret. A frame that hands the members a new one
+ends all three for anyone not listening when it goes: a photograph of
+a code, a link in a browser's history, a node taken from a drawer. It
+costs one frame, written as any other, needs no session and no route,
+and reaches every member that hears the group. That is also its limit:
+whoever hears the group, a member to be left out included, hears the
+new secret. Leaving someone out takes a new group, handed by invite to
+each of the others; that needs nothing new and is what a group already
+does.
+
+* *Asking the user first*, as for an invite, would leave a group split
+  between those who said yes and those who did not, or have not yet.
+  The user chose the group, not its secret.
+* *Keeping the old secret for reading* lets a member read frames that
+  were on their way when the secret was replaced, and members who
+  missed the replacement and still write under it. Writing the
+  replacement again when such a frame arrives brings them over. Only
+  the member that replaced it does so, and once for each writer, so
+  that a frame under the old secret does not set every member writing;
+  and only for writers it held, so that someone who joins from an old
+  code and writes is not handed the new one. Someone who also claims a
+  member's routing id is: an old code still gives the new secret to
+  whoever acts as a member. Two secrets held is a second tag to compute
+  for each frame, and the old secret's writers.
+* *The lesser of two.* Two members who replace one secret at once would
+  split the group. A member that hears both takes the lesser, so both
+  writers and every member that hears both end with one. A member that
+  hears only the greater stays with it until it writes under the old
+  secret, and so this does not join every member; nothing short of
+  agreement between members would.
+* *Following on its own, with no proof.* Any member can replace the
+  secret, as any member can write as another. A member who does so to
+  make trouble gains nothing it did not have: it holds the old secret
+  and the new.
+* *A new secret by unicast*, in an invite to each member, would leave
+  out whoever it is not sent to, for a session and a message for each
+  member, and is what a new group already costs.
+
+`kind` `0x03` is the next free kind of content for the node, after an
+[invite's](#invites) and a [position's](positions.md#the-position).
+
 **A name in the code.** An invite carries what the inviter calls the
 group, so the person joining sees what they are joining before they
 say yes. A code does the same. It is shown on a phone's or a
@@ -525,10 +798,14 @@ id](companion.md#groups), which is also a function of `G`.
   again is accepted, as new words, by a member that did not receive it
   and has accepted nothing later from its writer: one that was out of
   reach, one that joined since, or one that has forgotten the writer.
-  A time in the plaintext would close it for nodes that know the time.
+  A time in the plaintext would close it for nodes that know the time,
+  for four bytes a frame, and would refuse a writer whose clock is
+  wrong: see [No clock](#rationale).
 * **Signed frames**, for groups that will pay for them.
-* **A new secret for a group**, handed round by its members without
-  each inviting the rest again.
+* **Leaving someone out**, for a group whose members will each start a
+  session with the others, other than by starting a new group.
+* **Two replacements at once**, for members that heard only one of
+  them.
 * **What `content` is**, with `node` clear: its text, and whether
   anything says a frame answers another. As for a unicast message, this section carries
   bytes.
