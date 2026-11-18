@@ -29,6 +29,7 @@ FLOOD_HOPS = 5
 HDR_CARD = 0x68
 CARD_MIN, CARD_MAX = 103, 134
 CARD_HOPS = 2
+POSITION_HOPS = 2  # draft/positions.md: what a position's flood to a group starts with
 FLOOD_SPARSE = 8
 FLOOD_WAIT = 8
 FLOOD_COPIES = 2
@@ -354,7 +355,10 @@ def build():
         "the id as seen; an id never taken is not seen. In allowances, a bucket that fills at "
         "share_ppm millionths of the node's time and holds window_s seconds of that, or one "
         "255-byte frame if that is more, is full at time 0; each frame is offered at at_ns, and "
-        "is sent and charged if the bucket pays.",
+        "is sent and charged if the bucket pays. In starts, a node's own frame of that hdr goes "
+        "with one of hops, and over many frames with each of them: a group frame at FLOOD_HOPS or "
+        "one less, a card at CARD_HOPS, and a group frame for the node, which is a position "
+        "(draft/positions.md), at POSITION_HOPS.",
         "generator": "vectors/tools/flooding.py",
         "heads": heads,
         "rejected": rejected,
@@ -368,6 +372,11 @@ def build():
         "powers": powers,
         "seen": seen,
         "allowances": allowances,
+        "starts": [
+            {"hdr": 0x60, "hops": [FLOOD_HOPS - 1, FLOOD_HOPS]},
+            {"hdr": 0x61, "hops": [POSITION_HOPS]},
+            {"hdr": 0x68, "hops": [CARD_HOPS]},
+        ],
     }
 
 

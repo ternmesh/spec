@@ -474,11 +474,14 @@ proves it, and decides then.
 
 A node MUST take first contact from an address that is a contact, if
 it has room for another session or shares one with that address
-already. A node holds at most one session with an address: first
-contact with an address it shares a session with puts the new session
-in the old one's place, once the handshake is complete, and needs no
-more room. That is how two nodes recover when only one of them still
-holds their session. Whether it takes first contact from any other address is its
+already, unless its user has it
+[answer no first contact](first-contact.md#responding). A node holds
+at most one session with an address: first contact with an address it
+shares a session with puts the new session in the old one's place, once
+the handshake is complete, and needs no more room, and the old session
+is [erased](first-contact.md#erasure) then. That is how two nodes
+recover when only one of them still holds their session, and how a
+sender [starts a session again](unicast-security.md#starting-again). Whether it takes first contact from any other address is its
 own choice: a node with no client to ask, such as a relay on a mast,
 may have to take anyone.
 
@@ -954,9 +957,14 @@ be restarting into the image: it waits for the node, and reads
 
 A node keeps everything it holds across an update: its address, its
 sessions, contacts, groups, messages and settings, and its Bluetooth
-bonds. A node SHOULD go back to the firmware it ran before if the new
-image does not start, so that a bad image does not leave it unable to
-take another. While an update is under way, the node goes on as at any
+bonds. A session is kept as [the secured unicast
+frame](unicast-security.md#storage) requires across any restart, with
+every counter it has used and every message it has accepted. A node
+SHOULD go back to the firmware it ran before if the new image does not
+start, so that a bad image does not leave it unable to take another.
+Going back MUST NOT take a session back to an earlier state: a node
+that would read its sessions in the firmware it goes back to as they
+were before the update, not as they are, MUST erase them instead. While an update is under way, the node goes on as at any
 other time: it sends news, answers other requests, and is on the air.
 
 Anyone who can drive a node can update it: over Bluetooth, a client

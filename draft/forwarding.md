@@ -187,7 +187,10 @@ An acknowledgement for another message with the same tag ends the hop
 too, wrongly, once in 2^32 for each pair of messages a node hears at
 once. The message is then not sent again from that node, and its source
 sends it again as for any other loss: the source is not deceived,
-[checking `proof`](#messages) against its own message.
+[checking `proof`](#messages) against its own message. No node on the
+way can check `proof`, so an acknowledgement forged by a node in
+earshot ends a hop in the same way, and costs the message the same
+retry from its source.
 
 It listens for `HOP_WAIT` plus twice the frame's airtime, from when the
 frame went on the air. Without either, it sends the frame again, up to
@@ -214,9 +217,10 @@ neighbour it was sent to. The node takes its `power` and
 signal-to-noise ratio as it would an announce's
 ([Links](routing.md#links)): a sample for the neighbour's floor, and
 proof that it was heard just now. It also takes 1 dB off the
-neighbour's boost. An acknowledgement that ends a message's last hop
-teaches the same, if its `hops` is `HOP_MAX`: only then did the
-destination itself send it.
+neighbour's boost. An acknowledgement teaches nothing, even one that
+ends a hop: a node MUST NOT take a sample, or take anything off a
+boost, from one. No node on the way can check it, and anyone can send
+one.
 
 **A hop given up.** The neighbour's boost goes up by `STEP`, and never
 above the node's full power less its lowest. A neighbour with
@@ -242,45 +246,58 @@ way.
 **The destination** of a message opens it as the
 [secured unicast frame](unicast-security.md#receiving) says, and
 answers with an acknowledgement to the node it came from, which it
-knows from the session the tag belongs to. It answers every copy it
-receives: an acknowledgement is one frame, and as easily lost as any.
+knows from the session the tag belongs to. It answers copies too, as
+below: an acknowledgement is one frame, and as easily lost as any.
 
-**A copy** is a message frame that the destination does not accept,
-and whose tag is the destination tag of a message it has accepted, in
-any session it holds, with a counter no more than 31 below that
-direction's `H`. A destination MUST acknowledge a copy as it did the
-message, and MUST NOT accept it, or acknowledge any other frame it does
-not accept.
+**A copy** is a message frame that the destination does not accept, of
+the same length and `hdr` as a message it has accepted, in any session
+it holds, with that message's destination tag, the same first four
+bytes of AEAD tag, and a counter no more than 31 below that direction's
+`H`. A destination MUST acknowledge a copy as it did the message,
+unless it has already sent `COPY_ACKS` acknowledgements of that
+message, the first among them, or more than `COPY_TIME` has passed
+since it accepted it. It MUST NOT accept a copy, nor acknowledge any other frame
+it does not accept.
 
-Four bytes can be the tag of more than one such message, in two
-sessions or in one, and nothing else in a copy says which it is a copy
-of. So a destination MUST acknowledge every one of them, each with its
-own `proof` and to its own session's other end: one of the
-acknowledgements is the one that was lost, and the others are copies of
-acknowledgements already sent, which their sources ignore or have no
-more use for.
+Four bytes of tag, and four of AEAD tag, can be those of more than one
+such message, in two sessions or in one, and nothing else in a copy
+says which it is a copy of. So a destination MUST acknowledge every one
+of them that it still answers, each with its own `proof` and to its own
+session's other end: one of the acknowledgements is the one that was
+lost, and the others are copies of acknowledgements already sent, which
+their sources ignore or have no more use for.
 
-So it keeps the tags of the counters it has accepted for as
-long as they are within 31 of `H`: those of the lower half of its
-window, which it computed to receive them.
+So for each counter it has accepted, for as long as it is within 31 of
+`H`, a destination keeps the first four bytes of its AEAD tag, its
+length and `hdr`, when it was accepted, and how many acknowledgements
+of it have gone, and keeps the [tag key](unicast-security.md#keys) of
+its epoch, which gives its tag and its `proof`. A copy is not opened:
+its message key may be erased by then.
 
-A copy is known by its tag alone, with nothing checked: the key that
-would check it may be erased by then, as the secured unicast frame
-requires. That gives away nothing. `proof` goes out only for a message
-that was accepted, says only that it was, and has been sent in clear
-once already.
+A copy shows what an acknowledgement shows: that the destination has
+the message, and where the node that sent it is, since the
+acknowledgement goes there. Anyone who heard a message can send it
+again, as often as they like and from anywhere. A destination that
+answered every copy would tell a stranger far from the message's path
+where its sender is, for as long as the session lasted, and would send
+an acknowledgement the length of the path back for each frame the
+stranger sent. `COPY_ACKS` bounds what one message can be made to cost,
+and `COPY_TIME` how long after it went it can tell anyone anything. The
+AEAD tag means that a copy has to be the message itself: a frame with
+only its destination tag, which anyone who heard the message knows, is
+not answered.
 
 `proof` shows that the destination, and no node on the way, sent the
 acknowledgement. For message `n` in direction `d`:
 
 ```
-proof = AES(TK_d, 0^11 || 0x01 || u32be(n))[0..4]
+proof = AES(TK_d(e), 0^11 || 0x01 || u32be(n))[0..4]
 ```
 
-with `TK_d` the direction's tag key. The destination tag is the same
-with `0x00` in place of `0x01`, so neither gives the other. Only the
-two ends hold `TK_d`. A node on the way that claims a message arrived
-has one chance in 2^32 for each try.
+with `TK_d(e)` the tag key of the epoch `n` is in. The destination tag
+is the same with `0x00` in place of `0x01`, so neither gives the other.
+Only the two ends hold `TK_d(e)`. A node on the way that claims a
+message arrived has one chance in 2^32 for each try.
 
 **The source** keeps a message until it is acknowledged. It waits
 
@@ -292,12 +309,16 @@ from when the message first goes on the air: the metric is airtime, so
 this is a few journeys there and back. An acknowledgement is **valid**
 for a message if its `tag` is the message's destination tag and its
 `proof` is the one above for the message's direction and counter; a
-source MUST NOT take any other as showing that a message arrived.
-Without a valid acknowledgement
+source MUST NOT take any other as showing that a message arrived. It
+keeps the tag key of the message's epoch while it waits, as
+[the secured unicast frame](unicast-security.md#keys) allows. Without
+a valid acknowledgement
 by then it starts the message again — the same frame, with `hops` at
 `HOP_MAX`, on whatever route it has now, whatever had become of the
-copy before, and [not at once](#hops) — up to `RETRIES` times. After the last wait it gives the
-message up and tells the application.
+copy before, and [not at once](#hops) — up to `RETRIES` times. After
+the last wait it **gives the message up** and tells the application.
+A message given up counts toward
+[starting the session again](unicast-security.md#starting-again).
 
 A source with no route, and none it takes
 [by default](routing.md#a-leafs-default-route), asks for one, as a
@@ -333,6 +354,8 @@ given up: a node may choose not to answer.
 | `ACK_WAIT` | 5 s | |
 | `ACK_FACTOR` | 4 | |
 | `RETRIES` | 3 | so a message is tried four times |
+| `COPY_ACKS` | 4 | `RETRIES` + 1: acknowledgements of one message, the first among them |
+| `COPY_TIME` | 600 s | longer than a source keeps trying on the longest route a metric describes: four waits of `ACK_WAIT + ACK_FACTOR × 0x7FFE` ms are 544 s |
 | `HEAD_WAIT` | 13 | symbols: the 4.25 that end a preamble and the 8 that hold a header, rounded up |
 | `LOOK` | 5 ms | |
 
@@ -345,7 +368,8 @@ An implementation conforms to this section if, for
   fields from `frame`;
 * **rejected:** it discards each `frame`;
 * **hops:** having sent the frame `sent`, it finds that receiving the
-  frame `heard` ends the hop, or not, as `ends` says;
+  frame `heard` ends the hop, or not, as `ends` says, and takes it as a
+  sample of the neighbour's floor, or not, as `teaches` says;
 * **waits:** having sent the frame `sent`, it listens for the hop to
   succeed and sends the frame again if it does not, or sends it once,
   as `listens` says;
@@ -377,15 +401,16 @@ which holds the cases that need a session's keys:
 * **acknowledgements:** as the node that sent message `counter` in
   `direction` of the session `session_secret`, it takes `frame` as
   showing that the message arrived, or not, as `valid` says;
-* **sequences:** as that file's receiver, it acknowledges exactly the
-  deliveries whose `acknowledge` is true, each with the delivered
-  frame's tag and that `proof`. A delivery acknowledged and not
-  accepted is a copy;
+* **sequences:** as that file's receiver, given each delivery at
+  `at_s` seconds, it acknowledges exactly the deliveries whose
+  `acknowledge` is true, each with the delivered frame's tag and that
+  `proof`. A delivery acknowledged and not accepted is a copy;
 * **collisions:** as that file's receiver, for each delivery it sends
   exactly the acknowledgements in `acknowledge`, in any order: for each,
   the delivered frame's tag and that `proof`, to the other end of that
   `session`. A copy whose tag two accepted messages share is
-  acknowledged for both.
+  acknowledged for the one whose AEAD tag it shares, and not for the
+  other.
 
 When frames go depends on random times and on what is heard. A case
 can hold a random time's bound, as `agains` does, and not that it is
@@ -519,6 +544,34 @@ listening, 19 and 19, and the boards waited 10 and 15 times.
 An earlier draft's figures were from nodes that knew of a frame the
 instant it began, as no radio does, and then waited 120 to 360 ms
 before they looked again: 96.7% and 15.2% on these runs.
+
+**Why an acknowledgement teaches nothing, and still ends a hop.** A
+node on the way cannot tell an acknowledgement from a forgery, and as
+first drafted one that ended a message's last hop was a sample of the
+destination's floor. A forger could then turn a node down until it no
+longer reached its neighbour. Taking nothing from acknowledgements
+changed nothing measurable. On the 1000-node runs above, on SF7, with
+the tables a board keeps (the simulator's
+`scenarios/scale/region-core-fast.tsim` with that traffic, three
+seeds), 98.9% of messages arrived in time against 99.1%, at 0.313 a
+second on the air against 0.319, each within the seeds' spread (99.5%,
+98.7% and 99.0% as it was). Relays that also went
+on sending until they heard the frame passed on, and took no
+acknowledgement as ending a hop but its last, did cost: 97.9%, at 0.265,
+and a third more airtime passing frames on, since a relay often hears
+the acknowledgement and not its neighbour. A node that can forge an
+acknowledgement in earshot of a relay can as easily keep that relay
+from hearing anything, and the source, which checks `proof`, is not
+deceived. So a forged acknowledgement can cost a message a retry from
+its source, and nothing more.
+
+**Why copies are answered so far and no further.** The same runs, with
+a destination that answered no more than four acknowledgements of a
+message and none after ten minutes, delivered what they did before
+(99.0% and 0.318), and refused 20 copies a run. With two, 400 copies a
+run were refused, and sources heard 1.4% fewer acknowledgements. On the
+slow preset, where most of what is sent is lost, neither moved
+anything beyond the seeds' spread.
 
 **Why listen, and not acknowledge each hop.** The next node sends the
 frame anyway. Hearing it costs nothing, and an acknowledgement for each

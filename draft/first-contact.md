@@ -54,7 +54,8 @@ As in [unicast-security.md](unicast-security.md#notation), and:
   address `A`.
 * The names in `CAPITALS` are parameters of
   [Frames that follow routes](forwarding.md#parameters), but for
-  `CONTACT_HOLD`, which is [below](#sending-again).
+  `CONTACT_HOLD`, `CONTACT_ANSWERS` and `CONTACT_SPAN`, which are
+  [below](#parameters).
 
 ## Addresses
 
@@ -217,6 +218,22 @@ has verified `message_4`.
 Whether a node accepts contact from a given address is up to it. This
 section only establishes who the address is.
 
+**How often.** A node MUST NOT send more than `CONTACT_ANSWERS`
+`message_2` frames, first or [again](#sending-again), in any
+`CONTACT_SPAN`. A `0x51` frame that would take it past that is
+discarded before the node computes anything for it, as one that is not
+for the node is. A responder learns who is asking only from
+`message_3`, so it answers a stranger's `message_1` as it does a
+friend's, and each `message_2` is its own frame, paid for from its
+[own part](airtime.md#the-parts) of the airtime budget. Without a
+limit, anyone who knows a node's address could spend that part for it,
+and its user's messages would wait.
+
+**Answering none.** A node MAY answer no `message_1` at all, for as
+long as its user chooses. It can still begin first contact itself. It
+is the only way a node can keep strangers from making it send: it also
+keeps its contacts from reaching it, until it writes to them first.
+
 ## Failures and repeats
 
 * A node MUST NOT send an EDHOC error message.
@@ -268,10 +285,6 @@ send `message_4` again, until `CONTACT_HOLD` has passed with no frame
 of the handshake received. Then it MUST abort the handshake, or erase
 what it kept.
 
-| Name | Value | |
-|---|---|---|
-| `CONTACT_HOLD` | 60 s | provisional |
-
 ## Erasure
 
 Once a node has derived `S`, it MUST erase its ephemeral private key,
@@ -279,6 +292,21 @@ every Diffie-Hellman result, and every EDHOC key and pseudorandom key of
 the handshake, keeping only what it needs to resend its last frame. It
 then treats `S` as [unicast-security.md](unicast-security.md#keys)
 requires. A node that aborts a handshake erases the same.
+
+A node that puts a new session in the place of one it held with the
+same address MUST erase the old one then, every key of it, wherever it
+kept them, as [the secured unicast frame](unicast-security.md#storage)
+requires of any key it erases. The old session's keys open messages
+the new one's never will, and keeping them would undo the forward
+secrecy the new handshake gave.
+
+## Parameters
+
+| Name | Value | |
+|---|---|---|
+| `CONTACT_HOLD` | 60 s | provisional |
+| `CONTACT_ANSWERS` | 4 | `message_2` frames in any `CONTACT_SPAN`; provisional |
+| `CONTACT_SPAN` | 10 min | provisional |
 
 ## Conformance
 
@@ -307,7 +335,11 @@ An implementation conforms to this section if, for every case in
   `frame`: `message_2`, to the routing id `source` that `frame` names;
 * **rejected:** with the receiver of message `message` of the named
   handshake in the state that handshake leaves it in, given `frame` in
-  its place, it sends nothing and derives no session.
+  its place, it sends nothing and derives no session;
+* **answers:** as a responder given `responder_seed`, receiving each
+  `message_1` frame of `arrivals` at its `at_s` seconds, it answers
+  exactly those whose `answered` is true. Its ephemeral keys and `C_R`
+  are its own; only whether it answers is checked.
 
 Erasure cannot be checked by vectors. It is checked by reviewing an
 implementation.
@@ -422,10 +454,16 @@ anyone made it answer.
 can send it a `message_1` naming a third node as `source`, and
 `message_2`, 60 bytes, goes to that node across the mesh. That is no
 more than the stranger could do by sending the third node a frame
-itself: relays pass on what they are given. The
-[airtime budget](airtime.md#the-parts) limits it: `message_2` is the
-responder's own frame, and waits for its own part, and each relay
-passes it on from its relayed part.
+itself: relays pass on what they are given. What it does cost is the
+responder's: `message_2` is its own frame, paid for from its own part,
+and each relay passes it on from its relayed part. `CONTACT_ANSWERS`
+bounds that to four frames in ten minutes. The cost of the limit is that a
+stranger who sends four `message_1` frames every ten minutes keeps
+anyone else from making first contact with that node; sessions it
+already holds are not touched. A limit for each `source` was
+considered and set aside: `source` is whatever the stranger writes.
+A responder that refused strangers would be better, and cannot be: it
+learns who is asking from `message_3`, after it has answered.
 
 **`message_4` always.** EDHOC needs `message_4` when the responder sends
 nothing protected afterwards. Without it, an initiator
@@ -434,9 +472,11 @@ accepted, and would have nothing to tell it to send `message_3` again.
 It costs one 24-byte frame. A later draft may let the
 responder's first unicast frame stand in for it.
 
-**No error messages.** They cost airtime. Silence also means a node
-reveals nothing about itself to an initiator that fails, not even
-whether it exists.
+**No error messages.** They cost airtime, and a node that refuses after
+`message_3` says nothing of why. Silence does not hide that a node
+exists: anyone who knows its address can send it `message_1`, and
+`message_2` comes back, unless the node has answered as many as it
+may, or [answers none](#responding).
 
 **No EAD.** Nothing in draft 0 needs it. A receiver that rejects it
 keeps the message lengths fixed, and padding is undecided, as it is for
@@ -453,8 +493,6 @@ published as a standard.
   1 s limit, SF10 or faster
   ([analysis](../analysis/first-contact-fit.md)). This belongs with the
   region profiles.
-* **Limits on handshakes** a node will respond to, against nodes that
-  send `message_1` to make it compute.
 * **A shortcut for nodes that have met before.**
 * **The waits, measured.** `CONTACT_HOLD` is a guess, and the others
   were settled for messages. No handshake has yet crossed a relay on

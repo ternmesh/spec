@@ -45,6 +45,8 @@ CTAG_LABEL = b"tern v0 contact"
 METHOD = 3  # static DH on both sides
 SUITE = 0  # AES-CCM-16-64-128, SHA-256, 8-byte MAC, X25519, EdDSA
 KID_R = b"\x00"
+CONTACT_ANSWERS = 4  # message_2 frames, first or again, in any CONTACT_SPAN
+CONTACT_SPAN = 600  # seconds
 
 
 def hdr(n: int) -> int:
@@ -781,6 +783,28 @@ def build() -> dict:
     reject("message_3-impersonation", "message_3 from the initiator, claiming the third node's address: it "
            "decrypts and names a valid address, and only the MAC_3 check refuses it", 3, f3_imp, as_responder_3)
 
+    # How often a responder answers: no more than CONTACT_ANSWERS message_2 frames, first or again,
+    # in any CONTACT_SPAN. The first handshake's message_1 comes again and again; later another
+    # node's, once the first handshake has lapsed (CONTACT_HOLD).
+    _, g1 = initiator_start(other_seed, address(r_seed), det("x answers"), b"\x02")
+    assert responder_receive_1(r_seed, det("y answers"), b"\x03", g1) is not None
+    answered_at = []
+    arrivals = []
+    for f, at in [(f1, 0), (f1, 10), (f1, 20), (f1, 30), (f1, 40), (f1, 100),
+                  (g1, 700), (g1, 701), (g1, 702), (g1, 703), (g1, 704)]:
+        ok = sum(1 for t in answered_at if at - t < CONTACT_SPAN) < CONTACT_ANSWERS
+        if ok:
+            answered_at.append(at)
+        arrivals.append({"frame": f.hex(), "at_s": at, "answered": ok})
+    assert [a["answered"] for a in arrivals] == [True] * 4 + [False] * 2 + [True] * 4 + [False]
+    answers = [{
+        "name": "answers",
+        "note": "one message_1 again and again, then another node's: four message_2 frames in any "
+        "ten minutes, first or again, and no more",
+        "responder_seed": r_seed.hex(),
+        "arrivals": arrivals,
+    }]
+
     return {
         "description": (
             "First contact, draft 0 (draft/first-contact.md). For each address, an implementation "
@@ -800,7 +824,10 @@ def build() -> dict:
             "session. Every frame is as its sender makes it for a destination it hears: hops is "
             "32, power 14, and next the destination. Those three are the nodes' on the way to "
             "set (draft/forwarding.md), and a frame is the one given if it is equal in hdr, "
-            "byte 0, and from destination, byte 7, on. Routing ids are numbers; other values are hex."
+            "byte 0, and from destination, byte 7, on. Routing ids are numbers; other values are hex. "
+            "For each of answers, a responder given responder_seed, receiving each frame of "
+            "arrivals at at_s seconds, MUST answer exactly those whose answered is true; its own "
+            "ephemeral keys and connection identifiers are its own to choose."
         ),
         "generator": "vectors/tools/first_contact.py",
         "exporter_label": EXPORTER_LABEL,
@@ -810,6 +837,7 @@ def build() -> dict:
         "not_for_me": not_for_me,
         "sources": sources,
         "rejected": rejected,
+        "answers": answers,
     }
 
 
