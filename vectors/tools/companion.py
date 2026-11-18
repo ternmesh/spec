@@ -30,7 +30,7 @@ import sharing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 13
+VERSION = 14
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -1328,7 +1328,7 @@ def build():
                  for g in (MADE_SECRET, INVITED_SECRET, bytes(16), bytes([0xFF] * 16))]
 
     return {
-        "description": "The companion protocol, version 13 (draft/companion.md). Frames, streams, "
+        "description": f"The companion protocol, version {VERSION} (draft/companion.md). Frames, streams, "
         "addresses and group ids are hex; numbers are numbers; strings are text. In frames, "
         "frame is the frame alone, as one BLE write or notification carries it, and stream is "
         "the same frame as it goes on a byte stream. In extended, frame carries bytes past the "
