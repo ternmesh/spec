@@ -27,8 +27,8 @@ by [`vectors/tools/cards.py`](../vectors/tools/cards.py).
    about; it carries no conversation. Talking is a session, which costs
    only the two who talk.
 2. **Off until a user turns it on.** A node that has not been told to
-   send cards sends none, and the rest of the protocol is as private as
-   it was.
+   send cards sends none, and then its address goes on the air in
+   clear in no frame at all.
 3. **Local and rare.** A card starts with two hops, so that in a crowd
    one relay passes it on, and a node sends one every two hours. What
    cards cost the mesh grows with how many nodes send them and not with
@@ -44,9 +44,13 @@ What this does **not** give, and a reader should know before the rest:
   address chose the name, not that the name is true. Two cards can
   carry one name.
 * **A card puts its sender's address in clear.** Every other frame
-  keeps it out ([first contact](first-contact.md#goals), goal 2). A
-  node sending cards can be recognised by anyone in earshot, every time
-  it sends one: that is what turning cards on is.
+  keeps it out: announces carry a [key blinded
+  from it](routing.md#routing-ids), and [first
+  contact](first-contact.md#goals) (goal 2) encrypts it. A node sending
+  cards can be recognised by anyone in earshot, every time it sends
+  one: that is what turning cards on is. Anyone who hears a card can
+  also compute the node's routing id from the address, and so tell its
+  announces, and the frames that are for it, wherever they hear them.
 * **Nothing stops a flood of cards from new keys.** Anyone can make an
   address. The [allowance](flooding.md#the-allowance) bounds what any
   one transmitter costs each relay, as for every flood.
@@ -206,8 +210,13 @@ user turns them on. A user who wants to be found by some people and not
 others has [sharing](sharing.md) instead, which puts nothing on the
 air.
 
-What a card does **not** tell an observer is who the node talks to:
-its sessions and its groups' frames look as they did.
+A card also gives the node's routing id, which anyone who has the
+address can compute. An observer who has heard the node's cards can
+then tell which [routed frames](forwarding.md#what-an-observer-learns)
+are for it, and from their acknowledgements which it wrote, and to
+which routing ids. What a card does **not** tell an observer is what
+the node says, nor which groups it is in: its sessions and its groups'
+frames are as sealed as they were.
 
 ## Rationale
 

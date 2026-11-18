@@ -392,9 +392,11 @@ def ctags(g_x: bytes, g_rx: bytes):
 
 
 def rid(a: bytes) -> int:
-    """A node's routing id (draft/routing.md), as vectors/tools/routing.py has it."""
-    h = hashlib.sha256(b"tern routing id" + a).digest()
-    return next(v for v in (int.from_bytes(h[i : i + 4], "big") for i in range(0, 32, 4)) if v not in RESERVED)
+    """A node's routing id (draft/routing.md): the id of the key blinded from its address, as
+    vectors/tools/routing.py makes it."""
+    import routing
+
+    return routing.rid(a)
 
 
 def frame(n, ctag, message, destination, source=None):
@@ -525,7 +527,9 @@ def responder_receive_3(st, f, check_address=True, check_mac=True):
     th_4 = H(cbor(th_3) + pt_3 + cred(a_i))
     k_4, iv_4 = kdf(prk_4e3m, 8, th_4, KEY_LEN), kdf(prk_4e3m, 9, th_4, IV_LEN)
     m4 = cbor(seal(k_4, iv_4, th_4, b""))
-    return frame(4, st["ctag"][4], m4, rid(a_i)), a_i, session_secret(prk_4e3m, th_4)
+    # An address that is not valid has no routing id: only reached with check_address off.
+    to = rid(a_i) if valid_address(a_i) else 0
+    return frame(4, st["ctag"][4], m4, to), a_i, session_secret(prk_4e3m, th_4)
 
 
 def initiator_receive_4(st, f):

@@ -288,7 +288,9 @@ ratio of the last frame heard from it, in quarters of a dB. `heard` is
 how many seconds ago that was, up to `0xFFFF`, as of when the record
 was sent. A client knows a neighbour's address only if it can match the
 routing id to one, by working out the [routing id](routing.md#routing-ids)
-of each address it knows.
+of each address it knows: a key blinded from the address, one scalar
+multiplication in the Ed25519 group, and a hash, which a client can
+keep with the address rather than work out again.
 
 **The air** (`AIRTIME`). The region's limit on transmitting, as the
 node is spending it. `period` is the length of the period the profile
@@ -566,7 +568,10 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 13. Version 12 is the same without
+version 14. Version 13 is the same in every frame, but its routing ids
+were made from the address itself, as [Routes](routing.md#routing-ids)
+made them before announces carried a key blinded from it: `SHA-256("tern
+routing id" || A)` in place of `B`. Version 12 is version 13 without
 [signed images](#signed-images) and [wiping](#the-requests): `UPDATE_BEGIN`'s
 `signature` and the request `WIPE`. Version 11 is version 12 without
 [updates by the bootloader](#by-the-bootloader): the request
@@ -623,6 +628,12 @@ version 11 with `ERROR` 1, and one of version 13 a `WIPE` from a client
 of version 12. A client of version 12 or earlier sends `UPDATE_BEGIN`
 without a `signature`, and a node that [checks signatures](#signed-images)
 refuses it, as it refuses any image that is not signed.
+A node of version 14 gives every client the routing ids its radio
+uses, whatever the client's version, since it has no others. A client
+works out routing ids from addresses as the node's version makes them:
+one of version 13 or earlier that makes them from the address itself
+matches no routing id from a node of version 14 to an address, and
+shows each as one it does not know.
 Later versions only add types, settings, error codes and
 fields at the end of a frame, so any two versions can talk. A change
 that cannot be made that way is a new protocol, with its own magic and
@@ -1582,7 +1593,9 @@ the default can pair with it while its [pairing window](#bluetooth-le)
 is open, and only then.
 
 **Why nothing derived from the address in advertisements.** The radio
-protocol keeps a node's address out of the clear. A Bluetooth
+protocol keeps a node's address out of the clear unless its user turns
+[cards](cards.md) on: announces carry a key blinded from it
+([Routes](routing.md#routing-ids)), not the address. A Bluetooth
 advertisement that carried it would tell anyone in range which mesh
 node they were near, and follow it about.
 
@@ -1618,6 +1631,13 @@ client goes on from there, and never has to know what became of the
 last frame it sent. The digest is what lets a node tell the image it
 holds part of from another of the same size, and check the whole
 before running it, whatever the link did to it.
+
+**Why a version for routing ids made differently.** No frame changed,
+but what a client does with three of them did: a routing id in
+`NEIGHBOUR`, `GROUP_MESSAGE` or `GROUP_POSITION` is matched to a name
+only by working it out from an address, the client's side. A client
+that knows from `INFO` which way the node makes them can do either,
+for nodes of either age.
 
 **Why the board in `INFO`.** `firmware` is for a person, and a client
 must not decide from it. An image built for other hardware does not

@@ -30,7 +30,10 @@ produced by [`vectors/tools/sharing.py`](../vectors/tools/sharing.py).
    implementation, which differ for any other address with high
    probability.
 5. **Nothing new on the air.** Every form here is made from the address
-   alone, and none of them is sent over LoRa.
+   alone, and none of them is sent over LoRa. Whoever is given an
+   address can work out the node's [routing id](routing.md#routing-ids)
+   from it, and so recognise the node's announces and the frames that
+   are for it, as a contact can: sharing an address shares that too.
 
 ## Notation
 
@@ -203,8 +206,8 @@ every keypad, and groups of four are the size people already read out
 for card numbers and codes.
 
 **Its own label.** `"tern short code"` keeps the code apart from the
-[routing id](routing.md#routing-ids), which is a hash of the same
-address that does go over the air. Knowing one gives nothing towards
+[routing id](routing.md#routing-ids), which is made from the same
+address and does go over the air. Knowing one gives nothing towards
 the other.
 
 **The first eight bytes, reduced.** 2^64 is not a multiple of 10^12, so

@@ -21,9 +21,11 @@ produced by [`vectors/tools/first_contact.py`](../vectors/tools/first_contact.py
    each transmission's time, they need a faster setting than its
    slowest ([analysis/first-contact-fit.md](../analysis/first-contact-fit.md)).
 2. **No address in clear.** The responder's address is never sent. The
-   initiator's is encrypted. The frames do carry both nodes' routing
-   ids, as every [frame that follows a route](forwarding.md) carries
-   its destination's: see [What an observer learns](#what-an-observer-learns).
+   initiator's is encrypted. Neither node's announces carry its
+   address either: they carry a [key blinded from it](routing.md#routing-ids).
+   The frames do carry both nodes' routing ids, as every
+   [frame that follows a route](forwarding.md) carries its
+   destination's: see [What an observer learns](#what-an-observer-learns).
 3. **A standard handshake, unchanged.** EDHOC (RFC 9528) with method 3
    and cipher suite 0, the AEAD and hash that unicast frames already
    use. The generator reproduces RFC 9529's published EDHOC traces
@@ -358,7 +360,8 @@ a message names one and its acknowledgement the other. So an observer
 who hears a `message_1` knows that the node with one routing id is
 making first contact with the node with another, and anyone who knows
 both addresses knows which nodes those are. It does not learn either
-address from the frames, nor anything the handshake carries.
+address from the frames, nor from the nodes' announces, nor anything
+the handshake carries.
 
 A responder that refuses the initiator is silent after `message_3`, so
 an observer who hears three frames and no fourth may guess as much.
