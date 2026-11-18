@@ -280,6 +280,16 @@ A leaf MAY also change keeper when its keeper's link goes down, or for
 another relay whose link has `KEEPER_BAND` more margin, in the same
 way.
 
+**A relay that does not keep.** A relay may not answer polls at all:
+one whose firmware predates this section, or one with no room. Its
+announces bring it back into use at once, and a leaf that took it as
+keeper again would poll it every `POLL_RETRY` for ever. So a leaf MUST
+NOT take as its keeper a relay it gave up as keeper less than
+`KEEPER_REST` ago, unless that relay has answered a poll of its since.
+A leaf with no relay it may take as keeper MUST NOT sleep: it stops
+sleeping as [above](#sleeping), listening all the time and announcing
+with bit 3 clear, and begins again once it has a relay it may take.
+
 ## Telling the source
 
 A source that does not know its destination sleeps gives a held message
@@ -347,6 +357,7 @@ nothing here changes [the airtime budget](airtime.md).
 | `POLL_TRIES` | 6 | polls in a row unanswered before a leaf changes keeper |
 | `POLL_RETRY` | 10 s | after a poll unanswered |
 | `KEEPER_BAND` | 6 dB | |
+| `KEEPER_REST` | 3600 s | before a relay given up as keeper may be taken again |
 | `JITTER` | 2 | airtimes, as in Routes |
 
 ## Conformance
@@ -370,6 +381,10 @@ An implementation conforms to this section if, for
 * **poll_ids:** as a keeper whose last answered poll from a leaf had
   `id` `last` (`null` for none), it answers a poll from it with `id`,
   or does not, as `answers` says;
+* **keeper_rest:** as a leaf that gave a relay up as keeper
+  `given_up` seconds ago (`null` for never), it may take it as keeper,
+  or not, as `may_take` says, `answered` saying whether the relay has
+  answered a poll of its since;
 * **hold_for:** given `wake`, it drops a frame held `hold_for` seconds;
 * **source_waits:** given `metric` and `wake`, a source waits `wait_ms`
   for each try.
@@ -538,6 +553,15 @@ What the simulator left out: it gives every source each destination's
 keeper from its polls, the announce not carrying `keeper`; it has no
 first-contact frames to hold; and its leaves begin to sleep 30 minutes
 after they start.
+
+**On a board.** A Heltec V4 running the firmware's first build of this
+section (ternmesh/firmware#130), set to sleep with a wake of 300 s,
+next to one relay whose firmware predates it, slept and woke its radio
+38 times in nine minutes without fault, its radio asleep 93% of the
+time once polling. But the relay never answered, and each time the leaf
+gave it up it took it again at its next announce, polling every
+`POLL_RETRY` and never sleeping a whole wake. That is why a relay given
+up is rested for `KEEPER_REST`.
 
 ## Not yet measured
 

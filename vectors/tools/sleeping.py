@@ -32,6 +32,7 @@ RESERVED = (0, 0xFFFFFFFF)
 WAKE_MIN_S, WAKE_MAX_S = 300, 3600
 LISTEN_MIN_S = 2
 HOLD_EXTRA_S = 60
+KEEPER_REST_S = 3600
 # Forwarding's (draft/forwarding.md).
 ACK_WAIT_MS, ACK_FACTOR = 5000, 4
 
@@ -167,6 +168,12 @@ def answers_poll(last, id_):
     return last is None or routing.newer(id_, last)
 
 
+def may_take(given_up_s, answered):
+    """Whether a leaf may take a relay as keeper that it gave up given_up_s seconds ago (None for
+    never), answered saying whether the relay has answered a poll of its since."""
+    return given_up_s is None or answered or given_up_s >= KEEPER_REST_S
+
+
 def hold_for_s(wake):
     return 2 * routing.promise_read(wake) + HOLD_EXTRA_S
 
@@ -277,6 +284,10 @@ def build():
         for last, id_ in ((None, 0x1234), (0x1234, 0x1235), (0x1234, 0x1234), (0x1234, 0x1233),
                           (0xFFFF, 0), (0, 0x7FFF), (0, 0x8000))
     ]
+    keeper_rest = [
+        {"given_up": g, "answered": a, "may_take": may_take(g, a)}
+        for g, a in ((None, False), (0, False), (3599, False), (3600, False), (60, True))
+    ]
     hold_for = [{"wake": w, "hold_for": hold_for_s(w)} for w in (300, 900, 3600, 0x8000 | 60)]
     waits = [
         {"metric": m, "wake": w, "wait_ms": wait_ms(m, w)}
@@ -288,7 +299,7 @@ def build():
         "vectors/tools/sleeping.py; do not edit by hand.",
         "parameters": {
             "WAKE_MIN": WAKE_MIN_S, "WAKE_MAX": WAKE_MAX_S, "LISTEN_MIN": LISTEN_MIN_S,
-            "HOLD_EXTRA": HOLD_EXTRA_S, "ACK_WAIT_ms": ACK_WAIT_MS, "ACK_FACTOR": ACK_FACTOR,
+            "HOLD_EXTRA": HOLD_EXTRA_S, "KEEPER_REST": KEEPER_REST_S, "ACK_WAIT_ms": ACK_WAIT_MS, "ACK_FACTOR": ACK_FACTOR,
         },
         "routing_ids": {"leaf": leaf, "keeper": keeper, "other": other},
         "polls": polls,
@@ -299,6 +310,7 @@ def build():
         "sleep": sleep,
         "holds": hold_cases,
         "poll_ids": poll_ids,
+        "keeper_rest": keeper_rest,
         "hold_for": hold_for,
         "source_waits": waits,
     }
