@@ -89,37 +89,69 @@ def open_frame(g, me, frame):
     return sender, count, p[INSIDE:]
 
 
+KIND_NEW_SECRET = 0x03
+NEW_SECRET_LEN = 17
+
+
 class Member:
-    """A node and the groups it holds: which frames it accepts, each once."""
+    """A node and the groups it holds: which frames it accepts, each once, and the secret each
+    group has moved to."""
 
     def __init__(self, me, secrets):
-        self.me, self.secrets = me, secrets
-        # For each group, its writers: a routing id to the highest count accepted, every count
-        # accepted in the window, and when a frame was last accepted from it.
+        self.me = me
+        # For each group, its secret and, once that has been replaced, its old secret; each with
+        # its own writers: a routing id to the highest count accepted, every count accepted in the
+        # window, when a frame was last accepted from it, and how many have been.
+        self.secrets = list(secrets)
+        self.olds = [None for _ in secrets]
         self.writers = [{} for _ in secrets]
+        self.old_writers = [{} for _ in secrets]
         self.accepted = 0
 
-    def fresh(self, i, sender, count):
-        """Whether a frame of group i with this from and count is accepted, keeping it if so."""
-        held = self.writers[i]
-        top, had = count, set()
+    def fresh(self, held, sender, count):
+        """Whether a frame with this from and count is accepted, given the writers held for its
+        secret, keeping it if so."""
+        top, had, times = count, set(), 0
         if sender in held:
-            top, had, _ = held[sender]
+            top, had, _, times = held[sender]
             if count <= top - WINDOW or count in had:
                 return False
             top = max(top, count)
         self.accepted += 1
-        held[sender] = (top, {c for c in had | {count} if c > top - WINDOW}, self.accepted)
+        held[sender] = (top, {c for c in had | {count} if c > top - WINDOW}, self.accepted, times + 1)
         if len(held) > WRITERS:
-            del held[min(held, key=lambda w: held[w][2])]
+            # Another writer goes: of those heard from once, the one heard longest ago; if none
+            # was heard from only once, the one heard longest ago of all.
+            others = [w for w in held if w != sender]
+            once = [w for w in others if held[w][3] == 1]
+            del held[min(once or others, key=lambda w: held[w][2])]
         return True
 
+    def holds(self, g):
+        return g in self.secrets or g in self.olds
+
+    def replaced(self, i, old, content):
+        """A replacement accepted for group i, under its old secret if old: follows it."""
+        if len(content) != NEW_SECRET_LEN or self.holds(content[1:]):
+            return
+        new = content[1:]
+        if not old:
+            self.olds[i], self.old_writers[i] = self.secrets[i], self.writers[i]
+            self.secrets[i], self.writers[i] = new, {}
+        elif new < self.secrets[i]:  # 16 bytes each: as numbers, most significant first
+            self.secrets[i], self.writers[i] = new, {}
+
     def receive(self, frame):
-        """(index of the group, from, count, content) if the frame is accepted, else None."""
-        for i, g in enumerate(self.secrets):
-            got = open_frame(g, self.me, frame)
-            if got is not None and self.fresh(i, got[0], got[1]):
-                return (i, *got)
+        """(index of the group, from, count, content, the secret it was opened under) if the frame
+        is accepted, else None."""
+        for i in range(len(self.secrets)):
+            for old, g, held in ((False, self.secrets[i], self.writers[i]),
+                                 (True, self.olds[i], self.old_writers[i])):
+                got = open_frame(g, self.me, frame) if g is not None else None
+                if got is not None and self.fresh(held, got[0], got[1]):
+                    if frame[0] == HDR_NODE and got[2][:1] == bytes([KIND_NEW_SECRET]):
+                        self.replaced(i, old, got[2])
+                    return (i, *got, g)
         return None
 
 
@@ -394,14 +426,89 @@ def build():
     counted("two-writers", "each writer's counts are its own",
             [(alice, 10), (bob, 10), (alice, 10), (bob, 9), (bob, 200), (alice, 11), (bob, 10)],
             [1, 1, 0, 1, 1, 1, 0])
-    w = [0x70000000 + k for k in range(WRITERS + 1)]
-    counted("writers", f"{WRITERS} writers held, then one more. The one forgotten is the one a frame "
-            "was accepted from longest ago: the second, since the first wrote again, and a frame "
-            "that is refused does not count. Its old frame is then accepted again, which forgets "
-            "the third, whose own is accepted again in turn",
+    w = [0x70000000 + k for k in range(WRITERS + 2)]
+    counted("writers", f"{WRITERS} writers held, then one more. The one forgotten is, of those "
+            "heard from once, the one a frame was accepted from longest ago: the second, since "
+            "the first wrote again, and a frame that is refused does not count. Its old frame is "
+            "then accepted again, which forgets the third, whose own is accepted again in turn",
             [(x, 50) for x in w[:WRITERS]] + [(w[1], 50), (w[0], 51), (w[WRITERS], 1), (w[0], 50),
                                               (w[1], 50), (w[3], 50), (w[2], 50), (w[3], 50)],
             [1] * WRITERS + [0, 1, 1, 0, 1, 0, 1, 1])
+    counted("writers-once-first", "the first writer is heard from twice, and the rest once each; "
+            "then one more. The one forgotten is the second, heard from once longest ago, and not "
+            "the first, though the first was heard from longer ago: its frame is still refused, "
+            "and the second's is accepted again",
+            [(w[0], 50), (w[0], 51)] + [(x, 50) for x in w[1:WRITERS]]
+            + [(w[WRITERS], 1), (w[0], 51), (w[1], 50)],
+            [1, 1] + [1] * (WRITERS - 1) + [1, 0, 1])
+    counted("writers-all-twice", f"all {WRITERS} heard from twice, then one more: the one "
+            "forgotten is the one heard longest ago, the first. Its frame is then accepted again, "
+            "and what that forgets is the newcomer, heard from once, and none heard from twice. "
+            "Another newcomer forgets the first, now heard from once; the second's frame is "
+            "still refused, and the newcomer forgotten is accepted again",
+            [(x, c) for x in w[:WRITERS] for c in (50, 51)]
+            + [(w[WRITERS], 1), (w[0], 51), (w[WRITERS + 1], 1), (w[1], 51), (w[WRITERS], 1)],
+            [1] * (2 * WRITERS) + [1, 1, 1, 0, 1])
+
+    # Replacing the secret. The new secrets are the first 16 bytes of SHA-256("tern group" ||
+    # u32be(i)) for i from 100, put in order, so that which is less is plain.
+    ordered = sorted(secret(100 + k) for k in range(8))
+    g_less, g_a, g_d, g_more = ordered[0], ordered[3], ordered[5], ordered[7]
+    carol = 0x3C4D5E6F
+    replacement = lambda g: bytes([KIND_NEW_SECRET]) + g  # noqa: E731
+    sends = [
+        # (sealed under, from, count, hdr, content), or an int: the frame at that place again
+        (g1, alice, 1, HDR, hello),
+        (g1, alice, 2, HDR_NODE, replacement(g_a)),
+        (g1, bob, 5, HDR, b"late"),
+        (g_a, alice, 3, HDR, b"new"),
+        2,
+        (g_a, bob, 5, HDR, b"moved"),
+        (g1, bob, 6, HDR_NODE, replacement(g_more)),
+        (g1, carol, 1, HDR_NODE, replacement(g_less)),
+        (g_a, alice, 4, HDR, b"lost"),
+        (g_less, carol, 2, HDR, b"lesser"),
+        (g_less, carol, 3, HDR_NODE, replacement(g_less)),
+        (g_less, carol, 4, HDR_NODE, replacement(g1)),
+        (g_less, carol, 5, HDR_NODE, replacement(g_d)[:-1]),
+        (g_less, alice, 1, HDR_NODE, replacement(g_d)),
+        (g1, bob, 7, HDR, b"gone"),
+        (g_less, carol, 6, HDR, b"old"),
+        (g_d, carol, 1, HDR, b"newest"),
+    ]
+    m = Member(me, [g1])
+    deliveries, frames = [], []
+    for k, s in enumerate(sends):
+        f = frames[s] if isinstance(s, int) else seal(s[0], k.to_bytes(8, "big"), s[1], s[2], s[4],
+                                                       hdr=s[3])
+        frames.append(f)
+        got = m.receive(f)
+        d = {"frame": f.hex(), "accept": got is not None}
+        if got:
+            d.update({"under": got[4].hex(), "from": got[1], "count": got[2], "node": f[0] == HDR_NODE,
+                      "content": got[3].hex()})
+        d.update({"secret": m.secrets[0].hex(), "old": m.olds[0].hex() if m.olds[0] else None})
+        deliveries.append(d)
+    assert [x["accept"] for x in deliveries] == [
+        True, True, True, True, False, True, True, True, False, True, True, True, True, True,
+        False, True, True]
+    assert [(x["secret"], x["old"]) for x in deliveries] == [(g.hex(), o.hex() if o else None) for g, o in [
+        (g1, None), (g_a, g1), (g_a, g1), (g_a, g1), (g_a, g1), (g_a, g1), (g_a, g1), (g_less, g1),
+        (g_less, g1), (g_less, g1), (g_less, g1), (g_less, g1), (g_less, g1), (g_d, g_less),
+        (g_d, g_less), (g_d, g_less), (g_d, g_less)]]
+    replacements = [{
+        "name": "replaced",
+        "note": "a member follows a replacement: it reads under the old secret and the new, with "
+        "their writers apart, and refuses a frame again; a replacement of the old secret to a "
+        "greater secret changes nothing, and one to a lesser is followed, forgetting the greater; "
+        "a replacement to the secret held, to the old secret, or of 16 bytes changes nothing; "
+        "when the new secret is replaced in turn, the first old secret is forgotten. The secrets "
+        "replaced to are the first 16 bytes of SHA-256(\"tern group\" || u32be(i)) for i from 100.",
+        "group_secret": g1.hex(),
+        "self": me,
+        **FLOOD,
+        "deliveries": deliveries,
+    }]
 
     invites, bad = [], []
     joins, bad_joins = [], []
@@ -466,7 +573,10 @@ def build():
         "for the node, as node says. count is a number. In counts, each delivery's frame is content "
         "from its from, with its count, sealed under group_secret with hops and power, and with a "
         "nonce of its place in deliveries, from 0, as eight bytes most significant first; frame "
-        "gives it. In invites and bad_invites, plaintext is that of a "
+        "gives it. In replacements, each delivery's frame is given; under is the secret an "
+        "accepted frame was opened under, and secret and old are the group's secret and old "
+        "secret once the frame has been received, old null for none. In invites and "
+        "bad_invites, plaintext is that of a "
         "unicast message whose hdr has the node flag set (draft/unicast-security.md). In "
         "join_codes, payload is the code's, link is how it is shown, and reads are other ways it "
         "is written that read as the same code; each of bad_join_codes reads as none.",
@@ -475,6 +585,7 @@ def build():
         "rejected": rejected,
         "members": members,
         "counts": counts,
+        "replacements": replacements,
         "invites": invites,
         "bad_invites": bad,
         "join_codes": joins,
