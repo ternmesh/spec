@@ -1296,7 +1296,8 @@ def build():
             ("node", encode("AIRTIME", 1, **airtime)),
             ("node", encode("POWER", 2, **power)),
             ("node", encode("FIX", 3, receiver=0, **NO_FIX)),
-            ("node", encode("SYNCED", 3, news=4)),
+            ("node", encode("SLEEP", 4, **awake)),
+            ("node", encode("SYNCED", 3, news=5)),
         ]
 
     size, chunk = len(IMAGE), UPDATE_CHUNK
