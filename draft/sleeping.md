@@ -73,7 +73,9 @@ it listens for that frame's [hop](forwarding.md#hops), as any node
 does, and no longer. It MAY listen at any other time, but its keeper
 does not count on it. In particular it sleeps while a message of its
 own waits for its acknowledgement: the keeper holds the acknowledgement
-as it holds any frame for the leaf, and hands it over at the next poll.
+as it holds any frame for the leaf, and hands it over at the next poll,
+unless the keeper is the message's destination and sends it at once
+([What is held](#holding)).
 So a sleeping leaf, as a source, waits for each try as a source waits
 for a destination that sleeps ([Waiting longer](#telling-the-source)),
 with its own `w`.
@@ -199,7 +201,13 @@ from the leaf does not wake it, to its keeper.
 
 **What is held.** A keeper that has a frame to send to its sleeping
 leaf as the next hop, while the leaf is not awake, MUST NOT send it. It
-**holds** it, and answers the node it came from at once, as below. A
+**holds** it, and answers the node it came from at once, as below. Its
+own frames for the leaf are held too, and counted in its answers, but
+for one: an acknowledgement of a message it has just received from the
+leaf, as its destination, which it sends at once. The leaf listens for
+that message's [hop](forwarding.md#hops), and the acknowledgement ends
+it; held, it would leave the leaf sending the message again until its
+next poll. A
 frame whose hop to the leaf is given up while it was awake is held
 then, the once: it is not sent another way. A keeper MUST hold, for
 each sleeping leaf it keeps, at least `HOLD_LEAF` frames, and MAY hold
