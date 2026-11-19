@@ -3974,9 +3974,15 @@
       },
       {
         "from": "node",
+        "type": "SLEEP",
+        "seq": 4,
+        "frame": "950400000200000000000000"
+      },
+      {
+        "from": "node",
         "type": "SYNCED",
         "seq": 3,
-        "frame": "430304"
+        "frame": "430305"
       },
       {
         "from": "client",
@@ -4072,9 +4078,15 @@
       },
       {
         "from": "node",
+        "type": "SLEEP",
+        "seq": 4,
+        "frame": "950400000200000000000000"
+      },
+      {
+        "from": "node",
         "type": "SYNCED",
         "seq": 3,
-        "frame": "430304"
+        "frame": "430305"
       },
       {
         "from": "client",
