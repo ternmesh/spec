@@ -30,7 +30,7 @@ import sharing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 15
+VERSION = 16
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -60,6 +60,7 @@ FRAMES = {
     0x06: ("OFF", []),
     0x10: ("SEND", [("ref", U32), ("to", ADDR), ("text", STR, TEXT_MAX)]),
     0x11: ("READ", [("through", U32)]),
+    0x12: ("FORGET", [("contact", ADDR), ("through", U32)]),
     0x18: ("SAVE_CONTACT", [("address", ADDR), ("name", STR, NAME_MAX)]),
     0x19: ("REMOVE_CONTACT", [("address", ADDR)]),
     0x1A: ("END_SESSION", [("address", ADDR)]),
@@ -71,6 +72,7 @@ FRAMES = {
     0x25: ("JOIN", [("id", U32)]),
     0x26: ("GROUP_LINK", [("group", GID)]),
     0x27: ("JOIN_LINK", [("link", STR, LINK_MAX)]),
+    0x28: ("FORGET_GROUP", [("group", GID), ("through", U32)]),
     0x30: ("UPDATE_BEGIN", [("size", U32), ("digest", DIGEST), ("signature", RAW, SIGNATURE)]),
     0x31: ("UPDATE_DATA", [("offset", U32), ("data", RAW, UPDATE_CHUNK)]),
     0x32: ("UPDATE_END", []),
@@ -130,6 +132,8 @@ FRAMES = {
                    ("accuracy", U16), ("age", U32), ("satellites", U8)]),
     0x95: ("SLEEP", [("wake", U16), ("listen", U8), ("state", U8), ("keeper", U32),
                      ("retry", U16)]),
+    0x96: ("FORGOTTEN", [("contact", ADDR), ("through", U32)]),
+    0x97: ("GROUP_FORGOTTEN", [("group", GID), ("through", U32)]),
 }
 BY_NAME = {name: t for t, (name, _) in FRAMES.items()}
 NEWS_NAMES = {name for t, (name, _) in FRAMES.items() if t >= 0x80}
@@ -175,6 +179,7 @@ TYPE_SINCE = {
     0x36: 12,  # updating by the bootloader
     0x37: 13,  # wiping the node
     0x95: 15,  # sleeping
+    **{t: 16 for t in (0x12, 0x28, 0x96, 0x97)},  # forgetting
 }
 
 
@@ -572,6 +577,8 @@ def build():
         ("SET", 42, {"setting": 3, "value": POWER_MOST}),
         ("UPDATE_BOOTLOADER", 43, {}),
         ("WIPE", 44, {}),
+        ("FORGET", 45, {"contact": BOB, "through": 22}),
+        ("FORGET_GROUP", 46, {"group": HUT, "through": 0xFFFFFFFF}),
         ("OK", 4, {}),
         ("ERROR", 15, {"code": 4}),
         ("INFO", 1, {"version": VERSION, **FIRMWARE}),
@@ -656,6 +663,8 @@ def build():
                        "retry": 0}),
         ("SLEEP", 42, {"wake": WAKE_MAX, "listen": LISTEN_MIN, "state": SLEEP_RESTING,
                        "keeper": 0xD82C1E1A, "retry": 3581}),
+        ("FORGOTTEN", 43, {"contact": BOB, "through": 22}),
+        ("GROUP_FORGOTTEN", 44, {"group": HUT, "through": 22}),
     ]
     frames = []
     for name, seq, values in examples:
@@ -734,6 +743,9 @@ def build():
         encode("CONTACT", 38, address=BOB, session=1, name="Bob", wake=900)[:-1],
         encode("SLEEP", 41, wake=600, listen=4, state=SLEEP_ASLEEP, keeper=0x1D2E3F40,
                retry=0)[:-1],
+        encode("FORGET", 45, contact=BOB, through=22)[:-1],
+        encode("FORGET_GROUP", 46, group=HUT, through=22)[:-1],
+        encode("FORGOTTEN", 43, contact=BOB, through=22)[:-1],
     ]:
         why = decode(frame)
         assert isinstance(why, str), frame.hex()
@@ -1204,6 +1216,26 @@ def build():
         ("node", encode("ERROR", 3, code=1)),
     ], 14)})
 
+    # A client of version 15, to the node as the exchange begins: the same sync as the exchange's,
+    # and its last request is one its version does not define.
+    older.append({"version": 15, "frames": connection([
+        ("client", encode("HELLO", 1, version=15)),
+        ("node", info(15)),
+        ("client", encode("SYNC", 2, after=0)),
+        ("node", encode("SELF", 0, **self_)),
+        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob", wake=0)),
+        ("node", encode("MESSAGE", 2, flags=0, **where)),
+        ("node", encode("NEIGHBOUR", 3, **neighbour)),
+        ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
+        ("node", encode("AIRTIME", 5, **airtime)),
+        ("node", encode("POWER", 6, **power)),
+        ("node", encode("FIX", 7, receiver=2, **NO_FIX)),
+        ("node", encode("SLEEP", 8, **awake)),
+        ("node", encode("SYNCED", 2, news=9)),
+        ("client", encode("FORGET", 3, contact=BOB, through=17)),
+        ("node", encode("ERROR", 3, code=1)),
+    ], 15)})
+
     # Frames a later version defines, as a receiver of an earlier version reads them: a type it
     # does not know. A node answers such a request with ERROR 1; a client ignores such news.
     unknown_to_older = []
@@ -1239,6 +1271,10 @@ def build():
         ("SET", 14, {"setting": 9, "value": 4}),
         ("SLEEP", 14, {"wake": 600, "listen": 4, "state": SLEEP_ASLEEP, "keeper": 0x1D2E3F40,
                        "retry": 0}),
+        ("FORGET", 15, {"contact": BOB, "through": 22}),
+        ("FORGET_GROUP", 15, {"group": HUT, "through": 22}),
+        ("FORGOTTEN", 15, {"contact": BOB, "through": 22}),
+        ("GROUP_FORGOTTEN", 15, {"group": HUT, "through": 22}),
     ]:
         frame = encode(name, 5, **values)
         assert isinstance(decode(frame), dict)
@@ -1379,6 +1415,70 @@ def build():
         ("node", encode("OK", 2)),
     ])
 
+    # A node holding a conversation with Bob and one in its group, forgotten from one client while
+    # it waits to send a message, and then a client that was away. The node refuses its own
+    # address; a mark already past a FORGET's through changes nothing; a through past every id
+    # given is the greatest given; and a message that comes afterwards is kept.
+    held = [
+        ("node", encode("SELF", 0, **self_)),
+        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob", wake=0)),
+        ("node", encode("GROUP", 2, group=HUT, name="Hut")),
+    ]
+    later = dict(id=23, contact=BOB, time=1_790_000_360, flags=0, state=4, reason=0, wait=0,
+                 text="Where now?")
+    forget = [
+        connection([
+            ("client", encode("HELLO", 1, version=VERSION)),
+            ("node", info()),
+            ("client", encode("SYNC", 2, after=0)),
+            *held,
+            ("node", encode("MESSAGE", 3, flags=1, **where)),
+            ("node", encode("MESSAGE", 4, state=2, reason=0, wait=0, **ridge)),
+            ("node", encode("INVITE", 5, state=2, reason=0, wait=0, **invite)),
+            ("node", encode("GROUP_MESSAGE", 6, state=1, reason=0, wait=0, **anyone)),
+            ("node", encode("GROUP_MESSAGE", 7, flags=1, **two)),
+            ("node", encode("NEIGHBOUR", 8, **neighbour)),
+            ("node", encode("AIRTIME", 9, **airtime)),
+            ("node", encode("POWER", 10, **power)),
+            ("node", encode("FIX", 11, receiver=2, **NO_FIX)),
+            ("node", encode("SLEEP", 12, **awake)),
+            ("node", encode("SYNCED", 2, news=13)),
+            ("client", encode("SEND", 3, ref=0xC0FFEE03, to=BOB, text="Coming down")),
+            ("node", encode("QUEUED", 3, id=22)),
+            ("node", encode("MESSAGE", 13, id=22, contact=BOB, time=1_790_000_300, flags=0,
+                            state=0, reason=1, wait=0, text="Coming down")),
+            ("client", encode("FORGET", 4, contact=ALICE, through=22)),
+            ("node", encode("ERROR", 4, code=4)),
+            ("client", encode("FORGET", 5, contact=BOB, through=22)),
+            ("node", encode("OK", 5)),
+            ("node", encode("FORGOTTEN", 14, contact=BOB, through=22)),
+            ("client", encode("FORGET", 6, contact=BOB, through=18)),
+            ("node", encode("OK", 6)),
+            ("client", encode("FORGET_GROUP", 7, group=HUT, through=0xFFFFFFFF)),
+            ("node", encode("OK", 7)),
+            ("node", encode("GROUP_FORGOTTEN", 15, group=HUT, through=22)),
+            ("node", encode("MESSAGE", 16, **later)),
+        ]),
+        connection([
+            ("client", encode("HELLO", 1, version=VERSION)),
+            ("node", info()),
+            ("client", encode("SYNC", 2, after=21)),
+            *held,
+            ("node", encode("MESSAGE", 3, **later)),
+            ("node", encode("FORGOTTEN", 4, contact=BOB, through=22)),
+            ("node", encode("GROUP_FORGOTTEN", 5, group=HUT, through=22)),
+            ("node", encode("NEIGHBOUR", 6, **neighbour)),
+            ("node", encode("AIRTIME", 7, **airtime)),
+            ("node", encode("POWER", 8, **power)),
+            ("node", encode("FIX", 9, receiver=2, **NO_FIX)),
+            ("node", encode("SLEEP", 10, **awake)),
+            ("node", encode("SYNCED", 2, news=11)),
+        ]),
+    ]
+    for c in forget:
+        counted = [f["seq"] for f in c if f["type"] in NEWS_NAMES]
+        assert counted == list(range(len(counted))), counted
+
     # A node whose bootloader takes its updates, and that has no room for an image itself: as a
     # client of this version sees it, and as one of version 11 does, which is told no board.
     bootloader = [
@@ -1456,7 +1556,10 @@ def build():
         "update, and the client's last request is one its version does not define. To the "
         "client of version 12 it holds what the exchange begins with, refuses its UPDATE_BEGIN, "
         "which has no signature, and the client's last request is one its version does not "
-        "define. "
+        "define. To the client of version 14 it holds what the exchange begins with, the sync "
+        "sends no SLEEP, and the client's last request names a setting its version does not "
+        "define. To the client of version 15 it holds what the exchange begins with, and the "
+        "client's last request is one its version does not define. "
         "Positions are in units of "
         "10^-7 degree. Each connection's frames are read by the "
         "version its client speaks, and each client of an earlier version is sent an INFO "
@@ -1476,7 +1579,14 @@ def build():
         "updates over Bluetooth, which has no room for an image itself: one by a client of this "
         "version, after whose last frame the node restarts into its bootloader, and one by a "
         "client of version 11, which is sent an INFO with no board. Wipe is one connection to the "
-        "node of update, which answers WIPE and then erases itself and restarts. The four addresses are the public keys of RFC "
+        "node of update, which answers WIPE and then erases itself and restarts. Forget is two "
+        "connections to a node that holds the second address as a contact, the first group, "
+        "and the messages and invite the first connection's sync sends, with its satellite "
+        "receiver on and without a fix: in the first, the client forgets the conversation with "
+        "the second address while a message to it waits, and the first group's, and the node "
+        "receives a message from the second address just before the last MESSAGE; the second "
+        "is a client that held every message through id 21, and is told what the first "
+        "forgot. The four addresses are the public keys of RFC "
         "8032's first four Ed25519 test vectors (section 7.1: TEST 1, 2, 3 and 1024).",
         "generator": "vectors/tools/companion.py",
         "crc_check": {"input": b"123456789".hex(), "crc": crc16(b"123456789")},
@@ -1500,6 +1610,7 @@ def build():
         "refusals": refusals,
         "bootloader": bootloader,
         "wipe": wipe,
+        "forget": forget,
     }
 
 
