@@ -184,7 +184,7 @@ a refusal.
 | `type` | News | Fields |
 |---|---|---|
 | `0x80` | `SELF` | `address` `addr`, `role` `u8`, `region` `str` up to 15, `power` `i8`, `time` `u32`, `cards` `u8`, `card_name` `str` up to 31, `most` `u8`, `pairing` `u8` |
-| `0x81` | `CONTACT` | `address` `addr`, `session` `u8`, `name` `str` up to 31 |
+| `0x81` | `CONTACT` | `address` `addr`, `session` `u8`, `name` `str` up to 31, `wake` `u16` |
 | `0x82` | `CONTACT_GONE` | `address` `addr` |
 | `0x83` | `MESSAGE` | `id` `u32`, `contact` `addr`, `time` `u32`, `flags` `u8`, `state` `u8`, `reason` `u8`, `wait` `u16`, `text` `str` up to 128 |
 | `0x84` | `STATE` | `id` `u32`, `state` `u8`, `reason` `u8`, `wait` `u16` |
@@ -204,6 +204,7 @@ a refusal.
 | `0x92` | `CARD` | `address` `addr`, `heard` `u32`, `name` `str` up to 31 |
 | `0x93` | `CARD_GONE` | `address` `addr` |
 | `0x94` | `FIX` | `receiver` `u8`, `source` `u8`, `lat` `i32`, `lon` `i32`, `altitude` `i16`, `accuracy` `u16`, `age` `u32`, `satellites` `u8` |
+| `0x95` | `SLEEP` | `wake` `u16`, `listen` `u8`, `state` `u8`, `keeper` `u32`, `retry` `u16` |
 
 Each news frame but `STATE`, the four `_GONE`s and `ASKED` is a
 **record**: the whole of one thing as the node holds it now. A record
@@ -239,14 +240,22 @@ passkey of their own.
 saved, with a name. `session` is 1 if the node shares a session with
 it ([First contact](first-contact.md)), 0 if not. The name is the
 user's, for the user: it is kept on the node and given to clients, and
-a node MUST NOT send it on the air.
+a node MUST NOT send it on the air. `wake` is how long the contact
+said it [sleeps](sleeping.md#telling-the-source) between wakes, in
+seconds, in the session the node shares with it: 0 if it said it does
+not sleep, if it has said nothing, or if there is no session. A message
+to a contact whose `wake` is not 0 waits with its keeper until the
+contact next wakes, and may stay sent for as long, and longer for each
+try ([Waiting longer](sleeping.md#telling-the-source)); a client SHOULD
+say so where it shows the message, so that the user does not take it
+for lost.
 
 **Messages** (`MESSAGE`). Each has an `id`, given by the node: it is
 at least 1, unique on the node and greater than every `id` before it,
 so a client can ask for those after one it holds. `contact` is the address the
 message went to or came from, whether or not it is a saved contact.
 `time` is when it was written or received, by the node's clock. `flags`
-bit 0 is set once a received message has been [read](#reading); the
+bit 0 is set once a received message has been [read](#the-requests); the
 other bits are 0. `text` is what the user wrote, at least one byte.
 
 A message's `state` is where it is:
@@ -300,6 +309,27 @@ the node has used in the period ending now, both in milliseconds.
 `wait` is how many milliseconds until the node could send its longest
 frame, 0 if it could now. A profile with no limit gives `allowed` and
 `wait` as 0.
+
+**Sleeping** (`SLEEP`). Whether the node, as a
+[leaf](routing.md#roles), [sleeps](sleeping.md): turns its radio off
+between the times it listens, to save its battery, while a relay keeps
+its messages for it. `wake` and `listen` are what `SET` 8 and 9 set:
+`wake` is `w`, the longest the node lets pass between its polls, in
+seconds, or 0 if it is not to sleep; `listen` is `l`, how long it
+listens after each poll, in seconds. `state` is what it does now:
+
+| `state` | | |
+|---|---|---|
+| 0 | **awake**: it listens all the time | `wake` is 0, or the node is a relay, which never sleeps |
+| 1 | **asleep**: it sleeps, and `keeper` is its keeper's routing id | |
+| 2 | **waiting**: it is to sleep, but listens all the time until it has a relay it can take as keeper: it is [starting](routing.md#starting), or hears no relay it may use | |
+| 3 | **resting**: it is to sleep, but the relays it could take have not answered its polls ([A relay that does not keep](sleeping.md#changing-keeper)), so it listens all the time; `keeper` is the relay it will try again, in `retry` seconds | |
+
+`keeper` is 0 in states 0 and 2, and `retry` is 0 in every state but
+3, and at most `0xFFFF`. A node that sleeps keeps its link to its clients as it would
+awake: only its LoRa radio sleeps. A message it sends goes at once,
+but its acknowledgement waits with the keeper until it next polls, so
+it may stay sent for up to `wake`.
 
 **Power** (`POWER`). `millivolts` is the battery's voltage, 0 if the
 node cannot measure it. `percent` is the node's estimate of the charge
@@ -367,7 +397,7 @@ again. `group` is the id of the group it is to, and `name` what the
 inviter calls it. `state`, `reason` and `wait` are a `MESSAGE`'s: an
 invite is a unicast message, and is waiting, sent, delivered or not
 delivered as one is, or received. `flags` bit 0 is set once a received
-invite has been [read](#reading).
+invite has been [read](#the-requests).
 
 A node holds the secret a received invite carried for as long as it
 holds the invite, so that the user can [`JOIN`](#the-requests) later.
@@ -528,7 +558,7 @@ A node with a client that has said `HELLO` MUST send that client:
 * `GROUP` and `GROUP_GONE` when a group is made, joined, renamed or
   left;
 * `CONTACT` and `CONTACT_GONE` when a contact is saved, renamed,
-  removed, or gains or loses a session;
+  removed, gains or loses a session, or tells it a new `wake`;
 * `SELF` when anything in it but `time` changes;
 * `POSITION` and `GROUP_POSITION` when a position is received, and
   when one is forgotten, with `precision` 0;
@@ -539,6 +569,7 @@ A node with a client that has said `HELLO` MUST send that client:
 * `CARD` when the node accepts a card, and `CARD_GONE` when it forgets
   one;
 * `FIX` when its `receiver` or its `source` changes;
+* `SLEEP` when anything in it but `retry` changes;
 * `ASKED` when it refuses [first contact](#who-may-make-first-contact),
   as that section says.
 
@@ -568,7 +599,8 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 14. Version 13 is the same in every frame, but its routing ids
+version 15. Version 14 is version 15 without [sleeping](#what-the-node-holds):
+the settings 8 and 9, the news `SLEEP`, and `CONTACT`'s `wake`. Version 13 is the same in every frame, but its routing ids
 were made from the address itself, as [Routes](routing.md#routing-ids)
 made them before announces carried a key blinded from it: `SHA-256("tern
 routing id" || A)` in place of `B`. Version 12 is version 13 without
@@ -606,7 +638,9 @@ not told of group messages or invites at all: their `id`s are ones it
 never sees. One of version 4 or earlier is told of no positions, and
 of no sharing. One of version 5 or earlier is told of no cards, and
 is sent a `SELF` without `cards` and `card_name`. One of version 7 or
-earlier is told of no fix. One of version 11 or earlier is sent an `INFO` without `update`, and
+earlier is told of no fix. One of version 14 or earlier is told
+nothing of sleeping: it is sent no `SLEEP`, and a `CONTACT` without
+`wake`. One of version 11 or earlier is sent an `INFO` without `update`, and
 with an empty `board` unless the node is updated over this protocol,
 since to such a client a board means that. One of version 10 or earlier is sent a `SELF` without
 `pairing`. One of version 9 or earlier is sent a `SELF`
@@ -625,7 +659,8 @@ version 8 answers a `SET` of setting 7 from a client of version 7 with
 version 9 answers an `OFF` from a client of version 8 with `ERROR` 1,
 and one of version 12 answers an `UPDATE_BOOTLOADER` from a client of
 version 11 with `ERROR` 1, and one of version 13 a `WIPE` from a client
-of version 12. A client of version 12 or earlier sends `UPDATE_BEGIN`
+of version 12, and one of version 15 a `SET` of setting 8 from a client
+of version 14, which ignores a `SLEEP`. A client of version 12 or earlier sends `UPDATE_BEGIN`
 without a `signature`, and a node that [checks signatures](#signed-images)
 refuses it, as it refuses any image that is not signed.
 A node of version 14 gives every client the routing ids its radio
@@ -667,7 +702,7 @@ greater than `after`, in order of `id`, a `NEIGHBOUR` for every
 neighbour, a `POSITION` or `GROUP_POSITION` for every position it
 holds, a `SHARING` or `GROUP_SHARING` for every contact or group it
 shares its position with, a `CARD` for every card it holds, one
-`AIRTIME`, one `POWER` and one `FIX`. Then it answers `SYNCED`. News
+`AIRTIME`, one `POWER`, one `FIX` and one `SLEEP`. Then it answers `SYNCED`. News
 that a change prompts while it syncs is sent as at any other time,
 among the rest.
 
@@ -759,6 +794,8 @@ was given, counting on from it, until it is given another.
 | 5 | cards | `u8` | 1 to send [cards](#cards), 0 to send none |
 | 6 | card name | `str` up to 31 | the name the node's cards carry; empty for none |
 | 7 | receiver | `u8` | 1 to run the node's satellite receiver, 0 to turn it off |
+| 8 | wake | `u16` | `w`: 0 not to [sleep](sleeping.md), or how long the node lets pass between polls when it does, in seconds, from `WAKE_MIN` to `WAKE_MAX` |
+| 9 | listen | `u8` | `l`: how long the node listens after each poll, in seconds, from `LISTEN_MIN` to 255 |
 
 A node MUST refuse, with `ERROR` 3, a region it does not have and a
 power its radio cannot send at or that would let it radiate more than
@@ -795,6 +832,18 @@ node's until a client gives a more recent one: turning it off is how a
 user saves the power it draws, which on a small battery is more than
 the radio's, and is not a move. Turning the receiver on or off sends
 nothing on the air.
+
+A node MUST refuse, with `ERROR` 3, a wake that is not 0 and is
+below [`WAKE_MIN`](sleeping.md#parameters) or above `WAKE_MAX`, and a
+listen below `LISTEN_MIN`. A node keeps both across restarts. One
+that has never been given them does not sleep, and listens for
+`LISTEN_MIN`. A node given a wake other than 0 sleeps while it is a
+leaf, as [Leaves that sleep](sleeping.md#sleeping) allows: a relay
+keeps the setting, and does not sleep by it until it is a leaf again.
+Sleeping is a leaf's choice, made for its battery: what it costs is
+time, since a message to it waits for it to wake, and a client SHOULD
+say so when the user turns it on. A client MUST NOT send `SET` 8 or 9
+unless its user asked it to.
 
 **`OFF`** turns the node off. A node MUST answer it with `OK`, and
 then turn off: every connection drops, and the node sends and receives
@@ -1280,8 +1329,10 @@ An implementation conforms to this section if, for
   the `INVITE` it receives is to the group whose secret is `invited`;
   and the `GROUP_MESSAGE`, `POSITION` and second `CARD` it receives,
   and the card it forgets, come when the file says. Its last
-  `JOIN_LINK` is a join code whose `check` fails, and its last request
-  is `OFF`, which it answers before it turns off;
+  `JOIN_LINK` is a join code whose `check` fails. The node becomes a
+  leaf and is set to sleep, and its neighbour, a relay, becomes its
+  keeper when the file says. Its last request is `OFF`, which it
+  answers before it turns off;
 * **older:** for each of its connections, as the same node, given the
   frames of a client of the `version` given, it sends the node's, in
   order. The node refuses the same first contact and sends a client of
@@ -1299,7 +1350,8 @@ An implementation conforms to this section if, for
   refuses it `SET` 7; and refuses a client of version 8 `OFF`; and
   sends a client of version 11 an `INFO` without `update`, and refuses
   it `UPDATE_BOOTLOADER`; and refuses a client of version 12 an update,
-  which carries no signature, and `WIPE`;
+  which carries no signature, and `WIPE`; and sends a client of
+  version 14 no `SLEEP`, and refuses it `SET` 8;
 * **signatures:** given `release_key` and `digest`, it builds
   `message`, and takes `signature` as verifying exactly when `verifies`
   is true. A conforming client and a conforming node both do this;
@@ -1760,8 +1812,12 @@ does not start again because a board was erased.
   reach every node.
 * **Erasing on the node**, for a node without a screen: a gesture of its
   button that does what `WIPE` does.
-* **Sleeping leaves**: what a client sees of a node that is off the
-  air most of the time.
+* **Bluetooth while a node sleeps.** A sleeping node keeps its
+  Bluetooth link, and advertises, as it would awake, though its
+  processor could sleep too if it did not. When it may stop
+  advertising, and how a client finds it again, is not said.
+* **The leaves a relay keeps**: a relay's client sees none of the
+  sleeping leaves it holds frames for, nor how many it holds.
 * **Turning a node off for a while**: an `OFF` that says when the node
   comes on again by itself.
 * **Telling the other clients** that a node is turning off. A node

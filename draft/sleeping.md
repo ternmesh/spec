@@ -594,10 +594,12 @@ up is rested for `KEEPER_REST`.
   messages stay held, since their hops fail, but acknowledgements and
   first-contact frames, sent once, are lost and their sources try
   again. A forged answer can keep a leaf with a keeper that has gone.
-* **What a client sees** ([Companion](companion.md#not-yet-specified)):
-  turning sleeping on and off, choosing `w` and `l`, and the
-  companion link itself, which a sleeping node cannot keep up over
-  Bluetooth while its radio and processor sleep.
+* **The companion link while a node sleeps.** A client turns sleeping
+  on and off, chooses `w` and `l`, and sees the node's keeper
+  ([Companion](companion.md#what-the-node-holds), `SET` 8 and 9 and
+  `SLEEP`), but a sleeping node keeps its Bluetooth link as it would
+  awake, so its processor cannot sleep as its radio does
+  ([Companion](companion.md#not-yet-specified)).
 * **A keeper's own limits**: how many leaves one relay keeps, and
   whether a relay with no room says so in its answer to a solicit.
 * **A sleeping leaf's own neighbours.** Its links to relays other than

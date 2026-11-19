@@ -30,7 +30,7 @@ import sharing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 14
+VERSION = 15
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -96,7 +96,8 @@ FRAMES = {
     0x80: ("SELF", [("address", ADDR), ("role", U8), ("region", STR, REGION_MAX), ("power", I8),
                     ("time", U32), ("cards", U8), ("card_name", STR, NAME_MAX), ("most", U8),
                     ("pairing", U8)]),
-    0x81: ("CONTACT", [("address", ADDR), ("session", U8), ("name", STR, NAME_MAX)]),
+    0x81: ("CONTACT", [("address", ADDR), ("session", U8), ("name", STR, NAME_MAX),
+                       ("wake", U16)]),
     0x82: ("CONTACT_GONE", [("address", ADDR)]),
     0x83: ("MESSAGE", [("id", U32), ("contact", ADDR), ("time", U32), ("flags", U8),
                        ("state", U8), ("reason", U8), ("wait", U16), ("text", STR, TEXT_MAX)]),
@@ -127,6 +128,8 @@ FRAMES = {
     0x93: ("CARD_GONE", [("address", ADDR)]),
     0x94: ("FIX", [("receiver", U8), ("source", U8), ("lat", I32), ("lon", I32), ("altitude", I16),
                    ("accuracy", U16), ("age", U32), ("satellites", U8)]),
+    0x95: ("SLEEP", [("wake", U16), ("listen", U8), ("state", U8), ("keeper", U32),
+                     ("retry", U16)]),
 }
 BY_NAME = {name: t for t, (name, _) in FRAMES.items()}
 NEWS_NAMES = {name for t, (name, _) in FRAMES.items() if t >= 0x80}
@@ -135,7 +138,7 @@ NEWS_NAMES = {name for t, (name, _) in FRAMES.items() if t >= 0x80}
 # read by the version both ends speak, and has none of the fields a later version added.
 SINCE = {(0x43, "news"): 3, (0x42, "board"): 4, (0x42, "release"): 4, (0x80, "cards"): 6,
          (0x80, "card_name"): 6, (0x80, "most"): 10, (0x80, "pairing"): 11, (0x42, "update"): 12,
-         (0x30, "signature"): 13}
+         (0x30, "signature"): 13, (0x81, "wake"): 15}
 
 # SET 4's value for the node's default passkey, and the default of a node without a screen.
 PASSKEY_DEFAULT = 0xFFFFFFFF
@@ -148,6 +151,12 @@ PAIRING_SHOWN, PAIRING_DEFAULT, PAIRING_SET = 0, 1, 2
 # INFO's update: how a client gives the node new firmware (version 12): it cannot, over this
 # protocol, or by the node's bootloader.
 UPDATES_NONE, UPDATES_LINK, UPDATES_BOOTLOADER = 0, 1, 2
+
+# SLEEP's state (version 15): listening all the time, asleep with a keeper, waiting for a relay it
+# can take as keeper, or resting the relays that did not answer its polls.
+SLEEP_AWAKE, SLEEP_ASLEEP, SLEEP_WAITING, SLEEP_RESTING = 0, 1, 2, 3
+LISTEN_MIN = 2  # draft/sleeping.md#parameters
+WAKE_MIN, WAKE_MAX = 300, 3600
 
 # SET 3's value for the most a node may transmit at, rather than a power (version 10).
 POWER_MOST = -128
@@ -165,6 +174,7 @@ TYPE_SINCE = {
     0x06: 9,  # turning the node off
     0x36: 12,  # updating by the bootloader
     0x37: 13,  # wiping the node
+    0x95: 15,  # sleeping
 }
 
 
@@ -180,11 +190,13 @@ SETTINGS = {
     5: ("cards", [("value", U8)]),
     6: ("card_name", [("value", STR, NAME_MAX)]),
     7: ("receiver", [("value", U8)]),
+    8: ("wake", [("value", U16)]),
+    9: ("listen", [("value", U8)]),
 }
 
 # Settings a later version added, and the version that added them. A node of an earlier version, or
 # one speaking to a client of an earlier version, answers SET of one with ERROR 1.
-SETTING_SINCE = {5: 6, 6: 6, 7: 8}
+SETTING_SINCE = {5: 6, 6: 6, 7: 8, 8: 15, 9: 15}
 
 REQUESTS, ANSWERS, NEWS = (0x01, 0x3F), (0x40, 0x7F), (0x80, 0xBF)
 
@@ -517,6 +529,9 @@ def build():
         ("SET", 7, {"setting": 2, "value": 1}),
         ("SET", 8, {"setting": 3, "value": -9}),
         ("SET", 9, {"setting": 4, "value": 123456}),
+        ("SET", 40, {"setting": 8, "value": 600}),
+        ("SET", 41, {"setting": 8, "value": 0}),
+        ("SET", 42, {"setting": 9, "value": 4}),
         ("SEND", 10, {"ref": 0xC0FFEE01, "to": BOB, "text": "On the ridge by six"}),
         ("SEND", 11, {"ref": 2, "to": BOB, "text": "Ça va? \U0001F426"}),
         ("READ", 12, {"through": 17}),
@@ -579,7 +594,7 @@ def build():
                      "cards": 0, "card_name": "", "most": 0, "pairing": PAIRING_SET}),
         ("SELF", 2, {"address": ALICE, "role": 1, "region": "US915", "power": 22, "time": 0,
                      "cards": 0, "card_name": "", "most": 1, "pairing": PAIRING_DEFAULT}),
-        ("CONTACT", 2, {"address": BOB, "session": 1, "name": "Bob"}),
+        ("CONTACT", 2, {"address": BOB, "session": 1, "name": "Bob", "wake": 0}),
         ("CONTACT_GONE", 3, {"address": BOB}),
         ("MESSAGE", 4, {"id": 17, "contact": BOB, "time": 1_789_999_000, "flags": 1, "state": 4,
                         "reason": 0, "wait": 0, "text": "Where are you?"}),
@@ -632,6 +647,15 @@ def build():
                      "age": 3, "satellites": 0}),
         ("FIX", 37, {"receiver": 0, "source": 2, "lat": -336_183_000, "lon": -704_517_000,
                      "altitude": NO_ALTITUDE, "accuracy": 0, "age": 600, "satellites": 0}),
+        ("CONTACT", 38, {"address": BOB, "session": 1, "name": "Bob", "wake": 900}),
+        ("SLEEP", 39, {"wake": 0, "listen": LISTEN_MIN, "state": SLEEP_AWAKE, "keeper": 0,
+                       "retry": 0}),
+        ("SLEEP", 40, {"wake": 600, "listen": LISTEN_MIN, "state": SLEEP_WAITING, "keeper": 0,
+                       "retry": 0}),
+        ("SLEEP", 41, {"wake": 600, "listen": 4, "state": SLEEP_ASLEEP, "keeper": 0x1D2E3F40,
+                       "retry": 0}),
+        ("SLEEP", 42, {"wake": WAKE_MAX, "listen": LISTEN_MIN, "state": SLEEP_RESTING,
+                       "keeper": 0xD82C1E1A, "retry": 3581}),
     ]
     frames = []
     for name, seq, values in examples:
@@ -664,7 +688,7 @@ def build():
         encode("SYNC", 2, after=1)[:5],
         encode("SYNCED", 3, news=6)[:-1],
         encode("SET", 6, setting=1, value="EU868")[:6],
-        b"\x05\x06\x09\x00",
+        b"\x05\x06\x7f\x00",
         encode("SAVE_CONTACT", 13, address=BOB, name="Bob")[:34],
         encode("SAVE_CONTACT", 13, address=BOB, name="Bob")[:-1],
         encode("SAVE_CONTACT", 13, address=BOB, name="")[:-1] + b"\x20" + b"x" * 32,
@@ -706,6 +730,10 @@ def build():
         encode("LINK", 36, link=join_link(INVITED_SECRET, "Ridge walkers"))[:-1],
         encode("SET", 39, setting=7, value=0)[:-1],
         encode("FIX", 34, receiver=3, **RECEIVED)[:-1],
+        encode("SET", 40, setting=8, value=600)[:-1],
+        encode("CONTACT", 38, address=BOB, session=1, name="Bob", wake=900)[:-1],
+        encode("SLEEP", 41, wake=600, listen=4, state=SLEEP_ASLEEP, keeper=0x1D2E3F40,
+               retry=0)[:-1],
     ]:
         why = decode(frame)
         assert isinstance(why, str), frame.hex()
@@ -739,6 +767,7 @@ def build():
     neighbour = dict(routing_id=0x1D2E3F40, role=1, snr_quarter_db=-38, heard=42)
     airtime = dict(period=3600, allowed=360_000, used=12_345, wait=0)
     power = dict(millivolts=3987, percent=81, flags=1)
+    awake = dict(wake=0, listen=LISTEN_MIN, state=SLEEP_AWAKE, keeper=0, retry=0)
     where = dict(id=17, contact=BOB, time=1_789_999_000, state=4, reason=0, wait=0,
                  text="Where are you?")
     ridge = dict(id=18, contact=BOB, time=1_790_000_060, flags=0, text="On the ridge by six")
@@ -773,69 +802,70 @@ def build():
         ("node", encode("OK", 2)),
         ("client", encode("SYNC", 3, after=0)),
         ("node", encode("SELF", 0, **self_)),
-        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob", wake=0)),
         ("node", encode("MESSAGE", 2, flags=0, **where)),
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
         ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
         ("node", encode("AIRTIME", 5, **airtime)),
         ("node", encode("POWER", 6, **power)),
         ("node", encode("FIX", 7, receiver=2, **NO_FIX)),
-        ("node", encode("SYNCED", 3, news=8)),
+        ("node", encode("SLEEP", 8, **awake)),
+        ("node", encode("SYNCED", 3, news=9)),
         ("client", encode("READ", 4, through=17)),
         ("node", encode("OK", 4)),
-        ("node", encode("MESSAGE", 8, flags=1, **where)),
+        ("node", encode("MESSAGE", 9, flags=1, **where)),
         ("client", encode("SEND", 5, ref=0xC0FFEE01, to=BOB, text="On the ridge by six")),
         ("node", encode("QUEUED", 5, id=18)),
-        ("node", encode("MESSAGE", 9, state=0, reason=1, wait=0, **ridge)),
-        ("node", encode("STATE", 10, id=18, state=1, reason=0, wait=0)),
-        ("node", encode("STATE", 11, id=18, state=2, reason=0, wait=0)),
+        ("node", encode("MESSAGE", 10, state=0, reason=1, wait=0, **ridge)),
+        ("node", encode("STATE", 11, id=18, state=1, reason=0, wait=0)),
+        ("node", encode("STATE", 12, id=18, state=2, reason=0, wait=0)),
         # Carol makes first contact, and is refused: she is not a contact.
-        ("node", encode("ASKED", 12, address=CAROL, why=1)),
+        ("node", encode("ASKED", 13, address=CAROL, why=1)),
         ("client", encode("SAVE_CONTACT", 6, address=CAROL, name="Carol")),
         ("node", encode("OK", 6)),
-        ("node", encode("CONTACT", 13, address=CAROL, session=0, name="Carol")),
+        ("node", encode("CONTACT", 14, address=CAROL, session=0, name="Carol", wake=0)),
         # A group is made, Bob is invited to it, and a message is written to it.
         ("client", encode("MAKE_GROUP", 7, name="Hut")),
         ("node", encode("MADE", 7, group=HUT)),
-        ("node", encode("GROUP", 14, group=HUT, name="Hut")),
+        ("node", encode("GROUP", 15, group=HUT, name="Hut")),
         ("client", encode("SEND_INVITE", 8, group=HUT, to=BOB)),
         ("node", encode("QUEUED", 8, id=19)),
-        ("node", encode("INVITE", 15, state=0, reason=1, wait=0, **invite)),
-        ("node", encode("STATE", 16, id=19, state=1, reason=0, wait=0)),
-        ("node", encode("STATE", 17, id=19, state=2, reason=0, wait=0)),
+        ("node", encode("INVITE", 16, state=0, reason=1, wait=0, **invite)),
+        ("node", encode("STATE", 17, id=19, state=1, reason=0, wait=0)),
+        ("node", encode("STATE", 18, id=19, state=2, reason=0, wait=0)),
         ("client", encode("SEND_GROUP", 9, ref=0xC0FFEE02, group=HUT, text="Anyone at the hut?")),
         ("node", encode("QUEUED", 9, id=20)),
-        ("node", encode("GROUP_MESSAGE", 18, state=0, reason=0, wait=0, **anyone)),
-        ("node", encode("STATE", 19, id=20, state=1, reason=0, wait=0)),
+        ("node", encode("GROUP_MESSAGE", 19, state=0, reason=0, wait=0, **anyone)),
+        ("node", encode("STATE", 20, id=20, state=1, reason=0, wait=0)),
         # Bob answers in the group, and invites this node to another.
-        ("node", encode("GROUP_MESSAGE", 20, flags=0, **two)),
-        ("node", encode("INVITE", 21, flags=0, **invited)),
+        ("node", encode("GROUP_MESSAGE", 21, flags=0, **two)),
+        ("node", encode("INVITE", 22, flags=0, **invited)),
         ("client", encode("JOIN", 10, id=22)),
         ("node", encode("OK", 10)),
-        ("node", encode("GROUP", 22, group=RIDGE, name="Ridge")),
+        ("node", encode("GROUP", 23, group=RIDGE, name="Ridge")),
         ("client", encode("NAME_GROUP", 11, group=RIDGE, name="Ridge walkers")),
         ("node", encode("OK", 11)),
-        ("node", encode("GROUP", 23, group=RIDGE, name="Ridge walkers")),
+        ("node", encode("GROUP", 24, group=RIDGE, name="Ridge walkers")),
         ("client", encode("READ", 12, through=22)),
         ("node", encode("OK", 12)),
-        ("node", encode("GROUP_MESSAGE", 24, flags=1, **two)),
-        ("node", encode("INVITE", 25, flags=1, **invited)),
+        ("node", encode("GROUP_MESSAGE", 25, flags=1, **two)),
+        ("node", encode("INVITE", 26, flags=1, **invited)),
         ("client", encode("LEAVE_GROUP", 13, group=HUT)),
         ("node", encode("OK", 13)),
-        ("node", encode("GROUP_GONE", 26, group=HUT)),
+        ("node", encode("GROUP_GONE", 27, group=HUT)),
         # The client gives the node its position, and the user shares it with Bob for an hour.
         # Bob's position arrives. A precision past 24 is refused, and sharing with Bob is
         # turned off again.
         ("client", encode("SET_POSITION", 14, **SUMMIT, altitude=4806, accuracy=4, age=3)),
         ("node", encode("OK", 14)),
-        ("node", encode("FIX", 27, receiver=2, source=2, **SUMMIT, altitude=4806, accuracy=4,
+        ("node", encode("FIX", 28, receiver=2, source=2, **SUMMIT, altitude=4806, accuracy=4,
                         age=3, satellites=0)),
         ("client", encode("SHARE", 15, contact=BOB, precision=20, fields=0, interval=900,
                           minutes=60)),
         ("node", encode("OK", 15)),
-        ("node", encode("SHARING", 28, contact=BOB, precision=20, fields=0, interval=900,
+        ("node", encode("SHARING", 29, contact=BOB, precision=20, fields=0, interval=900,
                         minutes=60)),
-        ("node", encode("POSITION", 29, contact=BOB, **BOB_AT, altitude=NO_ALTITUDE, accuracy=0,
+        ("node", encode("POSITION", 30, contact=BOB, **BOB_AT, altitude=NO_ALTITUDE, accuracy=0,
                         age=40)),
         ("client", encode("SHARE_GROUP", 16, group=RIDGE, precision=25, fields=0, interval=300,
                           minutes=0)),
@@ -843,65 +873,87 @@ def build():
         ("client", encode("SHARE", 17, contact=BOB, precision=0, fields=0, interval=0,
                           minutes=0)),
         ("node", encode("OK", 17)),
-        ("node", encode("SHARING", 30, contact=BOB, precision=0, fields=0, interval=0,
+        ("node", encode("SHARING", 31, contact=BOB, precision=0, fields=0, interval=0,
                         minutes=0)),
         ("client", encode("END_SESSION", 18, address=BOB)),
         ("node", encode("OK", 18)),
-        ("node", encode("CONTACT", 31, address=BOB, session=0, name="Bob")),
+        ("node", encode("CONTACT", 32, address=BOB, session=0, name="Bob", wake=0)),
         # The user names the node's cards and turns them on; a value that is neither on nor off is
         # refused. A newer card from Dave arrives, and the user saves him as a contact from it,
         # under a name of their own. Cards are turned off again, and a day later the node forgets
         # Dave's card.
         ("client", encode("SET", 19, setting=6, value="Ada · hut warden")),
         ("node", encode("OK", 19)),
-        ("node", encode("SELF", 32, **{**self_, "card_name": "Ada · hut warden"})),
+        ("node", encode("SELF", 33, **{**self_, "card_name": "Ada · hut warden"})),
         ("client", encode("SET", 20, setting=5, value=1)),
         ("node", encode("OK", 20)),
-        ("node", encode("SELF", 33, **{**self_, "cards": 1, "card_name": "Ada · hut warden"})),
+        ("node", encode("SELF", 34, **{**self_, "cards": 1, "card_name": "Ada · hut warden"})),
         ("client", encode("SET", 21, setting=5, value=2)),
         ("node", encode("ERROR", 21, code=3)),
-        ("node", encode("CARD", 34, address=DAVE, heard=0, name=TRAIL)),
+        ("node", encode("CARD", 35, address=DAVE, heard=0, name=TRAIL)),
         ("client", encode("SAVE_CONTACT", 22, address=DAVE, name="Dave (trail crew)")),
         ("node", encode("OK", 22)),
-        ("node", encode("CONTACT", 35, address=DAVE, session=0, name="Dave (trail crew)")),
+        ("node", encode("CONTACT", 36, address=DAVE, session=0, name="Dave (trail crew)", wake=0)),
         ("client", encode("SET", 23, setting=5, value=0)),
         ("node", encode("OK", 23)),
-        ("node", encode("SELF", 36, **{**self_, "card_name": "Ada · hut warden"})),
-        ("node", encode("CARD_GONE", 37, address=DAVE)),
+        ("node", encode("SELF", 37, **{**self_, "card_name": "Ada · hut warden"})),
+        ("node", encode("CARD_GONE", 38, address=DAVE)),
         # The user asks for the second group's join code, to show it; joins the group it left,
         # from that group's code; and types a code with a letter wrong, which is refused.
         ("client", encode("GROUP_LINK", 24, group=RIDGE)),
         ("node", encode("LINK", 24, link=join_link(INVITED_SECRET, "Ridge walkers"))),
         ("client", encode("JOIN_LINK", 25, link=join_link(MADE_SECRET, "Hut"))),
         ("node", encode("MADE", 25, group=HUT)),
-        ("node", encode("GROUP", 38, group=HUT, name="Hut")),
+        ("node", encode("GROUP", 39, group=HUT, name="Hut")),
         ("client", encode("JOIN_LINK", 26, link=MISTYPED)),
         ("node", encode("ERROR", 26, code=3)),
         # The receiver finds the sky, and its fix is more recent than the client's. The user turns
         # it off, which keeps that fix; asks for a value that is neither on nor off, which is
         # refused; and turns it on again.
-        ("node", encode("FIX", 39, receiver=3, **RECEIVED)),
+        ("node", encode("FIX", 40, receiver=3, **RECEIVED)),
         ("client", encode("SET", 27, setting=7, value=0)),
         ("node", encode("OK", 27)),
-        ("node", encode("FIX", 40, receiver=1, **{**RECEIVED, "age": 20})),
+        ("node", encode("FIX", 41, receiver=1, **{**RECEIVED, "age": 20})),
         ("client", encode("SET", 28, setting=7, value=2)),
         ("node", encode("ERROR", 28, code=3)),
         ("client", encode("SET", 29, setting=7, value=1)),
         ("node", encode("OK", 29)),
-        ("node", encode("FIX", 41, receiver=2, **{**RECEIVED, "age": 40})),
+        ("node", encode("FIX", 42, receiver=2, **{**RECEIVED, "age": 40})),
         # The user asks for the most the node may transmit at: in EU868, into its antenna, 22 dBm.
         ("client", encode("SET", 30, setting=3, value=POWER_MOST)),
         ("node", encode("OK", 30)),
-        ("node", encode("SELF", 42, **{**self_, "card_name": "Ada · hut warden", "power": 22,
+        ("node", encode("SELF", 43, **{**self_, "card_name": "Ada · hut warden", "power": 22,
                                        "most": 1})),
         # The node has no screen and pairs with the default passkey; the user sets their own.
         ("client", encode("SET", 31, setting=4, value=482_913)),
         ("node", encode("OK", 31)),
-        ("node", encode("SELF", 43, **{**self_, "card_name": "Ada · hut warden", "power": 22,
+        ("node", encode("SELF", 44, **{**self_, "card_name": "Ada · hut warden", "power": 22,
                                        "most": 1, "pairing": PAIRING_SET})),
-        # The user turns the node off. Its answer is the last frame on the connection.
-        ("client", encode("OFF", 32)),
+        # The user makes the node a leaf, and sets it to sleep, polling at least every ten minutes.
+        # A wake under WAKE_MIN is refused. The node waits for a keeper, and takes its neighbour,
+        # a relay. A listen under LISTEN_MIN is refused, and the user has it listen for four
+        # seconds after each poll.
+        ("client", encode("SET", 32, setting=2, value=0)),
         ("node", encode("OK", 32)),
+        ("node", encode("SELF", 45, **{**self_, "role": 0, "card_name": "Ada · hut warden",
+                                       "power": 22, "most": 1, "pairing": PAIRING_SET})),
+        ("client", encode("SET", 33, setting=8, value=WAKE_MIN - 1)),
+        ("node", encode("ERROR", 33, code=3)),
+        ("client", encode("SET", 34, setting=8, value=600)),
+        ("node", encode("OK", 34)),
+        ("node", encode("SLEEP", 46, **{**awake, "wake": 600, "state": SLEEP_WAITING})),
+        ("node", encode("SLEEP", 47, **{**awake, "wake": 600, "state": SLEEP_ASLEEP,
+                                        "keeper": neighbour["routing_id"]})),
+        ("client", encode("SET", 35, setting=9, value=LISTEN_MIN - 1)),
+        ("node", encode("ERROR", 35, code=3)),
+        ("client", encode("SET", 36, setting=9, value=4)),
+        ("node", encode("OK", 36)),
+        ("node", encode("SLEEP", 48, **{**awake, "wake": 600, "listen": 4,
+                                        "state": SLEEP_ASLEEP,
+                                        "keeper": neighbour["routing_id"]})),
+        # The user turns the node off. Its answer is the last frame on the connection.
+        ("client", encode("OFF", 37)),
+        ("node", encode("OK", 37)),
     ])
 
     counted = [f["seq"] for f in exchange if f["type"] in NEWS_NAMES]
@@ -919,22 +971,22 @@ def build():
             ("node", info(0)),
             ("client", encode("SYNC", 2, after=17)),
             ("node", encode("SELF", 0, speak=0, **self_)),
-            ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+            ("node", encode("CONTACT", 1, speak=0, address=BOB, session=1, name="Bob")),
             ("node", encode("NEIGHBOUR", 2, **neighbour)),
             ("node", encode("AIRTIME", 3, **airtime)),
             ("node", encode("POWER", 4, **power)),
             ("node", encode("SYNCED", 2, speak=0)),
             ("client", encode("SAVE_CONTACT", 3, address=CAROL, name="Carol")),
             ("node", encode("OK", 3)),
-            ("node", encode("CONTACT", 5, address=CAROL, session=0, name="Carol")),
+            ("node", encode("CONTACT", 5, speak=0, address=CAROL, session=0, name="Carol")),
         ], 0)},
         {"version": 1, "frames": connection([
             ("client", encode("HELLO", 1, version=1)),
             ("node", info(1)),
             ("client", encode("SYNC", 2, after=0)),
             ("node", encode("SELF", 0, speak=1, **{**self_, "time": 1_790_000_130})),
-            ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
-            ("node", encode("CONTACT", 2, address=CAROL, session=0, name="Carol")),
+            ("node", encode("CONTACT", 1, speak=1, address=BOB, session=1, name="Bob")),
+            ("node", encode("CONTACT", 2, speak=1, address=CAROL, session=0, name="Carol")),
             ("node", encode("MESSAGE", 3, flags=1, **where)),
             ("node", encode("MESSAGE", 4, state=2, reason=0, wait=0, **ridge)),
             ("node", encode("NEIGHBOUR", 5, **neighbour)),
@@ -953,7 +1005,7 @@ def build():
             ("node", info(2)),
             ("client", encode("SYNC", 2, after=0)),
             ("node", encode("SELF", 0, speak=2, **self_)),
-            ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+            ("node", encode("CONTACT", 1, speak=2, address=BOB, session=1, name="Bob")),
             ("node", encode("MESSAGE", 2, flags=0, **where)),
             ("node", encode("NEIGHBOUR", 3, **neighbour)),
             ("node", encode("AIRTIME", 4, **airtime)),
@@ -972,7 +1024,7 @@ def build():
             ("node", info(speak)),
             ("client", encode("SYNC", 2, after=0)),
             ("node", encode("SELF", 0, speak=speak, **self_)),
-            ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+            ("node", encode("CONTACT", 1, speak=speak, address=BOB, session=1, name="Bob")),
             ("node", encode("MESSAGE", 2, flags=0, **where)),
             ("node", encode("NEIGHBOUR", 3, **neighbour)),
             ("node", encode("AIRTIME", 4, **airtime)),
@@ -990,7 +1042,7 @@ def build():
         ("node", info(5)),
         ("client", encode("SYNC", 2, after=0)),
         ("node", encode("SELF", 0, speak=5, **self_)),
-        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("CONTACT", 1, speak=5, address=BOB, session=1, name="Bob")),
         ("node", encode("MESSAGE", 2, flags=0, **where)),
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
         ("node", encode("AIRTIME", 4, **airtime)),
@@ -1007,7 +1059,7 @@ def build():
         ("node", info(6)),
         ("client", encode("SYNC", 2, after=0)),
         ("node", encode("SELF", 0, speak=6, **self_)),
-        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("CONTACT", 1, speak=6, address=BOB, session=1, name="Bob")),
         ("node", encode("MESSAGE", 2, flags=0, **where)),
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
         ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
@@ -1025,7 +1077,7 @@ def build():
         ("node", info(7)),
         ("client", encode("SYNC", 2, after=0)),
         ("node", encode("SELF", 0, speak=7, **self_)),
-        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("CONTACT", 1, speak=7, address=BOB, session=1, name="Bob")),
         ("node", encode("MESSAGE", 2, flags=0, **where)),
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
         ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
@@ -1043,7 +1095,7 @@ def build():
         ("node", info(8)),
         ("client", encode("SYNC", 2, after=0)),
         ("node", encode("SELF", 0, speak=8, **self_)),
-        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("CONTACT", 1, speak=8, address=BOB, session=1, name="Bob")),
         ("node", encode("MESSAGE", 2, flags=0, **where)),
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
         ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
@@ -1063,7 +1115,7 @@ def build():
         ("node", info(9)),
         ("client", encode("SYNC", 2, after=0)),
         ("node", encode("SELF", 0, speak=9, **self_)),
-        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("CONTACT", 1, speak=9, address=BOB, session=1, name="Bob")),
         ("node", encode("MESSAGE", 2, flags=0, **where)),
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
         ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
@@ -1082,7 +1134,7 @@ def build():
         ("node", info(10)),
         ("client", encode("SYNC", 2, after=0)),
         ("node", encode("SELF", 0, speak=10, **self_)),
-        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("CONTACT", 1, speak=10, address=BOB, session=1, name="Bob")),
         ("node", encode("MESSAGE", 2, flags=0, **where)),
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
         ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
@@ -1099,7 +1151,7 @@ def build():
         ("node", info(11)),
         ("client", encode("SYNC", 2, after=0)),
         ("node", encode("SELF", 0, speak=11, **self_)),
-        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("CONTACT", 1, speak=11, address=BOB, session=1, name="Bob")),
         ("node", encode("MESSAGE", 2, flags=0, **where)),
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
         ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
@@ -1119,7 +1171,7 @@ def build():
         ("node", info(12)),
         ("client", encode("SYNC", 2, after=0)),
         ("node", encode("SELF", 0, speak=12, **self_)),
-        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob")),
+        ("node", encode("CONTACT", 1, speak=12, address=BOB, session=1, name="Bob")),
         ("node", encode("MESSAGE", 2, flags=0, **where)),
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
         ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
@@ -1132,6 +1184,25 @@ def build():
         ("client", encode("WIPE", 4)),
         ("node", encode("ERROR", 4, code=1)),
     ], 12)})
+
+    # A client of version 14, to the node as the exchange begins: the same sync as the exchange's
+    # but for its SLEEP, and its last request names a setting its version does not define.
+    older.append({"version": 14, "frames": connection([
+        ("client", encode("HELLO", 1, version=14)),
+        ("node", info(14)),
+        ("client", encode("SYNC", 2, after=0)),
+        ("node", encode("SELF", 0, speak=14, **self_)),
+        ("node", encode("CONTACT", 1, speak=14, address=BOB, session=1, name="Bob")),
+        ("node", encode("MESSAGE", 2, flags=0, **where)),
+        ("node", encode("NEIGHBOUR", 3, **neighbour)),
+        ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
+        ("node", encode("AIRTIME", 5, **airtime)),
+        ("node", encode("POWER", 6, **power)),
+        ("node", encode("FIX", 7, receiver=2, **NO_FIX)),
+        ("node", encode("SYNCED", 2, news=8)),
+        ("client", encode("SET", 3, setting=8, value=600)),
+        ("node", encode("ERROR", 3, code=1)),
+    ], 14)})
 
     # Frames a later version defines, as a receiver of an earlier version reads them: a type it
     # does not know. A node answers such a request with ERROR 1; a client ignores such news.
@@ -1164,6 +1235,10 @@ def build():
         ("OFF", 8, {}),
         ("UPDATE_BOOTLOADER", 11, {}),
         ("WIPE", 12, {}),
+        ("SET", 14, {"setting": 8, "value": 600}),
+        ("SET", 14, {"setting": 9, "value": 4}),
+        ("SLEEP", 14, {"wake": 600, "listen": 4, "state": SLEEP_ASLEEP, "keeper": 0x1D2E3F40,
+                       "retry": 0}),
     ]:
         frame = encode(name, 5, **values)
         assert isinstance(decode(frame), dict)
