@@ -4,7 +4,10 @@
 the maintainer to decide on, under [GOVERNANCE.md](../GOVERNANCE.md#who-decides). If it is
 accepted, the changes it lists go to the drafts as their own pull requests. The simulator results
 are from `ternmesh/sim` on the branch `claude/privacy-design` (`tools/rotate.py`, and `rotate_s` in
-`include/tsim/core.h`), run on the firmware's own routing code.
+`include/tsim/core.h`), run on the firmware's own routing code. Part 1 has since been adopted
+([routing.md](../draft/routing.md#rationale), "A blinded key, not the address"). Requirement 1 of
+Part 2 was measured afterwards: see [Freeing places network-wide,
+measured](#freeing-places-network-wide-measured).
 
 ## Summary
 
@@ -40,9 +43,14 @@ This document proposes two steps and measures the second:
    * With room for both (2048 places is enough) it recovers within 11 to 15 hours. Averaged over
      an epoch, a **daily** rotation costs 11 to 13 points of unicast and 9 to 15% more airtime. A
      **weekly** one costs about 2 points and 1 to 2%.
-   * **Recommended: specify it, and leave it off,** until relays have room for twice the network,
-     or a retired name frees its place everywhere at once. When it is turned on, the epoch should
-     be a week.
+   * Measured afterwards: if every node marks its places old at the epoch's start, a new name may
+     take an old place, and five minutes in each node forgets the neighbours it has not heard
+     since. Then the board's 1024 places are enough, nothing more goes on the air, and a **weekly**
+     rotation costs 1.3 to 1.4 points of unicast on EU868's and US915's settings, and 1.3 to 5.4
+     with a fifth of the retirements lost. The slow preset pays about 15.
+   * **Recommended: specify it, and leave it off,** with a weekly epoch, every node at once, off on
+     the slow preset, and never on a node without a clock it trusts. Turn it on once the routing it
+     depends on has been measured on radios.
 
 The other leaks are covered in [Part 3](#part-3-the-other-leaks): acknowledgements,
 `message_1`'s `source`, a flood's `hops`, frame kind and size. Some are fixed cheaply; the rest
@@ -387,9 +395,68 @@ What these say:
 | R2 | Each node on its own timer | Poor against (a): one name disappears and one appears in the same part of the network within the same minute, so they are trivially matched | A few extra places at any time, if retired names free theirs promptly | Rows "spread" |
 | R3 | Leaves only; relays keep stable public ids | Relays' owners give up their own privacy. Relays are infrastructure and seldom move, which makes them easy to locate anyway | Places for 800 of 1000 names twice | Rows "leaves" |
 
+### Freeing places network-wide, measured
+
+Requirement 1 below was then simulated. The firmware was given two ways of freeing a retired
+name's place, both off and not specified (`ternmesh/firmware`, tag `experiment/retire-1`), and the
+simulator ran them (`ternmesh/sim`, `tools/rotate.py`, sim#84):
+
+* **Retired on the air.** A retraction marked *retired* (a listed metric of `0x7FFF`, which no
+  route or retraction uses, so a node without the rule reads it as a retraction). A relay frees the
+  place at once, passes the retirement on, and takes no route to the name for an hour after, so a
+  neighbour not yet told cannot bring it back.
+* **The epoch's places.** At the epoch's start every node marks the places it holds as old. With
+  its table full, a new name takes an old place, one with no route selected first. Then, five
+  minutes into the epoch (`epoch_grace`), every node forgets the neighbours it has not heard since
+  the epoch began, and every route through them: every id has changed, so they will not be heard
+  again under the ids they had. Nothing goes on the air for either.
+
+In both, each neighbour of a rotating node hears the node's own retirement, a signed announce under
+the old key, unless it is lost: "a fifth missing" has each neighbour miss it one time in five.
+
+Method as above: 1000 nodes, 200 relays, the board's 1024 places, every node rotating at once, two
+seeds. The slow preset (SF8 at 62.5 kHz) does not carry the default traffic even without a rotation
+(16% unicast), so it was run with a message from each node every four hours and 16 hours to settle,
+with which it does (96.8%). Unicast on time averaged over a weekly epoch:
+
+| | EU868 (SF7, 125 kHz) | US915 (SF9, 500 kHz) | Slow (SF8, 62.5 kHz) |
+|---|---|---|---|
+| No rotation | 97.6% | 98.7% | 96.8% |
+| Neighbours told only (the rows above) | 9.0% | 25.4% | — |
+| Retired on the air, sent `RETRACTS` (3) times | 6.6% | 42.4% | — |
+| Retired on the air, sent once | 95.5% | 96.6% | — |
+| the same, a fifth missing | 92.3% | 56.1% | — |
+| **The epoch's places** | **96.2%** | **97.4%** | 81.6% |
+| the same, a fifth missing | **92.2%** | **97.4%** | 80.0% |
+| the same, no retirement sent | 89.4% | 96.0% | 76.3% |
+| *the epoch's places without forgetting neighbours, a fifth missing* | *85.1%* | *67.6%* | — |
+
+With a daily epoch, the epoch's places give 87.7% and 90.2% on EU868's and US915's settings, and
+58.8% on the slow preset.
+
+What these say:
+
+1. **Retirements on the air cost too much.** Every relay has a retirement to pass on for every name
+   in the network, and sent as often as a retraction they take hours of its cap, ahead of the new
+   names. Sent once, they free the places, but one lost from the start leaves the old name in use
+   for `SILENT_MAX`: US915's settings fall to 56%.
+2. **The epoch's places meet requirement 1 with the board's tables,** at no cost on the air. A
+   weekly rotation costs 1.3 to 1.4 points of unicast on EU868's and US915's settings, against
+   about 2 with twice the places before.
+3. **Forgetting the neighbours the epoch left behind is what makes a lost retirement cheap.**
+   Without it, a fifth missing cost 11 and 30 points more than none missing; with it, 4 and none.
+   The node's own retirement still helps on EU868's settings (96.2% with, 89.4% without), so it is
+   kept, but the network does not depend on it.
+4. **The slow preset pays about 15 points a week.** It takes 6 to 12 hours to learn its routes
+   ([routing.md](../draft/routing.md#rationale)), and is back to 85% only 11 hours after a
+   rotation. A monthly epoch would cost roughly a quarter of that; not measured.
+5. **Only for every node at once (R1).** The epoch's places assume every name changed at the
+   boundary. A node that does not rotate has its place given up as readily, and is learned again.
+
 ### Requirements before rotation is turned on
 
-1. **A retired destination frees its place at once, network-wide.** The retirement should travel
+1. **A retired destination frees its place at once, network-wide.** *Met by the epoch's places,
+   measured above, rather than by a retraction marked retired.* The retirement should travel
    as a retraction marked *retired*, which every relay applies without the patient wait and passes
    on in its next announce, freeing the place as it does. That is a routing.md change, and it needs
    its own simulation, since a retraction lost on the air still leaves a stale route (routing.md
@@ -398,10 +465,19 @@ What these say:
    so 2048 places is 128 KB: past what an nRF52840 (256 KB of RAM, about 34 KB free on T1000-E)
    or a classic ESP32 has. Possible on an ESP32-S3 with PSRAM.
 3. **A measured retirement.** The best case is modelled here. A real one is lost sometimes, and
-   then the old name lingers for `SILENT_MAX`.
+   then the old name lingers for `SILENT_MAX`. *Measured above: with the neighbours left behind
+   forgotten, a fifth lost costs 4 points more or fewer.*
 
-Until one of the first two holds, rotation should be specified, with its epoch byte, retirement
-and re-based counters, but **off**: `EPOCH` infinite, `e` = 0, which is exactly Part 1.
+Still to hold before rotation is turned on:
+
+4. **An epoch every node agrees on.** A node with the wrong epoch is unreachable to its contacts.
+   A node with no clock it trusts (a phone's `SET_TIME`, or GPS) does not rotate.
+5. **Not on the slow preset,** or with a longer epoch there, measured first.
+6. **The routing measured on radios.** Every number here is the simulator's.
+
+Until then rotation should be specified, with its epoch byte, the epoch's places, the neighbours
+forgotten, the node's own retirement and re-based counters, but **off**: `EPOCH` infinite, `e` =
+0, which is exactly Part 1.
 
 ## Part 3: the other leaks
 
@@ -432,9 +508,9 @@ and re-based counters, but **off**: `EPOCH` infinite, `e` = 0, which is exactly 
 | | Part 1 (blinded key) | Part 2 (rotation, weekly / daily) | Header flag | Padding |
 |---|---|---|---|---|
 | Airtime | 0 | +1 to 2% / +9 to 15%, and 1 byte an announce for the epoch | ~1 byte a text message | 8 to 11% of message airtime |
-| Unicast on time | 0 | about -2 / -11 to -13 points with room for both names; unusable with the board's 1024 places at 1000 nodes | 0 | Small (longer frames) |
+| Unicast on time | 0 | about -1.4 / -10 points (EU868), -1.3 / -8.5 (US915) with the epoch's places and the board's tables; about -15 / -38 on the slow preset | 0 | Small (longer frames) |
 | Flash | < 1 KB | + < 0.5 KB (epoch, retirement), estimated | ~0 | ~0 |
-| RAM | 64 B + 4 B a contact | + 4 B a contact (the previous id); **twice the destination places** (64 KB more on a board), or the retirement rule | 0 | 0 |
+| RAM | 64 B + 4 B a contact | + 4 B a contact (the previous id); one bit a place, with the epoch's places | 0 | 0 |
 | Spec sections | routing, first-contact, cards, sharing | routing, forwarding, companion (epoch from clock) | unicast-security, groups | unicast-security, groups |
 
 ## Recommendation
@@ -445,11 +521,10 @@ and re-based counters, but **off**: `EPOCH` infinite, `e` = 0, which is exactly 
    routing.md and first-contact.md, and correct cards.md and companion.md.
 2. **Move the `node` flag into the ciphertext.** It costs one byte, and hides what kind of message
    a frame carries.
-3. **Specify Part 2, and leave it off** until a retired destination frees its place network-wide
-   and that has been simulated with board-sized tables (requirement 1), or relays have places for
-   twice the network. Then turn it on with an `EPOCH` of seven days, which bounds following a
-   pseudonym to a week for about 2 points of unicast. A daily epoch costs too much for what it
-   adds over a weekly one.
+3. **Specify Part 2, and leave it off.** Specify the epoch's places and forgetting the neighbours
+   the epoch left behind, not a retraction marked retired. Turn it on with an `EPOCH` of seven days,
+   every node at once, once requirements 4 to 6 hold: it bounds following a pseudonym to a week for
+   about 1.3 points of unicast. A daily epoch costs too much for what it adds over a weekly one.
 4. **Offer padding as a user setting**, off by default.
 5. **State the limits** (relays know destinations by pseudonym, a nearby radio is identifiable,
    replies name their destination, timing) in routing.md's and forwarding.md's "What an observer
@@ -466,6 +541,13 @@ and re-based counters, but **off**: `EPOCH` infinite, `e` = 0, which is exactly 
   (`tern_route_lost()` with `DEAD_HOPS` of 1).
 * The firmware's own code is otherwise unchanged. Nothing new goes on the air in the simulation:
   the retirement and the epoch byte are not counted, and both are small.
+* For [Freeing places network-wide](#freeing-places-network-wide-measured), the firmware at
+  `ternmesh/firmware` tag `experiment/retire-1` (`config.retire`, `tern_route_retire()`,
+  `tern_route_epoch()`, `config.epoch_grace`), and the simulator's `rotate_retire` 2,
+  `retire_repeats`, `retire_loss_ppm`, `rotate_epoch` and `epoch_grace_s`. The variants are
+  `rotate.py`'s `all`, `net`, `net-once`, `net-once-loss`, `epoch`, `epoch-loss`, `epoch-forget`,
+  `epoch-forget-loss` and `epoch-forget-silent`, the slow preset's with `--interval "4 h" --settle
+  16`; the sim's `Sweep` workflow runs them.
 * `tools/rotate.py` runs every row above (`--variants`, `--hours`). The first sweep measured hours
   0 to 5; hours 8, 11 and 15, and the learning allowance's rows, were run afterwards with
   `rotate_count` 1, so the epoch table above was put together from the hour tables by hand, by
