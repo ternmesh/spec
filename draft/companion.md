@@ -107,6 +107,7 @@ its field allows, or if a `str` is not valid UTF-8.
 | `0x06` | `OFF` | | `OK` |
 | `0x10` | `SEND` | `ref` `u32`, `to` `addr`, `text` `str` up to 128 | `QUEUED` |
 | `0x11` | `READ` | `through` `u32` | `OK` |
+| `0x12` | `FORGET` | `contact` `addr`, `through` `u32` | `OK` |
 | `0x18` | `SAVE_CONTACT` | `address` `addr`, `name` `str` up to 31 | `OK` |
 | `0x19` | `REMOVE_CONTACT` | `address` `addr` | `OK` |
 | `0x1A` | `END_SESSION` | `address` `addr` | `OK` |
@@ -118,6 +119,7 @@ its field allows, or if a `str` is not valid UTF-8.
 | `0x25` | `JOIN` | `id` `u32` | `OK` |
 | `0x26` | `GROUP_LINK` | `group` `gid` | `LINK` |
 | `0x27` | `JOIN_LINK` | `link` `str` up to 102 | `MADE` |
+| `0x28` | `FORGET_GROUP` | `group` `gid`, `through` `u32` | `OK` |
 | `0x30` | `UPDATE_BEGIN` | `size` `u32`, `digest` `digest`, `signature` `bytes` up to 64 | `UPDATING` |
 | `0x31` | `UPDATE_DATA` | `offset` `u32`, `data` `bytes` up to 172 | `OK` |
 | `0x32` | `UPDATE_END` | | `OK` |
@@ -205,6 +207,8 @@ a refusal.
 | `0x93` | `CARD_GONE` | `address` `addr` |
 | `0x94` | `FIX` | `receiver` `u8`, `source` `u8`, `lat` `i32`, `lon` `i32`, `altitude` `i16`, `accuracy` `u16`, `age` `u32`, `satellites` `u8` |
 | `0x95` | `SLEEP` | `wake` `u16`, `listen` `u8`, `state` `u8`, `keeper` `u32`, `retry` `u16` |
+| `0x96` | `FORGOTTEN` | `contact` `addr`, `through` `u32` |
+| `0x97` | `GROUP_FORGOTTEN` | `group` `gid`, `through` `u32` |
 
 Each news frame but `STATE`, the four `_GONE`s and `ASKED` is a
 **record**: the whole of one thing as the node holds it now. A record
@@ -291,6 +295,22 @@ and 4 a message waiting for both is given.
 `wait` is the node's estimate, in seconds, of how long until it goes,
 0 if it has none, and at most `0xFFFF`.
 
+**Forgotten** (`FORGOTTEN`, `GROUP_FORGOTTEN`). How much of a
+conversation the user has [forgotten](#the-requests): for an address,
+every `MESSAGE` and `INVITE` with that `contact`, and for a group, every
+`GROUP_MESSAGE` to it, whose `id` is `through` or less. The node holds
+none of them, and a client holds none either once it has the record: a
+client that receives one MUST forget every such message and invite it
+holds, whatever its state and wherever it keeps it. A record holds for
+the address or group whether or not it is a contact or a group the node
+holds, and its `through` only ever grows. Messages after it are kept as
+any others are.
+
+A node keeps these records across restarts, at least `FORGOTTEN_KEPT`
+of them. One with no room for another drops the record with the least
+`through`; a client that has not had it by then keeps what it held of
+that conversation, and the node has forgotten it all the same.
+
 **Neighbours** (`NEIGHBOUR`). The nodes whose announces the node hears,
 by routing id. `role` is as in `SELF`. `snr` is the signal-to-noise
 ratio of the last frame heard from it, in quarters of a dB. `heard` is
@@ -343,7 +363,9 @@ the node in hand: they can read them over its USB port, or by putting
 firmware of their own on it. So a node that is lost or taken has given
 up its address, its sessions and every group it was in. Its user should
 tell their contacts, who should no longer trust that address, and should
-make new groups for the people still in them. `WIPE`
+make new groups for the people still in them. `FORGET` and
+`FORGET_GROUP` erase a conversation from the node while the user still
+has it, and `WIPE`
 ([below](#the-requests)) erases a node that is still in hand, before it
 is given away or sent off to be mended. How a node's contacts learn that
 its address is no longer its owner's is
@@ -570,6 +592,8 @@ A node with a client that has said `HELLO` MUST send that client:
   one;
 * `FIX` when its `receiver` or its `source` changes;
 * `SLEEP` when anything in it but `retry` changes;
+* `FORGOTTEN` and `GROUP_FORGOTTEN` when a `FORGET` or `FORGET_GROUP`
+  makes its `through` greater;
 * `ASKED` when it refuses [first contact](#who-may-make-first-contact),
   as that section says.
 
@@ -599,7 +623,9 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 15. Version 14 is version 15 without [sleeping](#what-the-node-holds):
+version 16. Version 15 is version 16 without [forgetting](#the-requests):
+the requests `FORGET` and `FORGET_GROUP`, and the news `FORGOTTEN` and
+`GROUP_FORGOTTEN`. Version 14 is version 15 without [sleeping](#what-the-node-holds):
 the settings 8 and 9, the news `SLEEP`, and `CONTACT`'s `wake`. Version 13 is the same in every frame, but its routing ids
 were made from the address itself, as [Routes](routing.md#routing-ids)
 made them before announces carried a key blinded from it: `SHA-256("tern
@@ -638,7 +664,10 @@ not told of group messages or invites at all: their `id`s are ones it
 never sees. One of version 4 or earlier is told of no positions, and
 of no sharing. One of version 5 or earlier is told of no cards, and
 is sent a `SELF` without `cards` and `card_name`. One of version 7 or
-earlier is told of no fix. One of version 14 or earlier is told
+earlier is told of no fix. One of version 15 or earlier is told nothing
+of what is forgotten: it is sent no `FORGOTTEN` or `GROUP_FORGOTTEN`,
+and keeps what it holds of a conversation another client forgot, though
+the node sends it none of that again. One of version 14 or earlier is told
 nothing of sleeping: it is sent no `SLEEP`, and a `CONTACT` without
 `wake`. One of version 11 or earlier is sent an `INFO` without `update`, and
 with an empty `board` unless the node is updated over this protocol,
@@ -660,7 +689,8 @@ version 9 answers an `OFF` from a client of version 8 with `ERROR` 1,
 and one of version 12 answers an `UPDATE_BOOTLOADER` from a client of
 version 11 with `ERROR` 1, and one of version 13 a `WIPE` from a client
 of version 12, and one of version 15 a `SET` of setting 8 from a client
-of version 14, which ignores a `SLEEP`. A client of version 12 or earlier sends `UPDATE_BEGIN`
+of version 14, which ignores a `SLEEP`, and one of version 16 a `FORGET`
+from a client of version 15, which ignores a `FORGOTTEN`. A client of version 12 or earlier sends `UPDATE_BEGIN`
 without a `signature`, and a node that [checks signatures](#signed-images)
 refuses it, as it refuses any image that is not signed.
 A node of version 14 gives every client the routing ids its radio
@@ -698,7 +728,9 @@ goes back to 0.
 `SYNC` asks for everything. The node sends news: one `SELF`, then a
 `CONTACT` for every contact, a `GROUP` for every group, a `MESSAGE`,
 `GROUP_MESSAGE` or `INVITE` for every one it holds whose `id` is
-greater than `after`, in order of `id`, a `NEIGHBOUR` for every
+greater than `after`, in order of `id`, a `FORGOTTEN` for every address
+and then a `GROUP_FORGOTTEN` for every group it holds one for, whatever
+`after` is, a `NEIGHBOUR` for every
 neighbour, a `POSITION` or `GROUP_POSITION` for every position it
 holds, a `SHARING` or `GROUP_SHARING` for every contact or group it
 shares its position with, a `CARD` for every card it holds, one
@@ -712,7 +744,9 @@ contact, group, neighbour, position and card it holds that the sync
 did not send, as if it had received its `_GONE` or a position's record with `precision`
 0, and take sharing to be off with every contact and group the sync
 sent no `SHARING` or `GROUP_SHARING` for. Messages are not: a sync
-sends only those after `after`, and a client keeps the rest.
+sends only those after `after`, and a client keeps the rest, but for
+those a `FORGOTTEN` or `GROUP_FORGOTTEN` in it covers. A client that
+was away when a conversation was forgotten learns it so.
 
 A client that has missed news since it sent the `SYNC`, either by a
 gap in the count or because the count it expects next is not the
@@ -733,7 +767,9 @@ records of kinds the client was not sent then, with `id`s below ones
 it was.
 
 A node keeps only so many messages, and MAY forget the oldest without
-news. A client that wants them keeps its own copy.
+news. A client that wants them keeps its own copy. That is not the
+user forgetting them: it sends no `FORGOTTEN`, and a client keeps its
+copy.
 
 ### Requests, one at a time
 
@@ -898,6 +934,36 @@ version was never sent those, so its user has not seen them, and its
 `READ` leaves them unread. It is how a client tells the node, and
 every other client, that the user has seen them.
 
+**`FORGET`** forgets the conversation with `contact` through
+`through`: every message and invite with that address whose `id` is
+`through` or less. A `through` greater than any `id` the node has given
+is taken as the greatest it has given, so that a message that comes
+later is not forgotten before it is written. The node MUST NOT send a
+client any of them again, nor show them on a screen of its own, and
+SHOULD erase the storage that held them, not only mark them unused. A
+message or invite among them that is waiting or sent is given up first,
+as [`END_SESSION`](#the-requests) gives one up: the node sends no frame
+of it again. A received invite forgotten takes with it the secret it
+carried, and can no longer be joined. The contact, if it is one, is
+kept, and so are its session, its position and sharing with it.
+
+The node then makes its `FORGOTTEN` for the address the greater of the
+one it holds and `through`, and sends the record to every client. A
+`FORGET` that makes it no greater changes nothing, and sends no news.
+A node MUST refuse an invalid address, or its own, with `ERROR` 4, and
+answers `OK` for an address it holds nothing of, which is not a
+contact, or which it never heard of: the conversation may live on in a
+client's copy.
+
+A client MUST NOT send `FORGET` or `FORGET_GROUP` unless its user asked
+it to, and SHOULD say first that the conversation goes from the node
+and from every client of it, for good, and, if any of it is waiting or
+sent, that it will not be sent. It gives as `through` the greatest `id`
+it shows the user in that conversation, so that a message that arrives
+while the user decides is not forgotten unseen. A client that hides a
+conversation without forgetting it does so on its own, and tells the
+node nothing.
+
 **`SAVE_CONTACT`** saves `address` as a contact with `name`, or
 renames it if it is one already. An empty name is a name. A node MUST
 refuse an invalid address, or its own, with `ERROR` 4.
@@ -933,6 +999,15 @@ messages are kept; one still waiting to go to it, and an invite to it
 still waiting, become not delivered, since neither will now be sent. Nothing goes on the air, so the other members are not
 told. A node answers `OK` for a group it does not
 hold.
+
+**`FORGET_GROUP`** is `FORGET` for a group: it forgets every group
+message to `group` whose `id` is `through` or less, and the record it
+changes is the group's `GROUP_FORGOTTEN`. One of them waiting is given
+up, as `LEAVE_GROUP` gives one up; invites to the group are the
+conversation with whoever they went to or came from, and stay. The
+group, if the node holds it, is kept. A node answers `OK` for a group it
+does not hold, or never held: a group left is the one most likely to be
+forgotten.
 
 **`NAME_GROUP`** changes the user's name for a group the node holds.
 An empty name is a name. A node answers `ERROR` 9 for a group it does
@@ -1297,6 +1372,7 @@ advertises a tag SHOULD show it.
 | `QUIET` | 10 s | |
 | `PAIR_WINDOW` | 180 s | how long after a start by hand, or a press of the button, a node pairs with a passkey it does not show |
 | `UPDATE_CHUNK` | 172 bytes | the most `data` an `UPDATE_DATA` carries: a multiple of four that fits a frame, which is then 179 bytes |
+| `FORGOTTEN_KEPT` | 16 | the fewest `FORGOTTEN` and `GROUP_FORGOTTEN` records a node keeps |
 
 ## Conformance
 
@@ -1351,7 +1427,8 @@ An implementation conforms to this section if, for
   sends a client of version 11 an `INFO` without `update`, and refuses
   it `UPDATE_BOOTLOADER`; and refuses a client of version 12 an update,
   which carries no signature, and `WIPE`; and sends a client of
-  version 14 no `SLEEP`, and refuses it `SET` 8;
+  version 14 no `SLEEP`, and refuses it `SET` 8; and refuses a client
+  of version 15 `FORGET`;
 * **signatures:** given `release_key` and `digest`, it builds
   `message`, and takes `signature` as verifying exactly when `verifies`
   is true. A conforming client and a conforming node both do this;
@@ -1369,7 +1446,11 @@ An implementation conforms to this section if, for
   the connections in `bootloader`, it sends the node's, and restarts
   into its bootloader after the first connection's last frame;
 * **wipe:** as a node, given the client's frames in `wipe`, it sends
-  the node's, and erases itself after the last.
+  the node's, and erases itself after the last;
+* **forget:** as a node holding what `forget` shows, given the client's
+  frames of each of its connections in order, it sends the node's. The
+  message it receives in the first comes when the file says; the second
+  is a client that was away, and is told what the first forgot.
 
 What a node holds, and so which news it sends and when, depends on the
 rest of the node, and is checked by running a client against it. The
@@ -1770,6 +1851,49 @@ over a byte stream a frame has a CRC and a type, and a client is held to
 asking its user first. The airtime is kept because a region's limit
 does not start again because a board was erased.
 
+**Why a conversation is forgotten on the node, and not only in a
+client.** A client could delete its own copy and tell nobody. But a
+node may be driven by several clients, a phone and a laptop and its own
+screen, and a conversation deleted on one would live on in the others,
+and in the node's flash, where whoever holds the node can
+[read it](#what-the-node-holds). The node is already where the user's
+names and what they have read are kept for every client; what they have
+forgotten belongs with them. And it is the node that is lost or taken,
+and the node's copy that most needs to go.
+
+**Why a mark, and not a record for each message.** A client that was
+away holds messages the node may have long since dropped for room, so
+telling it which ones were forgotten would mean a record for each, kept
+until every client had seen it, which a node cannot know. A
+conversation's messages are already in order of `id`, so one number
+says which of them are gone, the client's older copies included, and
+`READ` already marks read the same way. A mark only grows, so a sync
+can send every one the node holds without a client having to tell the
+old from the new, and sending it twice is harmless.
+
+**Why a waiting message is given up.** A message the user forgot that
+went on being sent would reach its destination, and its state would
+change, when no client holds it any longer to say so. A user who
+forgets a conversation means it gone, and `END_SESSION` and
+`LEAVE_GROUP` already give up a message in the same way. A client says
+so before it asks.
+
+**Why not a flag on `LEAVE_GROUP` and `REMOVE_CONTACT`.** A group left
+keeps its messages, and is the conversation a user most often wants
+gone afterwards; the same is true of an address that was never a
+contact. A request of its own forgets either, at any time, and a client
+that offers to forget while it leaves sends both.
+
+**Why only conversations.** A mark cannot say that one message in the
+middle is gone, and a record for each would be what the mark avoids. A
+conversation is what users clear. One message forgotten can come
+later, as its own record, if it is wanted.
+
+**Why hiding is not here.** Hiding a conversation, or archiving it, is
+how a client arranges what it shows, and changes nothing the node or
+another client holds. Each client may do it as it likes; nothing in it
+needs a frame.
+
 ## Not yet specified
 
 * **Who is in a group.** A node does not know, and nor does a client:
@@ -1825,6 +1949,9 @@ does not start again because a board was erased.
   the rest see a node gone.
 * **Driving another node over the air**, to turn it off or anything
   else: who may, and how a node knows them.
+* **Forgetting one message**, rather than a conversation up to a point.
+* **Forgetting by age**: a node that forgets what is older than the
+  user chose, by itself, and tells its clients as it does.
 * **How many cards a sync sends.** A node in a crowd may hold a day of
   cards, and each is a frame of a sync. A node holds what it has room
   for, and nothing yet lets a client ask for fewer.
