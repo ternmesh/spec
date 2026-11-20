@@ -181,6 +181,7 @@ Error codes:
 | 11 | not an image this node runs: the update is discarded |
 | 12 | not a contact: an address the node does not hold as one |
 | 13 | not over the mesh: a request a node does not act on when [managed](managing.md#the-connection) |
+| 14 | locked: the node's Bluetooth is [locked](managing.md#locking-bluetooth) |
 
 Other codes are reserved. A client MUST treat one it does not know as
 a refusal.
@@ -189,7 +190,7 @@ a refusal.
 
 | `type` | News | Fields |
 |---|---|---|
-| `0x80` | `SELF` | `address` `addr`, `role` `u8`, `region` `str` up to 15, `power` `i8`, `time` `u32`, `cards` `u8`, `card_name` `str` up to 31, `most` `u8`, `pairing` `u8` |
+| `0x80` | `SELF` | `address` `addr`, `role` `u8`, `region` `str` up to 15, `power` `i8`, `time` `u32`, `cards` `u8`, `card_name` `str` up to 31, `most` `u8`, `pairing` `u8`, `locked` `u8` |
 | `0x81` | `CONTACT` | `address` `addr`, `session` `u8`, `name` `str` up to 31, `wake` `u16`, `owner` `u8` |
 | `0x82` | `CONTACT_GONE` | `address` `addr` |
 | `0x83` | `MESSAGE` | `id` `u32`, `contact` `addr`, `time` `u32`, `flags` `u8`, `state` `u8`, `reason` `u8`, `wait` `u16`, `text` `str` up to 128 |
@@ -214,13 +215,14 @@ a refusal.
 | `0x96` | `FORGOTTEN` | `contact` `addr`, `through` `u32` |
 | `0x97` | `GROUP_FORGOTTEN` | `group` `gid`, `through` `u32` |
 | `0x98` | `MANAGED` | `from` `addr`, `answer` `bytes` up to 128 |
+| `0x99` | `OWNER_CHANGED` | `from` `addr`, `contact` `addr`, `owner` `u8`, `by` `u8` |
 
-Each news frame but `STATE`, the four `_GONE`s, `ASKED` and `MANAGED` is a
+Each news frame but `STATE`, the four `_GONE`s, `ASKED`, `MANAGED` and `OWNER_CHANGED` is a
 **record**: the whole of one thing as the node holds it now. A record
 replaces any the client holds for the same thing. `STATE` replaces
 those fields of the `MESSAGE`, `GROUP_MESSAGE` or `INVITE` with its
-`id`, and of nothing when its `id` is a `MANAGE`'s. `ASKED` and
-`MANAGED` are things that happened, and the node does not hold them: a
+`id`, and of nothing when its `id` is a `MANAGE`'s. `ASKED`, `MANAGED`
+and `OWNER_CHANGED` are things that happened, and the node does not hold them: a
 [sync](#syncing) does not send them again.
 
 **The node's count.** A node keeps a count of the news it has sent on
@@ -631,8 +633,9 @@ request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
 version 17. Version 16 is version 17 without [managing](managing.md):
-the requests `MANAGE`, `OWNER` and `RESTART`, error 13, the news
-`MANAGED`, and `CONTACT`'s `owner`. Version 15 is version 16 without [forgetting](#the-requests):
+the requests `MANAGE`, `OWNER` and `RESTART`, the setting 10, errors
+13 and 14, the news `MANAGED` and `OWNER_CHANGED`, `CONTACT`'s `owner`
+and `SELF`'s `locked`. Version 15 is version 16 without [forgetting](#the-requests):
 the requests `FORGET` and `FORGET_GROUP`, and the news `FORGOTTEN` and
 `GROUP_FORGOTTEN`. Version 14 is version 15 without [sleeping](#what-the-node-holds):
 the settings 8 and 9, the news `SLEEP`, and `CONTACT`'s `wake`. Version 13 is the same in every frame, but its routing ids
@@ -674,7 +677,8 @@ never sees. One of version 4 or earlier is told of no positions, and
 of no sharing. One of version 5 or earlier is told of no cards, and
 is sent a `SELF` without `cards` and `card_name`. One of version 7 or
 earlier is told of no fix. One of version 16 or earlier is told nothing
-of managing: it is sent no `MANAGED`, and a `CONTACT` without `owner`.
+of managing: it is sent no `MANAGED` or `OWNER_CHANGED`, a `CONTACT`
+without `owner` and a `SELF` without `locked`.
 One of version 15 or earlier is told nothing
 of what is forgotten: it is sent no `FORGOTTEN` or `GROUP_FORGOTTEN`,
 and keeps what it holds of a conversation another client forgot, though
@@ -845,6 +849,7 @@ was given, counting on from it, until it is given another.
 | 7 | receiver | `u8` | 1 to run the node's satellite receiver, 0 to turn it off |
 | 8 | wake | `u16` | `w`: 0 not to [sleep](sleeping.md), or how long the node lets pass between polls when it does, in seconds, from `WAKE_MIN` to `WAKE_MAX` |
 | 9 | listen | `u8` | `l`: how long the node listens after each poll, in seconds, from `LISTEN_MIN` to 255 |
+| 10 | lock | `u8` | 1 to [lock](managing.md#locking-bluetooth) the node's Bluetooth, 0 to unlock it |
 
 A node MUST refuse, with `ERROR` 3, a region it does not have and a
 power its radio cannot send at or that would let it radiate more than
@@ -997,6 +1002,17 @@ reads them at the version it gave the managed node in its last
 as over a link. A `MANAGED` from a node the client sent no request to
 it MUST ignore. What a node may be asked over the mesh, and what it
 answers, is [Managing](managing.md#the-connection)'s rule.
+
+**`OWNER_CHANGED`** tells every client that the node at `from` said
+its owners changed, in a [notice](managing.md#telling-the-owners):
+`contact` became one of them if `owner` is 1, and stopped being one if
+it is 0, `by` saying whether that was over a link to that node (0) or
+by one of its owners over the mesh (1). A client SHOULD tell its user,
+who may not have made the change, and say how.
+
+`SET` 10 [locks](managing.md#locking-bluetooth) the node's Bluetooth
+with 1 and unlocks it with 0, and a node MUST refuse any other value
+with `ERROR` 3. `SELF`'s `locked` is 1 while it is locked.
 
 **`OWNER`** makes the contact `address` one of the node's
 [owners](managing.md#owners) when `owner` is 1, and not one when it is
@@ -1479,7 +1495,8 @@ An implementation conforms to this section if, for
   which carries no signature, and `WIPE`; and sends a client of
   version 14 no `SLEEP`, and refuses it `SET` 8; and refuses a client
   of version 15 `FORGET`; and sends a client of version 16 a `CONTACT`
-  without `owner`, and refuses it `OWNER`;
+  without `owner` and a `SELF` without `locked`, and refuses it
+  `OWNER`;
 * **signatures:** given `release_key` and `digest`, it builds
   `message`, and takes `signature` as verifying exactly when `verifies`
   is true. A conforming client and a conforming node both do this;

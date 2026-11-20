@@ -103,7 +103,7 @@ FRAMES = {
     # News, node to client.
     0x80: ("SELF", [("address", ADDR), ("role", U8), ("region", STR, REGION_MAX), ("power", I8),
                     ("time", U32), ("cards", U8), ("card_name", STR, NAME_MAX), ("most", U8),
-                    ("pairing", U8)]),
+                    ("pairing", U8), ("locked", U8)]),
     0x81: ("CONTACT", [("address", ADDR), ("session", U8), ("name", STR, NAME_MAX),
                        ("wake", U16), ("owner", U8)]),
     0x82: ("CONTACT_GONE", [("address", ADDR)]),
@@ -141,6 +141,7 @@ FRAMES = {
     0x96: ("FORGOTTEN", [("contact", ADDR), ("through", U32)]),
     0x97: ("GROUP_FORGOTTEN", [("group", GID), ("through", U32)]),
     0x98: ("MANAGED", [("from", ADDR), ("answer", RAW, MANAGED_MAX)]),
+    0x99: ("OWNER_CHANGED", [("from", ADDR), ("contact", ADDR), ("owner", U8), ("by", U8)]),
 }
 BY_NAME = {name: t for t, (name, _) in FRAMES.items()}
 NEWS_NAMES = {name for t, (name, _) in FRAMES.items() if t >= 0x80}
@@ -150,7 +151,9 @@ NEWS_NAMES = {name for t, (name, _) in FRAMES.items() if t >= 0x80}
 SINCE = {(0x43, "news"): 3, (0x42, "board"): 4, (0x42, "release"): 4, (0x80, "cards"): 6,
          (0x80, "card_name"): 6, (0x80, "most"): 10, (0x80, "pairing"): 11, (0x42, "update"): 12,
          (0x30, "signature"): 13, (0x81, "wake"): 15,
-         (0x81, "owner"): 17}
+         (0x81, "owner"): 17, (0x80, "locked"): 17}
+# A field a later version added that a frame built here leaves at its default unless given.
+DEFAULTS = {(0x80, "locked"): 0}
 
 # SET 4's value for the node's default passkey, and the default of a node without a screen.
 PASSKEY_DEFAULT = 0xFFFFFFFF
@@ -188,7 +191,7 @@ TYPE_SINCE = {
     0x37: 13,  # wiping the node
     0x95: 15,  # sleeping
     **{t: 16 for t in (0x12, 0x28, 0x96, 0x97)},  # forgetting
-    **{t: 17 for t in (0x13, 0x14, 0x38, 0x98)},  # managing
+    **{t: 17 for t in (0x13, 0x14, 0x38, 0x98, 0x99)},  # managing
 }
 
 
@@ -206,11 +209,12 @@ SETTINGS = {
     7: ("receiver", [("value", U8)]),
     8: ("wake", [("value", U16)]),
     9: ("listen", [("value", U8)]),
+    10: ("lock", [("value", U8)]),
 }
 
 # Settings a later version added, and the version that added them. A node of an earlier version, or
 # one speaking to a client of an earlier version, answers SET of one with ERROR 1.
-SETTING_SINCE = {5: 6, 6: 6, 7: 8, 8: 15, 9: 15}
+SETTING_SINCE = {5: 6, 6: 6, 7: 8, 8: 15, 9: 15, 10: 17}
 
 REQUESTS, ANSWERS, NEWS = (0x01, 0x3F), (0x40, 0x7F), (0x80, 0xBF)
 
@@ -293,7 +297,7 @@ def encode(kind, seq, /, *, speak=VERSION, **values):
     t = BY_NAME[kind]
     out = bytes([t, seq])
     for field in fields_of(t, values, speak):
-        v = values[field[0]]
+        v = values[field[0]] if field[0] in values else DEFAULTS[(t, field[0])]
         kind = field[1]
         if kind in FIXED:
             out += struct.pack(FIXED[kind], v)
@@ -487,9 +491,10 @@ def self_check():
     assert decode(b"\x05\x09\x05\x01", speak=5) == UNKNOWN[1]
     me = dict(address=bytes(32), role=0, region="", power=0, time=0, cards=1, card_name="A",
               most=1, pairing=PAIRING_DEFAULT)
-    assert encode("SELF", 0, **me) == encode("SELF", 0, speak=5, **me) + b"\x01\x01A\x01\x01"
-    assert encode("SELF", 0, **me) == encode("SELF", 0, speak=9, **me) + b"\x01\x01"
-    assert encode("SELF", 0, **me) == encode("SELF", 0, speak=10, **me) + b"\x01"
+    assert encode("SELF", 0, **me) == encode("SELF", 0, speak=5, **me) + b"\x01\x01A\x01\x01\x00"
+    assert encode("SELF", 0, **me) == encode("SELF", 0, speak=9, **me) + b"\x01\x01\x00"
+    assert encode("SELF", 0, **me) == encode("SELF", 0, speak=10, **me) + b"\x01\x00"
+    assert encode("SELF", 0, **me) == encode("SELF", 0, speak=16, **me) + b"\x00"
     assert encode("SET", 9, setting=3, value=POWER_MOST) == b"\x05\x09\x03\x80"
     assert len(encode("CARD", 0, address=bytes(32), heard=0, name="x" * NAME_MAX)) == 39 + NAME_MAX
 
@@ -730,11 +735,17 @@ def build():
         ("OWNER", 48, {"address": BOB, "owner": 1}),
         ("OWNER", 49, {"address": BOB, "owner": 0}),
         ("RESTART", 50, {}),
+        ("SET", 51, {"setting": 10, "value": 1}),
+        ("SET", 52, {"setting": 10, "value": 0}),
+        ("ERROR", 51, {"code": 14}),
+        ("OWNER_CHANGED", 47, {"from": BOB, "contact": CAROL, "owner": 1, "by": 0}),
+        ("OWNER_CHANGED", 48, {"from": BOB, "contact": ALICE, "owner": 0, "by": 1}),
         ("MANAGED", 45, {"from": BOB, "answer": pack([encode("OK", 7)])[0]}),
         ("CONTACT", 46, {"address": BOB, "session": 1, "name": "Bob", "wake": 0, "owner": 1}),
     ]
     frames = []
     for name, seq, values in examples:
+        values = {**{f: v for (t, f), v in DEFAULTS.items() if t == BY_NAME[name]}, **values}
         frame = encode(name, seq, **values)
         shown = {k: (v.hex() if isinstance(v, bytes) else v) for k, v in values.items()}
         assert decode(frame) == {"type": name, "seq": seq, **shown}
@@ -1293,7 +1304,7 @@ def build():
         ("client", encode("HELLO", 1, version=15)),
         ("node", info(15)),
         ("client", encode("SYNC", 2, after=0)),
-        ("node", encode("SELF", 0, **self_)),
+        ("node", encode("SELF", 0, speak=15, **self_)),
         ("node", encode("CONTACT", 1, speak=15, address=BOB, session=1, name="Bob", wake=0)),
         ("node", encode("MESSAGE", 2, flags=0, **where)),
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
@@ -1313,7 +1324,7 @@ def build():
         ("client", encode("HELLO", 1, version=16)),
         ("node", info(16)),
         ("client", encode("SYNC", 2, after=0)),
-        ("node", encode("SELF", 0, **self_)),
+        ("node", encode("SELF", 0, speak=16, **self_)),
         ("node", encode("CONTACT", 1, speak=16, address=BOB, session=1, name="Bob", wake=0)),
         ("node", encode("MESSAGE", 2, flags=0, **where)),
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
@@ -1369,6 +1380,8 @@ def build():
         ("MANAGE", 16, {"ref": 0xC0FFEE10, "to": BOB, "request": encode("PING", 7)}),
         ("OWNER", 16, {"address": BOB, "owner": 1}),
         ("RESTART", 16, {}),
+        ("SET", 16, {"setting": 10, "value": 1}),
+        ("OWNER_CHANGED", 16, {"from": BOB, "contact": CAROL, "owner": 1, "by": 0}),
         ("MANAGED", 16, {"from": BOB, "answer": pack([encode("OK", 7)])[0]}),
     ]:
         frame = encode(name, 5, **values)
@@ -1620,6 +1633,10 @@ def build():
     ]:
         more, news = managed(news, client_seq, ref, request, answer_frames, 15 + client_seq)
         steps += more
+    # Someone at Bob's node, over its USB, makes Carol an owner, and Bob's node tells its owners.
+    steps.append(("node", encode("OWNER_CHANGED", news, **{"from": BOB}, contact=CAROL, owner=1,
+                                 by=0)))
+    news += 1
     steps += [
         ("client", encode("RESTART", 13)),
         ("node", encode("OK", 13)),
@@ -1741,7 +1758,8 @@ def build():
         "makes the second address an owner and then manages the node at that address over the "
         "mesh: each request is delivered, and each answer, packed as draft/managing.md has it, "
         "comes back as MANAGED; that node holds the first address as its owner, three "
-        "neighbours, and no satellite receiver. The four addresses are the public keys of RFC "
+        "neighbours, and no satellite receiver. Before the client's last request, that node "
+        "tells its owners that the third address was made one over a link. The four addresses are the public keys of RFC "
         "8032's first four Ed25519 test vectors (section 7.1: TEST 1, 2, 3 and 1024).",
         "generator": "vectors/tools/companion.py",
         "crc_check": {"input": b"123456789".hex(), "crc": crc16(b"123456789")},

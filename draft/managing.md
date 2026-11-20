@@ -170,6 +170,48 @@ while one is on trial ends the first trial, and starts its own.
 `SET` over a link is never on trial: a client with a link is beside the
 node.
 
+## Telling the owners
+
+A node's owners can change who its owners are: so can anyone at the node
+with a link to it, over USB or over Bluetooth in its
+[pairing window](companion.md#bluetooth-le). So that someone at a relay
+cannot make themselves an owner unseen, a node whose owners change
+tells them. When an address becomes an owner or stops being one, the
+node MUST send a **notice**, a message for the node, to each address
+that was an owner before the change or is one after it, but the owner
+whose request over the mesh made the change, who knows:
+
+| Offset | Bytes | Field | |
+|---|---|---|---|
+| 0 | 1 | `kind` | `0x07`: the owners changed |
+| 1 | 32 | `contact` | the address that became an owner or stopped being one |
+| 33 | 1 | `owner` | 1 if it is one now, 0 if not |
+| 34 | 1 | `by` | 0 if over a link, USB or Bluetooth; 1 if by an owner over the mesh |
+
+It is exactly 35 bytes; a receiver MUST ignore one of any other length,
+or with `owner` or `by` other than 0 or 1. A node that receives one
+from an address in a session tells its clients with the companion
+news [`OWNER_CHANGED`](companion.md#news), whether or not it manages
+that node. A notice is the one thing a node sends its owners unasked.
+
+A wipe forgets the owners, and sends no notice: the node's address goes
+with them, and its owners find it gone, as they find any node they
+cannot reach.
+
+## Locking Bluetooth
+
+An owner who will not be at a node can **lock** its Bluetooth with
+companion `SET` 10. While a node is locked, it acts on no request a
+client sends over Bluetooth but `HELLO` and `PING`, and answers every
+other `ERROR` 14, locked. Over USB and over the mesh it is as before.
+So someone who pairs with a relay in its pairing window, as anyone who
+can press its button can, cannot change it; and to unlock it they must
+open it to reach its USB, or be one of its owners.
+
+A node keeps the lock across restarts, and a wipe clears it. `SELF`
+says whether the node is locked. A client SHOULD say, before it locks a
+node, that only USB and the node's owners can unlock it.
+
 ## Paid for
 
 An answer is a frame of the managed node's own, and is paid for from
@@ -202,6 +244,11 @@ An implementation conforms to this section if, for
 * **owners:** as a managed node holding the owners `owners`, it answers
   a request in a session with `from`, or does nothing with it, as
   `answers` says;
+* **notices:** given `contact`, `owner` and `by`, it produces exactly
+  `content`; and it reads them back from it; and it ignores each notice
+  among `rejected`;
+* **locked:** while locked, it acts on each request over Bluetooth, or
+  answers `ERROR` 14, as `allowed` says;
 * **trials:** as a managed node that answered a `SET` over the mesh
   `answered_s` seconds ago and has since had a request over the mesh
   from an owner, or not, as `confirmed` says, it holds the new value,
@@ -267,6 +314,13 @@ lost until its trial ends, at best. Moving a mesh to new settings is
 something every node does together, and is
 [not yet specified](#not-yet-specified).
 
+**Why owners are told.** Anyone who can press a relay's button can pair
+with it, and anyone who can open it can plug in, and either could add
+themselves as an owner and come back over the mesh whenever they liked.
+No rule at the node can stop someone holding it, but a notice means the
+owners know, and can remove them and lock the node. It is one message
+to each owner, and only when the owners change.
+
 **Why no news unasked.** A relay's battery running low, or a neighbour
 lost, would be worth telling its owner. Each would be a message, paid
 for in airtime, to an owner who may not be listening; asking costs only
@@ -278,8 +332,11 @@ when someone wants to know.
   thousands of frames, more than a profile's limit on transmitting
   gives in a day. A patch against the image a node runs, or an image
   passed from neighbour to neighbour, might fit.
-* **News unasked**: a node that tells its owners when its battery is
-  low, or it has restarted, within an allowance of its own.
+* **News unasked**, beyond a notice: a node that tells its owners when
+  its battery is low, or it has restarted, within an allowance of its
+  own.
+* **Locking USB.** Anyone with the node in their hands can wipe it or
+  load other firmware, and a lock on USB would stop its owner too.
 * **Moving a mesh's nodes together** to new radio settings.
 * **Owners with less**: one who may see a node's state but not change
   it.

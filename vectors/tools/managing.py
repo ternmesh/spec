@@ -20,7 +20,12 @@ import companion as c  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "managing.json"
 
-KIND_REQUEST, KIND_ANSWER = 0x05, 0x06
+KIND_REQUEST, KIND_ANSWER, KIND_OWNERS = 0x05, 0x06, 0x07
+BY_LINK, BY_MESH = 0, 1
+NOT_WHILE_LOCKED = 14
+# What a node whose Bluetooth is locked acts on from a client over Bluetooth
+# (draft/managing.md#locking-bluetooth): every other request is answered ERROR 14.
+WHILE_LOCKED = {"HELLO", "PING"}
 REQUEST_MAX, ANSWER_MAX = c.MANAGE_MAX, c.MANAGED_MAX
 OWNERS = c.OWNERS
 MESH_ANSWER_WAIT_S = 120
@@ -55,6 +60,17 @@ def read_answer(content):
     if not content or content[0] != KIND_ANSWER or len(content) - 1 > ANSWER_MAX:
         return None
     return c.unpack(content[1:])
+
+
+def owners_notice(contact, owner, by):
+    return bytes([KIND_OWNERS]) + contact + bytes([owner, by])
+
+
+def read_owners_notice(content):
+    """(contact, owner, by) from a notice, or None if it is to be ignored."""
+    if len(content) != 35 or content[0] != KIND_OWNERS or content[33] > 1 or content[34] > 1:
+        return None
+    return content[1:33], content[33], content[34]
 
 
 def allowed(name, setting=None):
@@ -149,6 +165,24 @@ def build():
         owners_cases.append({"owners": [o.hex() for o in owners], "from": sender.hex(),
                              "answers": sender in owners})
 
+    notices = []
+    for contact, owner, by in [(c.CAROL, 1, BY_LINK), (c.ALICE, 0, BY_MESH), (c.DAVE, 1, BY_MESH)]:
+        content = owners_notice(contact, owner, by)
+        assert read_owners_notice(content) == (contact, owner, by)
+        notices.append({"contact": contact.hex(), "owner": owner, "by": by,
+                        "content": content.hex()})
+    for why, content in [
+        ("one byte short", owners_notice(c.CAROL, 1, BY_LINK)[:-1]),
+        ("one byte over", owners_notice(c.CAROL, 1, BY_LINK) + b"\x00"),
+        ("an owner that is neither 0 nor 1", owners_notice(c.CAROL, 2, BY_LINK)),
+        ("a way that is neither 0 nor 1", owners_notice(c.CAROL, 1, 2)),
+    ]:
+        assert read_owners_notice(content) is None
+        rejected.append({"why": why, "content": content.hex()})
+
+    locked = [{"type": name, "allowed": name in WHILE_LOCKED}
+              for t, (name, _) in sorted(c.FRAMES.items()) if c.REQUESTS[0] <= t <= c.REQUESTS[1]]
+
     trials = [{"answered_s": s, "confirmed": confirmed,
                "holds": "new" if holds(s, confirmed) else "old"}
               for s, confirmed in [(0, False), (TRIAL_S - 1, False), (TRIAL_S, False),
@@ -183,6 +217,8 @@ def build():
         "allowed": allowed_cases,
         "owners": owners_cases,
         "trials": trials,
+        "notices": notices,
+        "locked": locked,
         "syncs": syncs,
     }
 
