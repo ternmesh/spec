@@ -264,8 +264,10 @@ rest is the same: it waits
 ACK_WAIT + ACK_FACTOR × the route's metric, in milliseconds
 ```
 
-from when the frame first goes on the air, and without the answer by
-then starts the frame again — the same frame, with `hops` at `HOP_MAX`,
+from when the frame first goes on the air (longer for a frame the
+keeper of a sleeping leaf holds, as
+[Telling the source](sleeping.md#telling-the-source) says), and
+without the answer by then starts the frame again — the same frame, with `hops` at `HOP_MAX`,
 on whatever route it has now, and
 [not at once](forwarding.md#hops) — up to `RETRIES` times. An initiator
 with no route asks for one, and counts that as a try, waiting

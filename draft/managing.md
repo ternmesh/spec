@@ -16,8 +16,8 @@ Nothing new is needed on the air but two kinds of
 [message for the node](unicast-security.md#the-frame). A request goes
 in a [session](first-contact.md) between the owner's node and the node
 it manages, so it is sealed, proves who sent it, and cannot be played
-again; a node answers only those it holds as owners, and to anyone
-else is a node that cannot be managed.
+again; a node acts only for those it holds as owners, and tells anyone
+else, at once, that they are not one.
 
 Test vectors: [`vectors/managing.json`](../vectors/managing.json),
 produced by [`vectors/tools/managing.py`](../vectors/tools/managing.py).
@@ -104,9 +104,20 @@ client says `HELLO` again.
 
 **Who is answered.** A managed node that receives a request in a
 session whose other end is not one of its owners MUST do nothing with
-it, and MUST NOT answer: to anyone but its owners, it is a node that
-cannot be managed. The message is still acknowledged, as every message
-is, since the acknowledgement says that it arrived, not what was done.
+it but **refuse** it: answer `ERROR` 15, not an owner, with the
+request's own `seq`, in one answer of its own, as it answers an owner's
+request with any other `ERROR`. The manager tells its clients of it as
+it does any answer, in [`MANAGED`](companion.md#news), so a client
+matches the refusal to its request by `seq`. It MUST NOT refuse more than
+once in any `REFUSE_GAP`, counting every sender together: a request it
+may not refuse it does nothing with, and does not answer. The message is
+acknowledged either way, as every message is, since the acknowledgement
+says that it arrived, not what was done.
+
+A client given `ERROR` 15 SHOULD say that the node has not made this
+one an owner and that only an owner can, and MUST NOT send that request
+again unasked. One given no answer in `MESH_ANSWER_WAIT` SHOULD say that
+either the node is out of reach or this one is not an owner.
 
 **What may be asked.** Over the mesh a node acts on these requests,
 and MUST answer any other `ERROR` 13, not over the mesh:
@@ -258,6 +269,7 @@ every other request takes one.
 | `TRIAL` | 900 s | after a `SET` over the mesh is answered, before it is taken back |
 | `MANAGED_POLL` | 5 s | between a managed sleeping node's polls |
 | `MANAGED_AWAKE` | 120 s | after an owner's last request, before it polls by its wake again |
+| `REFUSE_GAP` | 60 s | after a node refuses a request, before it refuses another |
 
 ## Conformance
 
@@ -270,9 +282,10 @@ An implementation conforms to this section if, for
 * **allowed:** over the mesh, as a managed node, it acts on the request
   of each `type` and `setting`, or answers `ERROR` 13, as `allowed`
   says;
-* **owners:** as a managed node holding the owners `owners`, it answers
-  a request in a session with `from`, or does nothing with it, as
-  `answers` says;
+* **owners:** as a managed node holding the owners `owners`, that last
+  refused a request `refused_s` seconds before (`null`: never), it acts
+  on a request in a session with `from`, refuses it with exactly
+  `refusal`, or does nothing with it, as `answer` says;
 * **notices:** given `contact`, `owner` and `by`, it produces exactly
   `content`; and it reads them back from it; and it ignores each notice
   among `rejected`;
@@ -334,9 +347,22 @@ contacts, so an owner reaches a relay that takes no one else, and
 removing the contact removes the owner: there is one list to look at,
 not two.
 
-**Why no answer to anyone else.** An `ERROR` to a non-owner would tell
-anyone with a session which nodes can be managed, and invite them to
-try. Silence costs an owner nothing: they know whose node it is.
+**Why a refusal, and not silence.** A node once kept silent to anyone
+but its owners, so that no one would learn which nodes can be managed.
+It hid little: the acknowledgement already says the node is there and
+took the request, and every node running this protocol can be managed
+by someone. What silence cost was its users' time. Someone who tapped
+the wrong node, or one that had not made them an owner yet, waited
+`MESH_ANSWER_WAIT` for nothing, and could not tell a node that refused
+them from one out of reach. A refusal is one answer of four bytes, and
+says no more than that this one is not an owner: nothing of who is.
+
+**Why one refusal a minute.** A refusal is a frame the node pays for,
+asked for by anyone with a session. Counting senders together needs no
+table of them, and bounds what refusals can cost at one short answer a
+minute, whoever asks; an owner, who is never refused, is not slowed.
+Someone whose refusal was spent on another waits, as they did when there
+were none.
 
 **Why a trial, and not a confirmation step.** A router's "commit
 confirmed" asks the operator to confirm a change or have it undone. Here
