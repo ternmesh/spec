@@ -1618,7 +1618,7 @@ def build():
          [encode("ERROR", 5, code=13)]),
         (12, 0xC0FFEE17, encode("RESTART", 6), [encode("OK", 6)]),
     ]:
-        more, news = managed(news, client_seq, ref, request, answer_frames, 16 + client_seq)
+        more, news = managed(news, client_seq, ref, request, answer_frames, 15 + client_seq)
         steps += more
     steps += [
         ("client", encode("RESTART", 13)),

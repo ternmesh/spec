@@ -155,9 +155,11 @@ A `SET` over the mesh is on **trial**. The node acts on it and answers
 `OK` as over a link, and keeps the value it replaced. If no request
 over the mesh from any of its owners arrives in the `TRIAL` seconds
 after the answer, the node MUST take back the value it replaced, as if
-given it by `SET`. If the node restarts while a setting is on trial,
-it starts with the value the setting replaced. Any request from an
-owner over the mesh ends the trial, and the setting stays.
+given it by `SET`. A node keeps a trial, with the value it would take
+back, across a restart, as one that applies a setting may need: it
+starts the trial's `TRIAL` again from when it starts, since it may not
+know how long it was off. Any request from an owner over the mesh ends
+the trial, and the setting stays.
 
 So a client SHOULD send a `PING` over the mesh once it has the answer
 to a `SET`. If the setting has left the node out of reach, by a power
