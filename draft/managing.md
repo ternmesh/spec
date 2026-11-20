@@ -224,11 +224,16 @@ lets a leaf poll sooner than its wake, and then by its wake again. Each
 request from an owner starts `MANAGED_AWAKE` again. Its first request
 still waits for its wake; those after it take seconds.
 
-Its polls are paid for as any other, from the requests' part of [the
-cap](routing.md#the-cap): one it cannot pay for waits, so a cap that
-runs short spaces them out. At `MANAGED_POLL` 5 s, with the shortest
-listen, a node is awake 2 s in every 7 for `MANAGED_AWAKE`, and sends
-about 24 polls, under two seconds on the air with US915's settings.
+Its polls are paid first from an allowance of their own, as many as
+one burst takes (`MANAGED_AWAKE` / `MANAGED_POLL`), refilled at the
+rate of the requests' part of [the cap](routing.md#the-cap); past it,
+from the requests' part as any other poll, so that one it cannot pay
+for waits. The requests' part alone, whose window holds two or three
+polls, spaced them 40 s apart on two boards after the first half
+minute. At `MANAGED_POLL` 5 s, with the shortest listen, a node is
+awake 2 s in every 7 for `MANAGED_AWAKE`, and sends about 24 polls,
+under a second on the air with US915's settings; the allowance fills
+again in about a quarter of an hour.
 A request from anyone but an owner changes nothing.
 
 A client SHOULD say, while its first request to a node that sleeps is
