@@ -30,7 +30,7 @@ import sharing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 17
+VERSION = 18
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -44,6 +44,10 @@ SIGNATURE = 64  # an Ed25519 signature
 MANAGE_MAX = 128  # a MANAGE's request: as long as a message's text (draft/managing.md)
 MANAGED_MAX = 128  # a MANAGED's answer: the same
 OWNERS = 4  # owners a node holds, at most
+ENTRY = 5  # a trace's entry: a routing id and an SNR in quarter dB (draft/forwarding.md#traces)
+TRACE_ENTRIES = 16  # a trace answer's entries each way, at most
+ENTRIES_MAX = 2 * TRACE_ENTRIES * ENTRY  # TRACED's entries: the way out and the way back
+HOP_MAX, FLOOD_HOPS = 32, 5  # draft/forwarding.md and draft/flooding.md
 
 # Each field is (name, kind, and for a string or bytes its longest). Kinds: u8, i8, u16, i16, u32,
 # i32, addr (32 bytes), gid (a group's id, 8 bytes), digest (a SHA-256, 32 bytes), str (a u8
@@ -65,6 +69,7 @@ FRAMES = {
     0x11: ("READ", [("through", U32)]),
     0x12: ("FORGET", [("contact", ADDR), ("through", U32)]),
     0x13: ("MANAGE", [("ref", U32), ("to", ADDR), ("request", RAW, MANAGE_MAX)]),
+    0x15: ("TRACE", [("ref", U32), ("to", U32)]),
     0x14: ("OWNER", [("address", ADDR), ("owner", U8)]),
     0x18: ("SAVE_CONTACT", [("address", ADDR), ("name", STR, NAME_MAX)]),
     0x19: ("REMOVE_CONTACT", [("address", ADDR)]),
@@ -142,6 +147,10 @@ FRAMES = {
     0x97: ("GROUP_FORGOTTEN", [("group", GID), ("through", U32)]),
     0x98: ("MANAGED", [("from", ADDR), ("answer", RAW, MANAGED_MAX)]),
     0x99: ("OWNER_CHANGED", [("from", ADDR), ("contact", ADDR), ("owner", U8), ("by", U8)]),
+    0x9A: ("ROUTE", [("id", U32), ("hops", U8), ("snr", I8), ("rssi", I16), ("via", U32),
+                     ("goes", U8), ("took", U32)]),
+    0x9B: ("TRACED", [("id", U32), ("to", U32), ("result", U8), ("out", U8), ("took", U32),
+                      ("snr", I8), ("entries", RAW, ENTRIES_MAX)]),
 }
 BY_NAME = {name: t for t, (name, _) in FRAMES.items()}
 NEWS_NAMES = {name for t, (name, _) in FRAMES.items() if t >= 0x80}
@@ -192,7 +201,17 @@ TYPE_SINCE = {
     0x95: 15,  # sleeping
     **{t: 16 for t in (0x12, 0x28, 0x96, 0x97)},  # forgetting
     **{t: 17 for t in (0x13, 0x14, 0x38, 0x98, 0x99)},  # managing
+    **{t: 18 for t in (0x15, 0x9A, 0x9B)},  # how messages went, and traces
 }
+
+# TRACED's result: answered by the node traced, by its keeper, by a relay with no route to it; not
+# answered in time; not begun, for want of a route (version 18).
+TRACED_ANSWERED, TRACED_KEEPER, TRACED_NO_ROUTE, TRACED_UNANSWERED, TRACED_NOT_BEGUN = range(5)
+
+
+def entries(*pairs):
+    """A trace's entries, as TRACED carries them: each a routing id and an SNR in quarter dB."""
+    return b"".join(struct.pack(">Ib", rid, q) for rid, q in pairs)
 
 
 def defined(t, speak=VERSION):
@@ -742,6 +761,19 @@ def build():
         ("OWNER_CHANGED", 48, {"from": BOB, "contact": ALICE, "owner": 0, "by": 1}),
         ("MANAGED", 45, {"from": BOB, "answer": pack([encode("OK", 7)])[0]}),
         ("CONTACT", 46, {"address": BOB, "session": 1, "name": "Bob", "wake": 0, "owner": 1}),
+        ("TRACE", 52, {"ref": 0xC0FFEE20, "to": 0x1D2E3F40}),
+        ("ROUTE", 49, {"id": 17, "hops": 2, "snr": -38, "rssi": -112, "via": 0, "goes": 0,
+                       "took": 0}),
+        ("ROUTE", 50, {"id": 18, "hops": 1, "snr": 25, "rssi": -71, "via": 0x0A0B0C0D, "goes": 2,
+                       "took": 4180}),
+        ("TRACED", 51, {"id": 23, "to": 0x0A0B0C0D, "result": TRACED_ANSWERED, "out": 2,
+                        "took": 2950, "snr": 28,
+                        "entries": entries((0x1D2E3F40, 24), (0x0A0B0C0D, 40), (0x1D2E3F40, 30))}),
+        ("TRACED", 52, {"id": 24, "to": 0x30313233, "result": TRACED_UNANSWERED, "out": 0,
+                        "took": 0, "snr": 0, "entries": b""}),
+        ("TRACED", 53, {"id": 25, "to": 0x0A0B0C0D, "result": TRACED_ANSWERED,
+                        "out": TRACE_ENTRIES, "took": 61_000, "snr": -80,
+                        "entries": entries(*[(0x1000 + i, i) for i in range(2 * TRACE_ENTRIES)])}),
     ]
     frames = []
     for name, seq, values in examples:
@@ -828,6 +860,11 @@ def build():
         + b"\x03" * (MANAGE_MAX + 1),
         encode("OWNER", 48, address=BOB, owner=1)[:-1],
         encode("MANAGED", 45, **{"from": BOB, "answer": b""})[:-1],
+        encode("TRACE", 52, ref=1, to=0x0A0B0C0D)[:-1],
+        encode("ROUTE", 49, id=17, hops=2, snr=-38, rssi=-112, via=0, goes=0, took=0)[:-1],
+        encode("TRACED", 51, id=24, to=1, result=3, out=0, took=0, snr=0, entries=b"")[:-1],
+        encode("TRACED", 51, id=24, to=1, result=0, out=0, took=0, snr=0, entries=b"")[:-1]
+        + bytes([ENTRIES_MAX + 1]) + bytes(ENTRIES_MAX + 1),
     ]:
         why = decode(frame)
         assert isinstance(why, str), frame.hex()
@@ -1338,6 +1375,27 @@ def build():
         ("node", encode("ERROR", 3, code=1)),
     ], 16)})
 
+    # A client of version 17, to the node as the exchange begins: the same sync as the exchange's,
+    # and its last request is one its version does not define.
+    older.append({"version": 17, "frames": connection([
+        ("client", encode("HELLO", 1, version=17)),
+        ("node", info(17)),
+        ("client", encode("SYNC", 2, after=0)),
+        ("node", encode("SELF", 0, speak=17, **self_)),
+        ("node", encode("CONTACT", 1, speak=17, address=BOB, session=1, name="Bob", wake=0,
+                        owner=0)),
+        ("node", encode("MESSAGE", 2, flags=0, **where)),
+        ("node", encode("NEIGHBOUR", 3, **neighbour)),
+        ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
+        ("node", encode("AIRTIME", 5, **airtime)),
+        ("node", encode("POWER", 6, **power)),
+        ("node", encode("FIX", 7, receiver=2, **NO_FIX)),
+        ("node", encode("SLEEP", 8, **awake)),
+        ("node", encode("SYNCED", 2, news=9)),
+        ("client", encode("TRACE", 3, ref=0xC0FFEE20, to=0x1D2E3F40)),
+        ("node", encode("ERROR", 3, code=1)),
+    ], 17)})
+
     # Frames a later version defines, as a receiver of an earlier version reads them: a type it
     # does not know. A node answers such a request with ERROR 1; a client ignores such news.
     unknown_to_older = []
@@ -1383,6 +1441,11 @@ def build():
         ("SET", 16, {"setting": 10, "value": 1}),
         ("OWNER_CHANGED", 16, {"from": BOB, "contact": CAROL, "owner": 1, "by": 0}),
         ("MANAGED", 16, {"from": BOB, "answer": pack([encode("OK", 7)])[0]}),
+        ("TRACE", 17, {"ref": 0xC0FFEE20, "to": 0x1D2E3F40}),
+        ("ROUTE", 17, {"id": 17, "hops": 2, "snr": -38, "rssi": -112, "via": 0, "goes": 0,
+                       "took": 0}),
+        ("TRACED", 17, {"id": 23, "to": 0x0A0B0C0D, "result": TRACED_UNANSWERED, "out": 0,
+                        "took": 0, "snr": 0, "entries": b""}),
     ]:
         frame = encode(name, 5, **values)
         assert isinstance(decode(frame), dict)
@@ -1645,6 +1708,65 @@ def build():
     counted = [f["seq"] for f in manage if f["type"] in NEWS_NAMES]
     assert counted == list(range(len(counted))), counted
 
+    # How messages went, and traces (version 18), on a node that keeps routes: Alice's node, a leaf
+    # whose one neighbour is the relay 1D2E3F40, holding Bob as a contact with a session and the
+    # group Hut. The client sends Bob a message, which goes by the relay on its second try and is
+    # delivered over two hops; Bob's answer comes over two hops, and a group message straight from
+    # its writer, which drew FLOOD_HOPS. Then traces: to nothing, to the node itself, to Bob and
+    # again while that one is out, which is answered by Bob through the relay; to a relay that
+    # gives no answer; and to a routing id the node has no route to.
+    relay, me = 0x1D2E3F40, routing.rid(ALICE)
+    sent = dict(id=17, contact=BOB, time=1_790_000_000, flags=0, text="Leaving the hut now")
+    back = dict(id=18, contact=BOB, time=1_790_000_040, flags=0, state=4, reason=0, wait=0,
+                text="See you at the car")
+    heard = dict(id=19, group=HUT, time=1_790_000_050, flags=0, state=4, reason=0, wait=0,
+                 text="Hut's empty", **{"from": bob})
+    route_steps = [
+        ("client", encode("HELLO", 1, version=VERSION)),
+        ("node", info()),
+        ("client", encode("SEND", 2, ref=0xC0FFEE21, to=BOB, text=sent["text"])),
+        ("node", encode("QUEUED", 2, id=17)),
+        ("node", encode("MESSAGE", 0, state=0, reason=0, wait=0, **sent)),
+        ("node", encode("ROUTE", 1, id=17, hops=0, snr=0, rssi=0, via=relay, goes=1, took=0)),
+        ("node", encode("STATE", 2, id=17, state=1, reason=0, wait=0)),
+        ("node", encode("STATE", 3, id=17, state=0, reason=0, wait=0)),
+        ("node", encode("ROUTE", 4, id=17, hops=0, snr=0, rssi=0, via=relay, goes=2, took=0)),
+        ("node", encode("STATE", 5, id=17, state=1, reason=0, wait=0)),
+        ("node", encode("STATE", 6, id=17, state=2, reason=0, wait=0)),
+        ("node", encode("ROUTE", 7, id=17, hops=2, snr=22, rssi=-98, via=relay, goes=2,
+                        took=19_640)),
+        ("node", encode("MESSAGE", 8, **back)),
+        ("node", encode("ROUTE", 9, id=18, hops=HOP_MAX + 1 - 31, snr=19, rssi=-101, via=0,
+                        goes=0, took=0)),
+        ("node", encode("GROUP_MESSAGE", 10, **heard)),
+        ("node", encode("ROUTE", 11, id=19, hops=FLOOD_HOPS + 1 - FLOOD_HOPS, snr=-9, rssi=-117,
+                        via=0, goes=0, took=0)),
+        ("client", encode("TRACE", 3, ref=0xC0FFEE22, to=0)),
+        ("node", encode("ERROR", 3, code=3)),
+        ("client", encode("TRACE", 4, ref=0xC0FFEE23, to=me)),
+        ("node", encode("ERROR", 4, code=3)),
+        ("client", encode("TRACE", 5, ref=0xC0FFEE24, to=bob)),
+        ("node", encode("QUEUED", 5, id=20)),
+        ("client", encode("TRACE", 6, ref=0xC0FFEE25, to=bob)),
+        ("node", encode("ERROR", 6, code=8)),
+        ("node", encode("STATE", 12, id=20, state=1, reason=0, wait=0)),
+        ("node", encode("TRACED", 13, id=20, to=bob, result=TRACED_ANSWERED, out=2, took=3_120,
+                        snr=26, entries=entries((relay, 24), (bob, 40), (relay, 30)))),
+        ("client", encode("TRACE", 7, ref=0xC0FFEE26, to=relay)),
+        ("node", encode("QUEUED", 7, id=21)),
+        ("node", encode("STATE", 14, id=21, state=1, reason=0, wait=0)),
+        ("node", encode("TRACED", 15, id=21, to=relay, result=TRACED_UNANSWERED, out=0, took=0,
+                        snr=0, entries=b"")),
+        ("client", encode("TRACE", 8, ref=0xC0FFEE27, to=0x30313233)),
+        ("node", encode("QUEUED", 8, id=22)),
+        ("node", encode("STATE", 16, id=22, state=0, reason=1, wait=0)),
+        ("node", encode("TRACED", 17, id=22, to=0x30313233, result=TRACED_NOT_BEGUN, out=0,
+                        took=0, snr=0, entries=b"")),
+    ]
+    route = connection(route_steps)
+    counted = [f["seq"] for f in route if f["type"] in NEWS_NAMES]
+    assert counted == list(range(len(counted))), counted
+
     # A node whose bootloader takes its updates, and that has no room for an image itself: as a
     # client of this version sees it, and as one of version 11 does, which is told no board.
     bootloader = [
@@ -1727,7 +1849,9 @@ def build():
         "define. To the client of version 15 it holds what the exchange begins with, and the "
         "client's last request is one its version does not define. To the client of version 16 "
         "it holds what the exchange begins with, its CONTACT has no owner, and the client's last "
-        "request is one its version does not define. "
+        "request is one its version does not define. To the client of version 17 it holds what "
+        "the exchange begins with, and the client's last request is one its version does not "
+        "define. The node of exchange and older keeps no routes, and sends no ROUTE. "
         "Positions are in units of "
         "10^-7 degree. Each connection's frames are read by the "
         "version its client speaks, and each client of an earlier version is sent an INFO "
@@ -1760,7 +1884,17 @@ def build():
         "delivered, and each answer, packed as draft/managing.md has it, "
         "comes back as MANAGED; that node holds the first address as its owner, three "
         "neighbours, and no satellite receiver. Before the client's last request, that node "
-        "tells its owners that the third address was made one over a link. The four addresses are the public keys of RFC "
+        "tells its owners that the third address was made one over a link. Route is one connection "
+        "to a node that keeps routes: the first address's node, a leaf whose one neighbour is the "
+        "relay 1d2e3f40, holding the second address as a contact with a session and the group "
+        "Hut. Its message to the second address goes to the relay, is tried again, and is "
+        "delivered; the acknowledgement came two hops, at the SNR and RSSI its ROUTE gives, "
+        "19640 ms after the message first went on the air. Then it receives a message from the "
+        "second address whose hops was 31, and a group message to Hut from that address's "
+        "routing id whose hops was FLOOD_HOPS (5). Its trace to the second address's routing id "
+        "is answered through the relay with the entries TRACED gives, and its second TRACE to "
+        "that id comes while the first is out; its trace to the relay goes unanswered; and it "
+        "finds no route to 30313233. The four addresses are the public keys of RFC "
         "8032's first four Ed25519 test vectors (section 7.1: TEST 1, 2, 3 and 1024).",
         "generator": "vectors/tools/companion.py",
         "crc_check": {"input": b"123456789".hex(), "crc": crc16(b"123456789")},
@@ -1786,6 +1920,7 @@ def build():
         "wipe": wipe,
         "forget": forget,
         "manage": manage,
+        "route": route,
     }
 
 
