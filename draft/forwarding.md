@@ -26,7 +26,8 @@ produced by
    nodes on its way does not grow with their number.
 3. **No sender on the air.** A frame names the node it is for and the
    neighbour it is for now. It does not name where it came from, but
-   for the first frame of a handshake, which has to.
+   for the first frame of a handshake and a [trace](#traces), which
+   have to.
 4. **Lost frames are found by listening.** A node that has sent a frame
    hears its neighbour send it on. No acknowledgement is sent hop by
    hop.
@@ -58,7 +59,7 @@ Every frame that follows a route starts with eleven bytes:
 `hops`, `power` and `next` change at every node. Nothing after them
 does.
 
-Four kinds of frame are defined:
+Six kinds of frame are defined:
 
 | `hdr` | Frame | After the head |
 |---|---|---|
@@ -66,14 +67,19 @@ Four kinds of frame are defined:
 | `0x50` | an **acknowledgement** | `tag` is that of the message it answers; then 4 bytes, `proof` |
 | `0x51` to `0x54` | a **first-contact frame**, one of a handshake's four | `tag` is its contact tag; then, for `0x51`, the 4-byte routing id it came from; then the handshake's message |
 | `0x55` | a **held notice**, from the keeper of a [leaf that sleeps](sleeping.md#holding) | `next` is the keeper's own id, not the next node's; `tag` is that of the frame it holds; nothing after |
+| `0x56` | a **trace** | `tag` is the trace's own; then `from`, the routing id it came from, and its [entries](#traces) |
+| `0x57` | a **trace answer** | `tag` is that of the trace it answers; then `flags`, `out`, and its [entries](#traces) |
 
 A message is at least 23 bytes: the head, the tag and the 8-byte check
 of an empty message. An acknowledgement is exactly 19 bytes, and a held
 notice exactly 15. A
 first-contact frame is exactly 56, 60, 80 or 24 bytes, for `0x51` to
-`0x54` ([First contact](first-contact.md#the-frame)). A receiver
+`0x54` ([First contact](first-contact.md#the-frame)). A trace is 19
+bytes and 5 more for each entry, and a trace answer 17 and 5 more for
+each entry, within the entries [Traces](#traces) allows. A receiver
 MUST discard a message shorter than 23 bytes, an acknowledgement, a
-held notice or a first-contact frame of any other length, and a frame whose `next` or
+held notice, a first-contact frame, a trace or a trace answer of any
+other length, and a frame whose `next` or
 `destination` is a reserved id.
 
 **The same frame.** Four bytes of tag do not tell every message from
@@ -166,14 +172,16 @@ A node that receives a frame first checks whether it
    A held notice ends a hop of this node's, if it ends one (its
    `next` names the keeper that sent it, not this node), and is
    otherwise ignored: no node passes one on.
-3. A message or a first-contact frame whose `destination` is the
-   node's id is for it.
+3. A message, a first-contact frame, a trace or a trace answer whose
+   `destination` is the node's id is for it. A trace is answered, and a
+   trace answer ends a trace, as [Traces](#traces) says.
 4. Anything else is to be passed on. A leaf MUST NOT pass a frame on.
    A relay MUST NOT pass on a frame whose `hops` is 0 or 1. A relay
    that already holds [the same frame](#the-head) and has not finished
    with it MUST ignore the copy: the node before will hear it pass the
    first on. Otherwise the relay sends it as
-   [above](#sending), with `hops` one less.
+   [above](#sending), with `hops` one less, and a trace or a trace
+   answer with [its entry](#traces) added.
 
 A relay with no route for a frame drops it, and
 [asks for a route](routing.md#starving-and-asking) to its destination.
@@ -186,8 +194,10 @@ there is none is dropped.
 A node that has sent a frame to a neighbour **listens**. The hop has
 succeeded when the node receives:
 
-* [the same frame](#the-head), with `hops` one less than it sent; or
-* for a message, any acknowledgement with the message's `tag`; or
+* [the same frame](#the-head), with `hops` one less than it sent, and
+  for a trace or a trace answer with [one entry](#traces) more; or
+* for a message, any acknowledgement with the message's `tag`, and for
+  a trace, any trace answer with the trace's `tag`; or
 * a [held notice](sleeping.md#holding) from that neighbour, with the
   frame's `destination` and `tag`: the neighbour is the keeper of a
   leaf that sleeps, and holds the frame for it.
@@ -213,9 +223,9 @@ node's frame, sent at the same moment: that node waits as long as this
 one, and without the random time the two would meet again at every
 try.
 
-The last hop of an acknowledgement or of a first-contact frame, to the
-node it is for, has nothing to hear, and is sent once: a node listens
-for every frame it sends but those.
+The last hop of an acknowledgement, of a first-contact frame or of a
+trace answer, to the node it is for, has nothing to hear, and is sent
+once: a node listens for every frame it sends but those.
 
 A node that still holds a frame it has sent, when it hears that the hop
 succeeded, MUST NOT send it again. A copy not yet on the air SHOULD be
@@ -247,8 +257,9 @@ its retries anew: the best such route, up to `SALVAGE` times a frame.
 Feasible routes cannot lead back. A leaf with no such route that takes
 [default routes](routing.md#a-leafs-default-route) sends the frame
 to its nearest relay it has not given this frame up at, in the same way
-and within the same `SALVAGE`. An acknowledgement is not sent another
-way.
+and within the same `SALVAGE`. An acknowledgement, a trace and a trace
+answer are not sent another way: a trace shows the route a node has
+selected, and one sent another way would show another.
 
 ## Messages
 
@@ -350,6 +361,111 @@ thing differs. A first-contact frame sent to the node it is for is not
 listened for, so however often it goes unanswered, that is not a hop
 given up: a node may choose not to answer.
 
+## Traces
+
+A **trace** finds the way a node's frames take to a destination: which
+relays pass them on, and how well each hears the one before. It goes
+out as a message would, and each node it reaches adds an **entry**;
+its destination answers it with a **trace answer**, which comes back
+the same way, gathering entries of its own. It is for a person who
+wants to know why a message is slow, or did not arrive, and for
+testing a mesh.
+
+**The frames.** After the head and the tag, a trace carries:
+
+| Offset | Bytes | Field | |
+|---|---|---|---|
+| 15 | 4 | `from` | the routing id of the node that began it |
+| 19 | 5 each | entries | as below, in the order they were added |
+
+and a trace answer:
+
+| Offset | Bytes | Field | |
+|---|---|---|---|
+| 15 | 1 | `flags` | who answered, below |
+| 16 | 1 | `out` | how many of its entries the trace gathered on the way out |
+| 17 | 5 each | entries | the trace's `out` entries, then those added on the way back |
+
+An **entry** is a routing id, 4 bytes, and the signal-to-noise ratio
+at which that node heard the frame it added the entry to, as an `i8` in
+quarters of a dB, rounded towards zero and kept between -128 and 127.
+A trace carries at most `TRACE_ENTRIES` entries, and a trace answer at
+most `TRACE_ENTRIES` after its first `out`, with `out` itself at most
+`TRACE_ENTRIES`. A receiver MUST discard a trace answer whose `out` is
+more than the entries it carries, or whose `flags` is reserved.
+
+`flags` is 0 if the trace's destination answered it, 1 if the
+destination's keeper answered it because the destination
+[sleeps](sleeping.md), and 2 if a relay answered it because it had no
+route to the destination. The other values are reserved.
+
+**Beginning one.** A node begins a trace with a `tag` of four random
+bytes, `from` its own routing id, and no entries, and sends it as its
+own frame. It holds no more than one trace at a time to any one
+destination. With no route, it asks for one, as for a message, and
+gives the trace up if none comes within `ACK_WAIT`. Otherwise it waits
+
+```
+ACK_WAIT + ACK_FACTOR × the route's metric × 2, in milliseconds
+```
+
+from when the trace first went on the air, twice a message's wait,
+since each node on the way adds its entry, and then gives it up. A
+trace is not begun again: its source tells the application that it was
+not answered, and the application may begin another.
+
+**On the way.** A node that receives a trace or a trace answer whose
+`next` is its own id adds its entry, its own routing id and how well it
+heard the frame, to the end, before anything else it does with it.
+A relay that passes it on sends the frame with its entry added and
+`hops` one less, and the hop is ended by the frame heard with the next
+node's entry added ([Hops](#hops)). A node that would have to add an
+entry beyond what the frame may carry drops it: a relay does not pass
+it on, and no node answers it. The node that ends a trace adds its
+entry only for its application, and not to any frame, so its entry is
+never beyond what one may carry.
+
+**Answering.** The node that answers a trace adds its entry first. Then
+it sends, as its own frame, a trace answer whose `destination` is the
+trace's `from`, whose `tag` is the trace's, whose `flags` say who
+answered, and whose `out` and entries are the trace's entries, its own
+the last of them. The trace is answered:
+
+* by its destination, with `flags` 0;
+* by a relay that keeps the destination, a leaf that is asleep
+  ([Holding](sleeping.md#holding)), with `flags` 1: a keeper does not
+  hold a trace for its leaf. The answer ends where frames for the leaf
+  wait, which is what the trace can show; and
+* by a relay that has no route to the destination and would drop the
+  trace ([Receiving](#receiving)), with `flags` 2, if it has a route to
+  `from`. It asks for a route to the destination all the same.
+
+A node answers no more than `TRACE_ANSWERS` traces a minute, as each of
+the three, and drops those beyond. A leaf MUST NOT answer a trace whose
+`from` is not the routing id of a node it shares a
+[session](first-contact.md) with: a stranger learns nothing of where a
+leaf is from a trace to it but the relay that last had a route. Any
+node MAY decline to answer a trace, and drops it.
+
+**Ending one.** A trace answer whose `destination` is the node's own id
+and whose `tag` is that of a trace the node holds ends that trace: the
+node adds its own entry, as on the way, and tells the application the
+entries, `out` and `flags`. It ignores any later answer with the same
+`tag`, and any whose `tag` is no trace's it holds.
+
+**What it shows.** The entries name, in order, the nodes that passed the
+trace on and the node that answered, then the nodes that passed the
+answer on and the node that began it, each with how well it heard the
+node before. The number of each is how many hops each way took. A
+trace's entries are not authenticated: any node on the way can write
+what it likes into them, and any node that heard the trace can answer
+it. A trace shows how a mesh carries frames, and proves nothing.
+
+**Paid for.** A trace and a trace answer are paid for as a message is
+([Paid for](#sending)): a node's own waits for its budget, and one it
+would pass on is dropped. A relay of an earlier draft does not know
+them, and drops them: a trace through one is never answered.
+
 ## Parameters
 
 | Name | Value | |
@@ -369,6 +485,8 @@ given up: a node may choose not to answer.
 | `COPY_TIME` | 600 s | longer than a source keeps trying on the longest route a metric describes: four waits of `ACK_WAIT + ACK_FACTOR × 0x7FFE` ms are 544 s |
 | `HEAD_WAIT` | 13 | symbols: the 4.25 that end a preamble and the 8 that hold a header, rounded up |
 | `LOOK` | 5 ms | |
+| `TRACE_ENTRIES` | 16 | entries each way; a trace answer is then at most 177 bytes |
+| `TRACE_ANSWERS` | 4 | traces a minute a node answers, as each of destination, keeper and relay with no route |
 
 ## Conformance
 
@@ -384,6 +502,15 @@ An implementation conforms to this section if, for
 * **waits:** having sent the frame `sent`, it listens for the hop to
   succeed and sends the frame again if it does not, or sends it once,
   as `listens` says;
+* **entries:** receiving the trace or trace answer `frame` as the relay
+  `id`, heard at `snr_quarter_db`, it passes on a frame whose `hops`
+  is `hops` and whose bytes from `destination` on are `passed`, or
+  drops it, where `passed` is `null`;
+* **answers:** receiving the trace `frame` as the node `id`, heard at
+  `snr_quarter_db`, as its destination, as the keeper of its
+  destination asleep, or as a relay with no route to it, as `as` says,
+  it answers with a trace answer whose `hops` is `HOP_MAX` and whose
+  bytes from `destination` on are `answer`;
 * **backs:** having received a frame sent at `power` and heard at
   `snr_quarter_db`, at `spreading_factor`, with `lowest` and `full` its
   own lowest and full power, it finds that its answer must go at
@@ -440,6 +567,16 @@ same `tag`, so an observer who hears both has both ends.
 A [first-contact frame](first-contact.md#what-an-observer-learns)
 gives both ends in one frame: the first names the routing id it came
 from, since nothing else tells the other end where to answer.
+
+A [trace](#traces) names both ends too, for the same reason, and every
+node on its way, each with how well it heard the one before; its answer
+names them again. A trace tells an observer no routing id that
+announces do not, but it tells which of the routes they offer a node
+has selected, and that one node wanted to know the way to another. A
+node that does not trace gives none of it. A leaf answers only a node
+it shares a session with, so a stranger's trace to a leaf ends at the
+relay that last had a route to it, and shows no more than announces
+already do.
 
 Announces already give every node's routing id and its neighbours'. So
 does every frame here. What would hide them is routing ids that change,
@@ -603,6 +740,28 @@ only its neighbour. With no sender in the frame, the power it was sent
 at and the strength it arrived with are all there is to reckon that
 from.
 
+**Why a trace, and why not authenticated.** Both incumbents give a
+person the way a message went, as their public documentation has it:
+Meshtastic's traceroute gathers the node numbers that pass it on, and
+the signal-to-noise ratio at each, out and back; a
+MeshCore direct message carries its repeaters' one-byte hashes in
+every frame. Without one, a person whose message is slow can see only
+that it is slow. This section puts nothing of the path in a message, so
+a trace is a frame of its own, sent when a person asks. Entries could
+be signed, by keys every relay announces, at 64 bytes a hop; the
+signatures would show that each relay added its entry, and not that it
+was the relay that passed the frame on, since any relay that heard the
+trace could sign one. A trace is a diagnosis, and a forged one costs
+whoever asked nothing but a wrong answer. Answering only a
+session's other end was considered and set aside for relays: a person
+traces a relay to find out whether it is the one that fails, and has
+no session with it.
+
+**Why a keeper and a relay with no route answer.** A message to a leaf
+that sleeps waits with its keeper, and one to a destination a relay has
+no route to dies there. Those are the two places a person most needs
+to see, and a trace that went unanswered would show neither.
+
 **Why 24 hops given up, and not 3.** In the simulator, forgetting a
 neighbour sooner delivered less with every node up and less with a
 quarter of the relays going down and coming back: at 3, 6 and 12 hops
@@ -620,6 +779,9 @@ dead found sooner.
   preamble where there is none.
 * **First contact across a relay**, in the simulator or on radios: how
   often a handshake completes, with its last hops sent once.
+* **Traces**, in the simulator or on radios: how often one is answered
+  where a message would be delivered, and whether `TRACE_ENTRIES` and
+  `TRACE_ANSWERS` are what a mesh needs.
 
 ## Not yet specified
 
