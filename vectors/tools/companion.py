@@ -30,7 +30,7 @@ import sharing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 16
+VERSION = 17
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -41,6 +41,9 @@ BOARD_MAX, RELEASE_MAX = 31, 31
 LINK_MAX = 102  # the longest join code (draft/groups.md#join-codes)
 UPDATE_CHUNK = 172
 SIGNATURE = 64  # an Ed25519 signature
+MANAGE_MAX = 141  # a MANAGE's request: what fits a frame (draft/managing.md#parameters)
+MANAGED_MAX = 145  # a MANAGED's answer: what fits a frame
+OWNERS = 4  # owners a node holds, at most
 
 # Each field is (name, kind, and for a string or bytes its longest). Kinds: u8, i8, u16, i16, u32,
 # i32, addr (32 bytes), gid (a group's id, 8 bytes), digest (a SHA-256, 32 bytes), str (a u8
@@ -61,6 +64,8 @@ FRAMES = {
     0x10: ("SEND", [("ref", U32), ("to", ADDR), ("text", STR, TEXT_MAX)]),
     0x11: ("READ", [("through", U32)]),
     0x12: ("FORGET", [("contact", ADDR), ("through", U32)]),
+    0x13: ("MANAGE", [("ref", U32), ("to", ADDR), ("request", RAW, MANAGE_MAX)]),
+    0x14: ("OWNER", [("address", ADDR), ("owner", U8)]),
     0x18: ("SAVE_CONTACT", [("address", ADDR), ("name", STR, NAME_MAX)]),
     0x19: ("REMOVE_CONTACT", [("address", ADDR)]),
     0x1A: ("END_SESSION", [("address", ADDR)]),
@@ -84,6 +89,7 @@ FRAMES = {
                            ("minutes", U16)]),
     0x36: ("UPDATE_BOOTLOADER", []),
     0x37: ("WIPE", []),
+    0x38: ("RESTART", []),
     # Answers, node to client.
     0x40: ("OK", []),
     0x41: ("ERROR", [("code", U8)]),
@@ -99,7 +105,7 @@ FRAMES = {
                     ("time", U32), ("cards", U8), ("card_name", STR, NAME_MAX), ("most", U8),
                     ("pairing", U8)]),
     0x81: ("CONTACT", [("address", ADDR), ("session", U8), ("name", STR, NAME_MAX),
-                       ("wake", U16)]),
+                       ("wake", U16), ("owner", U8)]),
     0x82: ("CONTACT_GONE", [("address", ADDR)]),
     0x83: ("MESSAGE", [("id", U32), ("contact", ADDR), ("time", U32), ("flags", U8),
                        ("state", U8), ("reason", U8), ("wait", U16), ("text", STR, TEXT_MAX)]),
@@ -134,6 +140,7 @@ FRAMES = {
                      ("retry", U16)]),
     0x96: ("FORGOTTEN", [("contact", ADDR), ("through", U32)]),
     0x97: ("GROUP_FORGOTTEN", [("group", GID), ("through", U32)]),
+    0x98: ("MANAGED", [("from", ADDR), ("answer", RAW, MANAGED_MAX)]),
 }
 BY_NAME = {name: t for t, (name, _) in FRAMES.items()}
 NEWS_NAMES = {name for t, (name, _) in FRAMES.items() if t >= 0x80}
@@ -142,7 +149,8 @@ NEWS_NAMES = {name for t, (name, _) in FRAMES.items() if t >= 0x80}
 # read by the version both ends speak, and has none of the fields a later version added.
 SINCE = {(0x43, "news"): 3, (0x42, "board"): 4, (0x42, "release"): 4, (0x80, "cards"): 6,
          (0x80, "card_name"): 6, (0x80, "most"): 10, (0x80, "pairing"): 11, (0x42, "update"): 12,
-         (0x30, "signature"): 13, (0x81, "wake"): 15}
+         (0x30, "signature"): 13, (0x81, "wake"): 15,
+         (0x81, "owner"): 17}
 
 # SET 4's value for the node's default passkey, and the default of a node without a screen.
 PASSKEY_DEFAULT = 0xFFFFFFFF
@@ -180,6 +188,7 @@ TYPE_SINCE = {
     0x37: 13,  # wiping the node
     0x95: 15,  # sleeping
     **{t: 16 for t in (0x12, 0x28, 0x96, 0x97)},  # forgetting
+    **{t: 17 for t in (0x13, 0x14, 0x38, 0x98)},  # managing
 }
 
 
@@ -366,6 +375,35 @@ def answer(frame, why):
     return 1 if why in UNKNOWN else 2
 
 
+def pack(frames, room=MANAGED_MAX):
+    """Companion frames as a managed node answers over the mesh (draft/managing.md#the-frames):
+    each as a u8 length and then the frame, as many to an answer as fit in room bytes, in order.
+    Returns the answers' contents after the kind."""
+    answers, current = [], b""
+    for frame in frames:
+        item = bytes([len(frame)]) + frame
+        assert len(item) <= room
+        if len(current) + len(item) > room:
+            answers.append(current)
+            current = b""
+        current += item
+    if current:
+        answers.append(current)
+    return answers
+
+
+def unpack(content):
+    """The frames of an answer's content, or None if it is not one."""
+    frames, i = [], 0
+    while i < len(content):
+        n = content[i]
+        if n == 0 or i + 1 + n > len(content):
+            return None
+        frames.append(content[i + 1:i + 1 + n])
+        i += 1 + n
+    return frames or None
+
+
 def wrap(frame):
     """A frame as it goes on a byte stream."""
     body = struct.pack(">H", len(frame)) + frame
@@ -503,6 +541,29 @@ RECEIVED = dict(source=1, lat=458_325_412, lon=68_643_871, altitude=4809, accura
                 satellites=9)
 
 
+# Bob's node, a relay on a mast that Alice's node manages (draft/managing.md): what it holds, and
+# what it answers a SYNC over the mesh with. Its one contact is Alice, its owner.
+MAST_SELF = dict(address=BOB, role=1, region="EU868", power=14, time=1_790_000_000, cards=0,
+                 card_name="", most=0, pairing=PAIRING_DEFAULT)
+MAST_NEIGHBOURS = [dict(routing_id=0x1D2E3F40 + i, role=1 if i % 3 else 0,
+                        snr_quarter_db=-38 + 5 * i, heard=42 + i) for i in range(3)]
+
+
+def mast_sync(seq, neighbours=MAST_NEIGHBOURS):
+    """The frames a managed node sends in answer to a SYNC over the mesh: its own state only, its
+    news counted from 0 after HELLO."""
+    news = [encode("SELF", 0, **MAST_SELF),
+            encode("CONTACT", 1, address=ALICE, session=1, name="Alice", wake=0, owner=1)]
+    news += [encode("NEIGHBOUR", 2 + i, **n) for i, n in enumerate(neighbours)]
+    count = 2 + len(neighbours)
+    news += [encode("AIRTIME", count, period=3600, allowed=360_000, used=4_210, wait=0),
+             encode("POWER", count + 1, millivolts=4110, percent=96, flags=3),
+             encode("FIX", count + 2, receiver=0, **NO_FIX),
+             encode("SLEEP", count + 3, wake=0, listen=LISTEN_MIN, state=SLEEP_AWAKE, keeper=0,
+                    retry=0)]
+    return news + [encode("SYNCED", seq, news=count + 4)]
+
+
 def info(speak=VERSION):
     """The node's INFO, as a client of version speak is sent it."""
     return encode("INFO", 1, speak=speak, version=VERSION, **FIRMWARE)
@@ -601,7 +662,7 @@ def build():
                      "cards": 0, "card_name": "", "most": 0, "pairing": PAIRING_SET}),
         ("SELF", 2, {"address": ALICE, "role": 1, "region": "US915", "power": 22, "time": 0,
                      "cards": 0, "card_name": "", "most": 1, "pairing": PAIRING_DEFAULT}),
-        ("CONTACT", 2, {"address": BOB, "session": 1, "name": "Bob", "wake": 0}),
+        ("CONTACT", 2, {"address": BOB, "session": 1, "name": "Bob", "wake": 0, "owner": 0}),
         ("CONTACT_GONE", 3, {"address": BOB}),
         ("MESSAGE", 4, {"id": 17, "contact": BOB, "time": 1_789_999_000, "flags": 1, "state": 4,
                         "reason": 0, "wait": 0, "text": "Where are you?"}),
@@ -654,7 +715,7 @@ def build():
                      "age": 3, "satellites": 0}),
         ("FIX", 37, {"receiver": 0, "source": 2, "lat": -336_183_000, "lon": -704_517_000,
                      "altitude": NO_ALTITUDE, "accuracy": 0, "age": 600, "satellites": 0}),
-        ("CONTACT", 38, {"address": BOB, "session": 1, "name": "Bob", "wake": 900}),
+        ("CONTACT", 38, {"address": BOB, "session": 1, "name": "Bob", "wake": 900, "owner": 0}),
         ("SLEEP", 39, {"wake": 0, "listen": LISTEN_MIN, "state": SLEEP_AWAKE, "keeper": 0,
                        "retry": 0}),
         ("SLEEP", 40, {"wake": 600, "listen": LISTEN_MIN, "state": SLEEP_WAITING, "keeper": 0,
@@ -665,6 +726,12 @@ def build():
                        "keeper": 0xD82C1E1A, "retry": 3581}),
         ("FORGOTTEN", 43, {"contact": BOB, "through": 22}),
         ("GROUP_FORGOTTEN", 44, {"group": HUT, "through": 22}),
+        ("MANAGE", 47, {"ref": 0xC0FFEE10, "to": BOB, "request": encode("PING", 7)}),
+        ("OWNER", 48, {"address": BOB, "owner": 1}),
+        ("OWNER", 49, {"address": BOB, "owner": 0}),
+        ("RESTART", 50, {}),
+        ("MANAGED", 45, {"from": BOB, "answer": pack([encode("OK", 7)])[0]}),
+        ("CONTACT", 46, {"address": BOB, "session": 1, "name": "Bob", "wake": 0, "owner": 1}),
     ]
     frames = []
     for name, seq, values in examples:
@@ -740,12 +807,16 @@ def build():
         encode("SET", 39, setting=7, value=0)[:-1],
         encode("FIX", 34, receiver=3, **RECEIVED)[:-1],
         encode("SET", 40, setting=8, value=600)[:-1],
-        encode("CONTACT", 38, address=BOB, session=1, name="Bob", wake=900)[:-1],
+        encode("CONTACT", 38, address=BOB, session=1, name="Bob", wake=900, owner=0)[:-1],
         encode("SLEEP", 41, wake=600, listen=4, state=SLEEP_ASLEEP, keeper=0x1D2E3F40,
                retry=0)[:-1],
         encode("FORGET", 45, contact=BOB, through=22)[:-1],
         encode("FORGET_GROUP", 46, group=HUT, through=22)[:-1],
         encode("FORGOTTEN", 43, contact=BOB, through=22)[:-1],
+        encode("MANAGE", 47, ref=1, to=BOB, request=b"")[:-1] + bytes([MANAGE_MAX + 1])
+        + b"\x03" * (MANAGE_MAX + 1),
+        encode("OWNER", 48, address=BOB, owner=1)[:-1],
+        encode("MANAGED", 45, **{"from": BOB, "answer": b""})[:-1],
     ]:
         why = decode(frame)
         assert isinstance(why, str), frame.hex()
@@ -814,7 +885,7 @@ def build():
         ("node", encode("OK", 2)),
         ("client", encode("SYNC", 3, after=0)),
         ("node", encode("SELF", 0, **self_)),
-        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob", wake=0)),
+        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob", wake=0, owner=0)),
         ("node", encode("MESSAGE", 2, flags=0, **where)),
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
         ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
@@ -835,7 +906,7 @@ def build():
         ("node", encode("ASKED", 13, address=CAROL, why=1)),
         ("client", encode("SAVE_CONTACT", 6, address=CAROL, name="Carol")),
         ("node", encode("OK", 6)),
-        ("node", encode("CONTACT", 14, address=CAROL, session=0, name="Carol", wake=0)),
+        ("node", encode("CONTACT", 14, address=CAROL, session=0, name="Carol", wake=0, owner=0)),
         # A group is made, Bob is invited to it, and a message is written to it.
         ("client", encode("MAKE_GROUP", 7, name="Hut")),
         ("node", encode("MADE", 7, group=HUT)),
@@ -889,7 +960,7 @@ def build():
                         minutes=0)),
         ("client", encode("END_SESSION", 18, address=BOB)),
         ("node", encode("OK", 18)),
-        ("node", encode("CONTACT", 32, address=BOB, session=0, name="Bob", wake=0)),
+        ("node", encode("CONTACT", 32, address=BOB, session=0, name="Bob", wake=0, owner=0)),
         # The user names the node's cards and turns them on; a value that is neither on nor off is
         # refused. A newer card from Dave arrives, and the user saves him as a contact from it,
         # under a name of their own. Cards are turned off again, and a day later the node forgets
@@ -905,7 +976,7 @@ def build():
         ("node", encode("CARD", 35, address=DAVE, heard=0, name=TRAIL)),
         ("client", encode("SAVE_CONTACT", 22, address=DAVE, name="Dave (trail crew)")),
         ("node", encode("OK", 22)),
-        ("node", encode("CONTACT", 36, address=DAVE, session=0, name="Dave (trail crew)", wake=0)),
+        ("node", encode("CONTACT", 36, address=DAVE, session=0, name="Dave (trail crew)", wake=0, owner=0)),
         ("client", encode("SET", 23, setting=5, value=0)),
         ("node", encode("OK", 23)),
         ("node", encode("SELF", 37, **{**self_, "card_name": "Ada · hut warden"})),
@@ -1223,7 +1294,7 @@ def build():
         ("node", info(15)),
         ("client", encode("SYNC", 2, after=0)),
         ("node", encode("SELF", 0, **self_)),
-        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob", wake=0)),
+        ("node", encode("CONTACT", 1, speak=15, address=BOB, session=1, name="Bob", wake=0)),
         ("node", encode("MESSAGE", 2, flags=0, **where)),
         ("node", encode("NEIGHBOUR", 3, **neighbour)),
         ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
@@ -1235,6 +1306,26 @@ def build():
         ("client", encode("FORGET", 3, contact=BOB, through=17)),
         ("node", encode("ERROR", 3, code=1)),
     ], 15)})
+
+    # A client of version 16, to the node as the exchange begins: the same sync as the exchange's
+    # but for CONTACT's owner, and its last request is one its version does not define.
+    older.append({"version": 16, "frames": connection([
+        ("client", encode("HELLO", 1, version=16)),
+        ("node", info(16)),
+        ("client", encode("SYNC", 2, after=0)),
+        ("node", encode("SELF", 0, **self_)),
+        ("node", encode("CONTACT", 1, speak=16, address=BOB, session=1, name="Bob", wake=0)),
+        ("node", encode("MESSAGE", 2, flags=0, **where)),
+        ("node", encode("NEIGHBOUR", 3, **neighbour)),
+        ("node", encode("CARD", 4, address=DAVE, heard=1260, name=TRAIL)),
+        ("node", encode("AIRTIME", 5, **airtime)),
+        ("node", encode("POWER", 6, **power)),
+        ("node", encode("FIX", 7, receiver=2, **NO_FIX)),
+        ("node", encode("SLEEP", 8, **awake)),
+        ("node", encode("SYNCED", 2, news=9)),
+        ("client", encode("OWNER", 3, address=BOB, owner=1)),
+        ("node", encode("ERROR", 3, code=1)),
+    ], 16)})
 
     # Frames a later version defines, as a receiver of an earlier version reads them: a type it
     # does not know. A node answers such a request with ERROR 1; a client ignores such news.
@@ -1275,6 +1366,10 @@ def build():
         ("FORGET_GROUP", 15, {"group": HUT, "through": 22}),
         ("FORGOTTEN", 15, {"contact": BOB, "through": 22}),
         ("GROUP_FORGOTTEN", 15, {"group": HUT, "through": 22}),
+        ("MANAGE", 16, {"ref": 0xC0FFEE10, "to": BOB, "request": encode("PING", 7)}),
+        ("OWNER", 16, {"address": BOB, "owner": 1}),
+        ("RESTART", 16, {}),
+        ("MANAGED", 16, {"from": BOB, "answer": pack([encode("OK", 7)])[0]}),
     ]:
         frame = encode(name, 5, **values)
         assert isinstance(decode(frame), dict)
@@ -1422,7 +1517,7 @@ def build():
     # given is the greatest given; and a message that comes afterwards is kept.
     held = [
         ("node", encode("SELF", 0, **self_)),
-        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob", wake=0)),
+        ("node", encode("CONTACT", 1, address=BOB, session=1, name="Bob", wake=0, owner=0)),
         ("node", encode("GROUP", 2, group=HUT, name="Hut")),
     ]
     later = dict(id=23, contact=BOB, time=1_790_000_360, flags=0, state=4, reason=0, wait=0,
@@ -1479,6 +1574,59 @@ def build():
     for c in forget:
         counted = [f["seq"] for f in c if f["type"] in NEWS_NAMES]
         assert counted == list(range(len(counted))), counted
+
+    # Alice's node manages Bob's, a relay on a mast (draft/managing.md). The client makes Bob an
+    # owner after two refusals, and then drives Bob's node over the mesh: HELLO, a sync of its own
+    # state, a SET of its power and the PING that confirms it, a SEND it does not act on over the
+    # mesh, and a RESTART. Each request is delivered, and each answer comes back as MANAGED. Then
+    # Alice's own node restarts.
+    def managed(news, client_seq, ref, request, answer_frames, msg_id):
+        frames = [
+            ("client", encode("MANAGE", client_seq, ref=ref, to=BOB, request=request)),
+            ("node", encode("QUEUED", client_seq, id=msg_id)),
+            ("node", encode("STATE", news, id=msg_id, state=1, reason=0, wait=0)),
+            ("node", encode("STATE", news + 1, id=msg_id, state=2, reason=0, wait=0)),
+        ]
+        news += 2
+        for content in pack(answer_frames):
+            frames.append(("node", encode("MANAGED", news, **{"from": BOB, "answer": content})))
+            news += 1
+        return frames, news
+
+    steps = [
+        ("client", encode("HELLO", 1, version=VERSION)),
+        ("node", info()),
+        ("client", encode("OWNER", 2, address=CAROL, owner=1)),
+        ("node", encode("ERROR", 2, code=12)),
+        ("client", encode("OWNER", 3, address=BOB, owner=2)),
+        ("node", encode("ERROR", 3, code=3)),
+        ("client", encode("OWNER", 4, address=BOB, owner=1)),
+        ("node", encode("OK", 4)),
+        ("node", encode("CONTACT", 0, address=BOB, session=1, name="Bob", wake=0, owner=1)),
+        ("client", encode("MANAGE", 5, ref=0xC0FFEE10, to=ALICE, request=encode("PING", 1))),
+        ("node", encode("ERROR", 5, code=4)),
+        ("client", encode("MANAGE", 6, ref=0xC0FFEE11, to=BOB, request=b"")),
+        ("node", encode("ERROR", 6, code=3)),
+    ]
+    news = 1
+    for client_seq, ref, request, answer_frames in [
+        (7, 0xC0FFEE12, encode("HELLO", 1, version=VERSION), [info()]),
+        (8, 0xC0FFEE13, encode("SYNC", 2, after=0), mast_sync(2)),
+        (9, 0xC0FFEE14, encode("SET", 3, setting=3, value=10), [encode("OK", 3)]),
+        (10, 0xC0FFEE15, encode("PING", 4), [encode("OK", 4)]),
+        (11, 0xC0FFEE16, encode("SEND", 5, ref=1, to=ALICE, text="hello"),
+         [encode("ERROR", 5, code=13)]),
+        (12, 0xC0FFEE17, encode("RESTART", 6), [encode("OK", 6)]),
+    ]:
+        more, news = managed(news, client_seq, ref, request, answer_frames, 16 + client_seq)
+        steps += more
+    steps += [
+        ("client", encode("RESTART", 13)),
+        ("node", encode("OK", 13)),
+    ]
+    manage = connection(steps)
+    counted = [f["seq"] for f in manage if f["type"] in NEWS_NAMES]
+    assert counted == list(range(len(counted))), counted
 
     # A node whose bootloader takes its updates, and that has no room for an image itself: as a
     # client of this version sees it, and as one of version 11 does, which is told no board.
@@ -1560,7 +1708,9 @@ def build():
         "define. To the client of version 14 it holds what the exchange begins with, the sync "
         "sends no SLEEP, and the client's last request names a setting its version does not "
         "define. To the client of version 15 it holds what the exchange begins with, and the "
-        "client's last request is one its version does not define. "
+        "client's last request is one its version does not define. To the client of version 16 "
+        "it holds what the exchange begins with, its CONTACT has no owner, and the client's last "
+        "request is one its version does not define. "
         "Positions are in units of "
         "10^-7 degree. Each connection's frames are read by the "
         "version its client speaks, and each client of an earlier version is sent an INFO "
@@ -1587,7 +1737,11 @@ def build():
         "the second address while a message to it waits, and the first group's, and the node "
         "receives a message from the second address just before the last MESSAGE; the second "
         "is a client that held every message through id 21, and is told what the first "
-        "forgot. The four addresses are the public keys of RFC "
+        "forgot. Manage is one connection to a node like the first of forget's, whose client "
+        "makes the second address an owner and then manages the node at that address over the "
+        "mesh: each request is delivered, and each answer, packed as draft/managing.md has it, "
+        "comes back as MANAGED; that node holds the first address as its owner, three "
+        "neighbours, and no satellite receiver. The four addresses are the public keys of RFC "
         "8032's first four Ed25519 test vectors (section 7.1: TEST 1, 2, 3 and 1024).",
         "generator": "vectors/tools/companion.py",
         "crc_check": {"input": b"123456789".hex(), "crc": crc16(b"123456789")},
@@ -1612,6 +1766,7 @@ def build():
         "bootloader": bootloader,
         "wipe": wipe,
         "forget": forget,
+        "manage": manage,
     }
 
 

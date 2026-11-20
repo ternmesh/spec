@@ -22,6 +22,7 @@ Everything in this directory is dedicated to the public domain under
 | `cards.json` | [Presence cards](../draft/cards.md) | `tools/cards.py` |
 | `airtime.json` | [The airtime budget](../draft/airtime.md) | `tools/airtime.py` |
 | `sleeping.json` | [Leaves that sleep](../draft/sleeping.md) | `tools/sleeping.py` |
+| `managing.json` | [Managing a node over the mesh](../draft/managing.md) | `tools/managing.py` |
 
 Each file is the output of its generator, and CI fails if the two
 disagree. To change a vector, change the generator and run it with
