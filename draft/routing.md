@@ -603,7 +603,14 @@ otherwise up to `ANSWER_WINDOW` × `airtime(13)`, and it is not sent if
 `ANSWER_CANCEL` answers to the same solicit, by `leaf` and `id`, are
 heard from other relays first. The requests' bucket pays for it; one it
 cannot pay for is not sent. The relay names the leaf in its next
-announce before the rest, as a neighbour just found.
+announce before the rest, as a neighbour just found. If the leaf's
+link is not up, or its last announce did not name the relay, the
+relay MUST also take it as a neighbour just found in what it announces:
+it carries its key in each of the next `ADDRESS_AFTER` announces
+([Carrying the key](#signed)), and it is an inconsistency
+([When to announce](#when-to-announce)), so the first of them goes
+soon. It does so for each solicit it answers, so at most once every
+`SOLICIT_GAP` for each leaf.
 
 A leaf that hears an answer for itself from a relay neighbour it keeps
 takes `margin` as the margin that neighbour gave, as if in the last
@@ -1113,6 +1120,26 @@ Routes held once settled, with no traffic, went from 97.2% of pairs to
 route, as a [default route](#a-leafs-default-route) is: it is what a
 leaf with no relay up gains.
 
+**A restarted leaf holds no keys.** A leaf that restarts keeps no
+neighbours, and with them no key: it takes only an announce that
+carries one. Its relays find it again from its first announce and
+carry their keys in the next `ADDRESS_AFTER`, a minute's worth at
+most; one that it misses, it then waits for until one in
+`ADDRESS_EVERY` carries a key, with Trickle's intervals at their
+longest. It solicits meanwhile, and its relays answer, but an answer
+from a relay it does not keep tells it nothing, so after
+`SOLICIT_TRIES` it stops. On two boards, a sleeping leaf restarted over
+the mesh was without a keeper for eight and a half minutes, everything
+held for it waiting as long. In the firmware's own model of a board,
+with announces signed and the leaf hearing nothing for its first 150
+s, it had none after fifteen minutes. With a relay taking a solicit
+from a leaf that does not name it as a neighbour just found, the
+leaf's next solicit brings the relay's key at once, and it had its
+keeper again 40 s after it could hear. This costs a relay at most
+`ADDRESS_AFTER` keys and one interval of `I_MIN` for each solicit it
+answers from such a leaf, which `SOLICIT_GAP` spaces a minute apart,
+and nothing where links are up both ways.
+
 **Only where few relays are heard.** Where a network is dense, every
 relay in earshot answers a solicit, some 24 of them at 20 dBm, and the
 `seq` the leaf raises goes out from all of them, while the relay it
@@ -1421,7 +1448,9 @@ specified](#not-yet-specified).
 * **Who is a relay.** The simulator has nodes elect themselves from
   what they hear. Here it is configured.
 * **Signed solicits and answers.** Anyone may send either. A forged
-  solicit makes relays answer, within the requests' share of their cap;
+  solicit makes relays answer, within the requests' share of their cap,
+  and, sent as from a kept leaf that does not name them, carry their key
+  and announce soon, within the announces' share;
   a forged answer can bring a leaf's link to a relay up that is not, or
   leave the relay it asked after looking silent, so that the leaf takes
   its relays out of use and raises its `seq`. Signing them costs 64
