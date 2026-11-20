@@ -1631,7 +1631,7 @@ def build():
          [encode("ERROR", 5, code=13)]),
         (12, 0xC0FFEE17, encode("RESTART", 6), [encode("OK", 6)]),
     ]:
-        more, news = managed(news, client_seq, ref, request, answer_frames, 15 + client_seq)
+        more, news = managed(news, client_seq, ref, request, answer_frames, 16 + client_seq)
         steps += more
     # Someone at Bob's node, over its USB, makes Carol an owner, and Bob's node tells its owners.
     steps.append(("node", encode("OWNER_CHANGED", news, **{"from": BOB}, contact=CAROL, owner=1,
@@ -1756,7 +1756,8 @@ def build():
         "is a client that held every message through id 21, and is told what the first "
         "forgot. Manage is one connection to a node like the first of forget's, whose client "
         "makes the second address an owner and then manages the node at that address over the "
-        "mesh: each request is delivered, and each answer, packed as draft/managing.md has it, "
+        "mesh: the notice the node sends its new owner takes id 22; each request is "
+        "delivered, and each answer, packed as draft/managing.md has it, "
         "comes back as MANAGED; that node holds the first address as its owner, three "
         "neighbours, and no satellite receiver. Before the client's last request, that node "
         "tells its owners that the third address was made one over a link. The four addresses are the public keys of RFC "
