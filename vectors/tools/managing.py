@@ -30,6 +30,8 @@ REQUEST_MAX, ANSWER_MAX = c.MANAGE_MAX, c.MANAGED_MAX
 OWNERS = c.OWNERS
 MESH_ANSWER_WAIT_S = 120
 TRIAL_S = 900
+MANAGED_POLL_S = 5
+MANAGED_AWAKE_S = 120
 REFUSE_GAP_S = 60
 NOT_OVER_THE_MESH = 13
 NOT_AN_OWNER = 15
@@ -235,6 +237,7 @@ def build():
         "generator": "vectors/tools/managing.py",
         "parameters": {"OWNERS": OWNERS, "REQUEST_MAX": REQUEST_MAX, "ANSWER_MAX": ANSWER_MAX,
                        "MESH_ANSWER_WAIT": MESH_ANSWER_WAIT_S, "TRIAL": TRIAL_S,
+                       "MANAGED_POLL": MANAGED_POLL_S, "MANAGED_AWAKE": MANAGED_AWAKE_S,
                        "REFUSE_GAP": REFUSE_GAP_S},
         "requests": reqs,
         "answers": ans,
