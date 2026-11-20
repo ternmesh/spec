@@ -182,6 +182,7 @@ Error codes:
 | 12 | not a contact: an address the node does not hold as one |
 | 13 | not over the mesh: a request a node does not act on when [managed](managing.md#the-connection) |
 | 14 | locked: the node's Bluetooth is [locked](managing.md#locking-bluetooth) |
+| 15 | not an owner: a node [managed](managing.md#the-connection) over the mesh by someone it has not made one |
 
 Other codes are reserved. A client MUST treat one it does not know as
 a refusal.
@@ -634,7 +635,7 @@ send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
 version 17. Version 16 is version 17 without [managing](managing.md):
 the requests `MANAGE`, `OWNER` and `RESTART`, the setting 10, errors
-13 and 14, the news `MANAGED` and `OWNER_CHANGED`, `CONTACT`'s `owner`
+13 to 15, the news `MANAGED` and `OWNER_CHANGED`, `CONTACT`'s `owner`
 and `SELF`'s `locked`. Version 15 is version 16 without [forgetting](#the-requests):
 the requests `FORGET` and `FORGET_GROUP`, and the news `FORGOTTEN` and
 `GROUP_FORGOTTEN`. Version 14 is version 15 without [sleeping](#what-the-node-holds):

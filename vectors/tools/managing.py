@@ -30,7 +30,9 @@ REQUEST_MAX, ANSWER_MAX = c.MANAGE_MAX, c.MANAGED_MAX
 OWNERS = c.OWNERS
 MESH_ANSWER_WAIT_S = 120
 TRIAL_S = 900
+REFUSE_GAP_S = 60
 NOT_OVER_THE_MESH = 13
+NOT_AN_OWNER = 15
 
 # What a managed node acts on over the mesh (draft/managing.md#the-connection): every other
 # request is answered ERROR 13. SET is acted on for every setting but region (1) and passkey (4).
@@ -79,6 +81,19 @@ def allowed(name, setting=None):
     return name in ALLOWED
 
 
+def answer_to(owners, sender, refused_s):
+    """What a managed node does with a request from `sender`: "acts" for an owner; for anyone
+    else "refuses", unless it refused a request less than REFUSE_GAP ago, and then "nothing"."""
+    if sender in owners:
+        return "acts"
+    return "refuses" if refused_s is None or refused_s >= REFUSE_GAP_S else "nothing"
+
+
+def refusal(request_frame):
+    """The one answer that refuses a request from a non-owner: ERROR 15 with the request's seq."""
+    return answers([c.encode("ERROR", request_frame[1], code=NOT_AN_OWNER)])[0]
+
+
 def holds(answered_s, confirmed):
     """Whether a SET on trial still holds its new value."""
     return confirmed or answered_s < TRIAL_S
@@ -97,6 +112,8 @@ def self_check():
     # Frames are never split: a frame that does not fit starts the next answer.
     big = [c.encode("SAVE_CONTACT", i, address=c.BOB, name="x" * 20) for i in range(3)]
     assert [len(a) for a in answers(big)] == [1 + 2 * 56, 1 + 56]
+    assert refusal(c.encode("HELLO", 1, version=c.VERSION)) == b"\x06\x03\x41\x01\x0f"
+    assert answer_to([c.ALICE], c.CAROL, REFUSE_GAP_S - 1) == "nothing"
     assert not holds(TRIAL_S, False) and holds(TRIAL_S - 1, False) and holds(10 * TRIAL_S, True)
 
 
@@ -123,6 +140,7 @@ def build():
     for why, frames in [
         ("OK", [c.encode("OK", 4)]),
         ("ERROR 13: not over the mesh", [c.encode("ERROR", 5, code=NOT_OVER_THE_MESH)]),
+        ("ERROR 15: not an owner", [c.encode("ERROR", 1, code=NOT_AN_OWNER)]),
         ("INFO", [c.info()]),
         ("a sync of a relay with three neighbours", c.mast_sync(2)),
     ]:
@@ -156,14 +174,20 @@ def build():
             allowed_cases.append({"type": name, "setting": None, "allowed": allowed(name)})
 
     owners_cases = []
-    for owners, sender in [
-        ([c.ALICE], c.ALICE),
-        ([c.ALICE], c.CAROL),
-        ([], c.ALICE),
-        ([c.CAROL, c.DAVE, c.ALICE], c.ALICE),
+    hello = c.encode("HELLO", 1, version=c.VERSION)
+    for owners, sender, refused_s in [
+        ([c.ALICE], c.ALICE, None),
+        ([c.ALICE], c.ALICE, 0),
+        ([c.ALICE], c.CAROL, None),
+        ([c.ALICE], c.CAROL, REFUSE_GAP_S - 1),
+        ([c.ALICE], c.CAROL, REFUSE_GAP_S),
+        ([], c.ALICE, None),
+        ([c.CAROL, c.DAVE, c.ALICE], c.ALICE, None),
     ]:
+        what = answer_to(owners, sender, refused_s)
         owners_cases.append({"owners": [o.hex() for o in owners], "from": sender.hex(),
-                             "answers": sender in owners})
+                             "refused_s": refused_s, "request": hello.hex(), "answer": what,
+                             "refusal": refusal(hello).hex() if what == "refuses" else None})
 
     notices = []
     for contact, owner, by in [(c.CAROL, 1, BY_LINK), (c.ALICE, 0, BY_MESH), (c.DAVE, 1, BY_MESH)]:
@@ -210,7 +234,8 @@ def build():
         "are those of vectors/companion.json.",
         "generator": "vectors/tools/managing.py",
         "parameters": {"OWNERS": OWNERS, "REQUEST_MAX": REQUEST_MAX, "ANSWER_MAX": ANSWER_MAX,
-                       "MESH_ANSWER_WAIT": MESH_ANSWER_WAIT_S, "TRIAL": TRIAL_S},
+                       "MESH_ANSWER_WAIT": MESH_ANSWER_WAIT_S, "TRIAL": TRIAL_S,
+                       "REFUSE_GAP": REFUSE_GAP_S},
         "requests": reqs,
         "answers": ans,
         "rejected": rejected,
