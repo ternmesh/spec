@@ -110,6 +110,7 @@ its field allows, or if a `str` is not valid UTF-8.
 | `0x12` | `FORGET` | `contact` `addr`, `through` `u32` | `OK` |
 | `0x13` | `MANAGE` | `ref` `u32`, `to` `addr`, `request` `bytes` up to 128 | `QUEUED` |
 | `0x14` | `OWNER` | `address` `addr`, `owner` `u8` | `OK` |
+| `0x15` | `TRACE` | `ref` `u32`, `to` `u32` | `QUEUED` |
 | `0x18` | `SAVE_CONTACT` | `address` `addr`, `name` `str` up to 31 | `OK` |
 | `0x19` | `REMOVE_CONTACT` | `address` `addr` | `OK` |
 | `0x1A` | `END_SESSION` | `address` `addr` | `OK` |
@@ -217,13 +218,18 @@ a refusal.
 | `0x97` | `GROUP_FORGOTTEN` | `group` `gid`, `through` `u32` |
 | `0x98` | `MANAGED` | `from` `addr`, `answer` `bytes` up to 128 |
 | `0x99` | `OWNER_CHANGED` | `from` `addr`, `contact` `addr`, `owner` `u8`, `by` `u8` |
+| `0x9A` | `ROUTE` | `id` `u32`, `hops` `u8`, `snr` `i8`, `rssi` `i16`, `via` `u32`, `goes` `u8`, `took` `u32` |
+| `0x9B` | `TRACED` | `id` `u32`, `to` `u32`, `result` `u8`, `out` `u8`, `took` `u32`, `snr` `i8`, `entries` `bytes` up to 160 |
 
-Each news frame but `STATE`, the four `_GONE`s, `ASKED`, `MANAGED` and `OWNER_CHANGED` is a
+Each news frame but `STATE`, the four `_GONE`s, `ASKED`, `MANAGED`, `OWNER_CHANGED` and
+`TRACED` is a
 **record**: the whole of one thing as the node holds it now. A record
-replaces any the client holds for the same thing. `STATE` replaces
+replaces any the client holds for the same thing: a `ROUTE`, the
+`ROUTE` with its `id`. `STATE` replaces
 those fields of the `MESSAGE`, `GROUP_MESSAGE` or `INVITE` with its
-`id`, and of nothing when its `id` is a `MANAGE`'s. `ASKED`, `MANAGED`
-and `OWNER_CHANGED` are things that happened, and the node does not hold them: a
+`id`, and of nothing when its `id` is a `MANAGE`'s or a `TRACE`'s.
+`ASKED`, `MANAGED`, `OWNER_CHANGED` and `TRACED` are things that
+happened, and the node does not hold them: a
 [sync](#syncing) does not send them again.
 
 **The node's count.** A node keeps a count of the news it has sent on
@@ -305,13 +311,53 @@ and 4 a message waiting for both is given.
 `wait` is the node's estimate, in seconds, of how long until it goes,
 0 if it has none, and at most `0xFFFF`.
 
+**How a message went** (`ROUTE`). What the node knows of the way a
+message, a group message or an invite went, by its `id`: for one
+received, the frame that brought it; for one sent, where it went and,
+once it is delivered, the acknowledgement that came back. A client
+shows it beside the message, so that its user can tell a message that
+came straight from the other node from one that relays carried.
+
+* `hops` is how many hops that frame came, counting the last: 1 for a
+  frame its sender's radio sent straight to this node's. For a message
+  or an invite received, or the acknowledgement of one sent, it is
+  `HOP_MAX` + 1 less the frame's `hops` as received
+  ([Frames that follow routes](forwarding.md#the-head)). A group
+  message's writer [draws its `hops`](flooding.md#sending) so that a
+  receiver cannot tell how far off it is, and for one received `hops` is
+  the most it can have come: `FLOOD_HOPS` + 1 less the frame's `hops`,
+  so it came that far or one hop less. 0 if the node does not know.
+* `snr` and `rssi` are how that frame was heard: its signal-to-noise
+  ratio in quarters of a dB, as `NEIGHBOUR`'s, and its signal strength
+  in dBm. Each is 0 if `hops` is.
+* `via` is, for a message or an invite sent, the routing id of the
+  neighbour it last went to: the destination's own if it went straight
+  there. It is 0 while it has gone nowhere, and for anything received
+  or any group message, since no frame names the node it came from.
+* `goes` is how many tries of a message or an invite it sent have gone
+  on the air ([Messages](forwarding.md#messages)), the first counted
+  as 1, or how many times a group message it wrote has
+  ([Sending again](flooding.md#sending)); 0 for anything received. A
+  hop sent again within a try is not counted.
+* `took` is, for a message or an invite sent and delivered, how long
+  from when it first went on the air until its acknowledgement came,
+  in milliseconds; 0 otherwise.
+
+So for a message sent, `hops`, `snr`, `rssi` and `took` stay 0 until
+it is delivered, and then describe the acknowledgement's way back,
+which a destination sends by its own route: most often the same relays,
+and not always. A node has no `ROUTE` for a message it sent that has
+not yet gone, and none for one received or sent before it kept them. A
+node MAY keep none across a restart; it then sends none for those
+messages, and a client keeps those it holds.
+
 **Forgotten** (`FORGOTTEN`, `GROUP_FORGOTTEN`). How much of a
 conversation the user has [forgotten](#the-requests): for an address,
 every `MESSAGE` and `INVITE` with that `contact`, and for a group, every
 `GROUP_MESSAGE` to it, whose `id` is `through` or less. The node holds
 none of them, and a client holds none either once it has the record: a
 client that receives one MUST forget every such message and invite it
-holds, whatever its state and wherever it keeps it. A record holds for
+holds, and its `ROUTE`, whatever its state and wherever it keeps it. A record holds for
 the address or group whether or not it is a contact or a group the node
 holds, and its `through` only ever grows. Messages after it are kept as
 any others are.
@@ -587,6 +633,12 @@ A node with a client that has said `HELLO` MUST send that client:
 * `MESSAGE` when a message is sent or received, and when a received
   message is marked read; `GROUP_MESSAGE` and `INVITE` likewise;
 * `STATE` when the `state` or `reason` of any of the three changes;
+* `ROUTE` when a message, group message or invite is received, after
+  its `MESSAGE`, `GROUP_MESSAGE` or `INVITE`, and when anything in a
+  sent one's changes, after any `STATE` the same change prompts, if the
+  node keeps routes: for one sent, when a try goes on the air, with its
+  `via`, and when it is delivered. A node that keeps none sends none;
+* `TRACED` when a trace ends, as [below](#the-requests);
 * `GROUP` and `GROUP_GONE` when a group is made, joined, renamed or
   left;
 * `CONTACT` and `CONTACT_GONE` when a contact is saved, renamed,
@@ -633,7 +685,10 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 17. Version 16 is version 17 without [managing](managing.md):
+version 18. Version 17 is version 18 without
+[how messages went](#what-the-node-holds) and traces: the request
+`TRACE` and the news `ROUTE` and `TRACED`. Version 16 is version 17
+without [managing](managing.md):
 the requests `MANAGE`, `OWNER` and `RESTART`, the setting 10, errors
 13 to 15, the news `MANAGED` and `OWNER_CHANGED`, `CONTACT`'s `owner`
 and `SELF`'s `locked`. Version 15 is version 16 without [forgetting](#the-requests):
@@ -677,7 +732,9 @@ not told of group messages or invites at all: their `id`s are ones it
 never sees. One of version 4 or earlier is told of no positions, and
 of no sharing. One of version 5 or earlier is told of no cards, and
 is sent a `SELF` without `cards` and `card_name`. One of version 7 or
-earlier is told of no fix. One of version 16 or earlier is told nothing
+earlier is told of no fix. One of version 17 or earlier is told nothing
+of how messages went: it is sent no `ROUTE` or `TRACED`. One of
+version 16 or earlier is told nothing
 of managing: it is sent no `MANAGED` or `OWNER_CHANGED`, a `CONTACT`
 without `owner` and a `SELF` without `locked`.
 One of version 15 or earlier is told nothing
@@ -708,7 +765,8 @@ of version 12, and one of version 15 a `SET` of setting 8 from a client
 of version 14, which ignores a `SLEEP`, and one of version 16 a `FORGET`
 from a client of version 15, which ignores a `FORGOTTEN`, and one of
 version 17 an `OWNER` from a client of version 16, which ignores a
-`MANAGED`. A client of version 12 or earlier sends `UPDATE_BEGIN`
+`MANAGED`, and one of version 18 a `TRACE` from a client of version
+17, which ignores a `ROUTE`. A client of version 12 or earlier sends `UPDATE_BEGIN`
 without a `signature`, and a node that [checks signatures](#signed-images)
 refuses it, as it refuses any image that is not signed.
 A node of version 14 gives every client the routing ids its radio
@@ -746,7 +804,8 @@ goes back to 0.
 `SYNC` asks for everything. The node sends news: one `SELF`, then a
 `CONTACT` for every contact, a `GROUP` for every group, a `MESSAGE`,
 `GROUP_MESSAGE` or `INVITE` for every one it holds whose `id` is
-greater than `after`, in order of `id`, a `FORGOTTEN` for every address
+greater than `after`, in order of `id`, each followed by its `ROUTE` if
+the node holds one, a `FORGOTTEN` for every address
 and then a `GROUP_FORGOTTEN` for every group it holds one for, whatever
 `after` is, a `NEIGHBOUR` for every
 neighbour, a `POSITION` or `GROUP_POSITION` for every position it
@@ -1003,6 +1062,40 @@ reads them at the version it gave the managed node in its last
 as over a link. A `MANAGED` from a node the client sent no request to
 it MUST ignore. What a node may be asked over the mesh, and what it
 answers, is [Managing](managing.md#the-connection)'s rule.
+
+**`TRACE`** begins a [trace](forwarding.md#traces) to the node whose
+routing id is `to`: a contact's, a neighbour's, or any other the user
+names. `ref` is as for `SEND`, under the same rule. `QUEUED` gives the
+trace an `id` from the count messages' `id`s come from, and `STATE`
+news with that `id` tells the client what became of it on the air, as
+for a message: waiting, with its `reason`, and sent once a neighbour is
+heard passing it on. The node keeps no record of it, and a sync does
+not send it. A node MUST refuse a `to` that is reserved or its own
+routing id with `ERROR` 3, and a `TRACE` to a routing id it already has
+a trace to with `ERROR` 8.
+
+When the trace ends, the node sends every client `TRACED`, with the
+trace's `id` and `to`, and `result`:
+
+| `result` | |
+|---|---|
+| 0 | answered by `to` |
+| 1 | answered by the keeper of `to`, which is a leaf that sleeps: it got as far as frames for `to` wait |
+| 2 | answered by a relay with no route to `to`: it got as far as that relay |
+| 3 | not answered in time |
+| 4 | not begun: the node found no route to `to` |
+
+For 0 to 2, `entries` are the trace answer's, as
+[Traces](forwarding.md#traces) has them, five bytes each: its first
+`out` the way out, ending with the node that answered, and the rest the
+way back. `snr` is how well this node heard the answer, as an entry's,
+`took` how long from when the trace first went on the air until its
+answer came, in milliseconds. For 3 and 4, `out`, `took` and `snr` are
+0 and `entries` is empty. A client can name each routing id it can
+match to an address, as for `NEIGHBOUR`, and SHOULD let its user name
+the others for themselves. It SHOULD say, where it shows a trace, that
+a trace shows the way frames went just then, and that relays on the way
+can misreport it.
 
 **`OWNER_CHANGED`** tells every client that the node at `from` said
 its owners changed, in a [notice](managing.md#telling-the-owners):
@@ -1497,7 +1590,7 @@ An implementation conforms to this section if, for
   version 14 no `SLEEP`, and refuses it `SET` 8; and refuses a client
   of version 15 `FORGET`; and sends a client of version 16 a `CONTACT`
   without `owner` and a `SELF` without `locked`, and refuses it
-  `OWNER`;
+  `OWNER`; and refuses a client of version 17 `TRACE`;
 * **signatures:** given `release_key` and `digest`, it builds
   `message`, and takes `signature` as verifying exactly when `verifies`
   is true. A conforming client and a conforming node both do this;
@@ -1526,7 +1619,13 @@ An implementation conforms to this section if, for
   `MANAGE` to itself or of nothing; and each `MANAGE` it delivers, it
   answers with the `MANAGED` that come back, which the file gives as
   the managed node's answers to them
-  ([Managing's vectors](../vectors/managing.json) check those).
+  ([Managing's vectors](../vectors/managing.json) check those);
+* **route:** as a node holding what `route` shows, which keeps routes,
+  given the client's frames in order, it sends the node's: a message
+  sent through a relay and delivered, a message received across two
+  hops and a group message received, each with its `ROUTE`; and traces,
+  refused, answered and not answered, as the file says. The node of
+  `exchange` keeps no routes, and sends no `ROUTE`.
 
 What a node holds, and so which news it sends and when, depends on the
 rest of the node, and is checked by running a client against it. The
@@ -1969,6 +2068,30 @@ later, as its own record, if it is wanted.
 how a client arranges what it shows, and changes nothing the node or
 another client holds. Each client may do it as it likes; nothing in it
 needs a frame.
+
+**Why a client is told how a message went.** Both incumbents show it,
+as their apps do: Meshtastic how many hops a message came, or its
+signal if it came straight, and MeshCore whether a message came direct
+or by flood, and through which repeaters. A person whose message is
+slow, or who is finding where a relay should go, needs to know whether
+a message reached the other node at all, straight or through relays,
+and how well it was heard. A node already knows all of `ROUTE` from
+the frames it receives; it only has to keep it.
+
+**Why `ROUTE` is news of its own.** A `MESSAGE` with 128 bytes of text
+is 176 bytes, and a frame is at most 180, so the fields would not fit on
+the end of it. Its own news also lets a node that keeps no routes, or
+has lost them in a restart, say nothing without saying something false,
+and lets a sent message's way change without the message being sent
+again.
+
+**Why the hops, and not the relays.** No frame names the nodes that
+passed it on ([Goal 3](forwarding.md#goals)), so a node cannot say
+which relays a message came through; `hops` is what the frame's head
+gives. A [trace](forwarding.md#traces) names them, when a person asks.
+For a message sent, the first neighbour is known, and `via` gives it:
+with `hops` of the acknowledgement, it is what a person most often
+needs, whether the message went straight or not.
 
 ## Not yet specified
 

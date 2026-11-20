@@ -1,5 +1,5 @@
 {
-  "description": "Managing a node over the mesh (draft/managing.md). A request is the content of a message for the node, its kind and one companion request; an answer is its kind and companion frames, each after a u8 length, packed in order into as few answers as fit. Companion frames are as vectors/companion.json has them, at version 17. Syncs are of a relay whose one contact is its owner, the first address, with no satellite receiver, awake: with three neighbours, and with twenty. Addresses are those of vectors/companion.json.",
+  "description": "Managing a node over the mesh (draft/managing.md). A request is the content of a message for the node, its kind and one companion request; an answer is its kind and companion frames, each after a u8 length, packed in order into as few answers as fit. Companion frames are as vectors/companion.json has them, at version 18. Syncs are of a relay whose one contact is its owner, the first address, with no satellite receiver, awake: with three neighbours, and with twenty. Addresses are those of vectors/companion.json.",
   "generator": "vectors/tools/managing.py",
   "parameters": {
     "OWNERS": 4,
@@ -14,8 +14,8 @@
   "requests": [
     {
       "why": "HELLO, at this version",
-      "frame": "010111",
-      "content": "05010111"
+      "frame": "010112",
+      "content": "05010112"
     },
     {
       "why": "a sync",
@@ -84,10 +84,10 @@
     {
       "why": "INFO",
       "frames": [
-        "420111147465726e20302e322e302068656c7465632d76330968656c7465632d763305302e322e3001"
+        "420112147465726e20302e322e302068656c7465632d76330968656c7465632d763305302e322e3001"
       ],
       "contents": [
-        "0629420111147465726e20302e322e302068656c7465632d76330968656c7465632d763305302e322e3001"
+        "0629420112147465726e20302e322e302068656c7465632d76330968656c7465632d763305302e322e3001"
       ]
     },
     {
@@ -252,6 +252,11 @@
       "type": "OWNER",
       "setting": null,
       "allowed": true
+    },
+    {
+      "type": "TRACE",
+      "setting": null,
+      "allowed": false
     },
     {
       "type": "SAVE_CONTACT",
@@ -526,6 +531,10 @@
     },
     {
       "type": "OWNER",
+      "allowed": false
+    },
+    {
+      "type": "TRACE",
       "allowed": false
     },
     {
