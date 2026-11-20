@@ -105,7 +105,10 @@ client says `HELLO` again.
 **Who is answered.** A managed node that receives a request in a
 session whose other end is not one of its owners MUST do nothing with
 it but **refuse** it: answer `ERROR` 15, not an owner, with the
-request's `seq`, in one answer of its own. It MUST NOT refuse more than
+request's own `seq`, in one answer of its own, as it answers an owner's
+request with any other `ERROR`. The manager tells its clients of it as
+it does any answer, in [`MANAGED`](companion.md#news), so a client
+matches the refusal to its request by `seq`. It MUST NOT refuse more than
 once in any `REFUSE_GAP`, counting every sender together: a request it
 may not refuse it does nothing with, and does not answer. The message is
 acknowledged either way, as every message is, since the acknowledgement
