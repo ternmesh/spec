@@ -142,8 +142,10 @@ flags are reserved.
 user: words to show. Set, it is for the node itself, and its first byte
 says what it is: `0x01` is [a group's invite](groups.md#invites),
 `0x02` [a position](positions.md#the-position), `0x03` [a group's
-new secret](groups.md#replacing-the-secret), and `0x04` that the sender
-[sleeps](sleeping.md#telling-the-source). A frame with `node`
+new secret](groups.md#replacing-the-secret), `0x04` that the sender
+[sleeps](sleeping.md#telling-the-source), and `0x05` and `0x06` a
+request to [manage](managing.md#the-frames) the node and its answer,
+and `0x07` that the sender's [owners changed](managing.md#telling-the-owners). A frame with `node`
 set is in every other way a frame like any other: it takes the next
 counter, is sealed and opened the same way, and is acknowledged. A
 receiver that accepts one whose plaintext is empty, or whose first byte

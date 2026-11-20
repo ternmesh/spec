@@ -108,6 +108,8 @@ its field allows, or if a `str` is not valid UTF-8.
 | `0x10` | `SEND` | `ref` `u32`, `to` `addr`, `text` `str` up to 128 | `QUEUED` |
 | `0x11` | `READ` | `through` `u32` | `OK` |
 | `0x12` | `FORGET` | `contact` `addr`, `through` `u32` | `OK` |
+| `0x13` | `MANAGE` | `ref` `u32`, `to` `addr`, `request` `bytes` up to 128 | `QUEUED` |
+| `0x14` | `OWNER` | `address` `addr`, `owner` `u8` | `OK` |
 | `0x18` | `SAVE_CONTACT` | `address` `addr`, `name` `str` up to 31 | `OK` |
 | `0x19` | `REMOVE_CONTACT` | `address` `addr` | `OK` |
 | `0x1A` | `END_SESSION` | `address` `addr` | `OK` |
@@ -128,6 +130,7 @@ its field allows, or if a `str` is not valid UTF-8.
 | `0x35` | `SHARE_GROUP` | `group` `gid`, `precision` `u8`, `fields` `u8`, `interval` `u16`, `minutes` `u16` | `OK` |
 | `0x36` | `UPDATE_BOOTLOADER` | | `OK` |
 | `0x37` | `WIPE` | | `OK` |
+| `0x38` | `RESTART` | | `OK` |
 
 Any request may instead be answered by `ERROR`.
 
@@ -177,6 +180,8 @@ Error codes:
 | 10 | not where the update is: no [update](#updating-the-firmware) is under way, or not at that offset |
 | 11 | not an image this node runs: the update is discarded |
 | 12 | not a contact: an address the node does not hold as one |
+| 13 | not over the mesh: a request a node does not act on when [managed](managing.md#the-connection) |
+| 14 | locked: the node's Bluetooth is [locked](managing.md#locking-bluetooth) |
 
 Other codes are reserved. A client MUST treat one it does not know as
 a refusal.
@@ -185,8 +190,8 @@ a refusal.
 
 | `type` | News | Fields |
 |---|---|---|
-| `0x80` | `SELF` | `address` `addr`, `role` `u8`, `region` `str` up to 15, `power` `i8`, `time` `u32`, `cards` `u8`, `card_name` `str` up to 31, `most` `u8`, `pairing` `u8` |
-| `0x81` | `CONTACT` | `address` `addr`, `session` `u8`, `name` `str` up to 31, `wake` `u16` |
+| `0x80` | `SELF` | `address` `addr`, `role` `u8`, `region` `str` up to 15, `power` `i8`, `time` `u32`, `cards` `u8`, `card_name` `str` up to 31, `most` `u8`, `pairing` `u8`, `locked` `u8` |
+| `0x81` | `CONTACT` | `address` `addr`, `session` `u8`, `name` `str` up to 31, `wake` `u16`, `owner` `u8` |
 | `0x82` | `CONTACT_GONE` | `address` `addr` |
 | `0x83` | `MESSAGE` | `id` `u32`, `contact` `addr`, `time` `u32`, `flags` `u8`, `state` `u8`, `reason` `u8`, `wait` `u16`, `text` `str` up to 128 |
 | `0x84` | `STATE` | `id` `u32`, `state` `u8`, `reason` `u8`, `wait` `u16` |
@@ -209,14 +214,16 @@ a refusal.
 | `0x95` | `SLEEP` | `wake` `u16`, `listen` `u8`, `state` `u8`, `keeper` `u32`, `retry` `u16` |
 | `0x96` | `FORGOTTEN` | `contact` `addr`, `through` `u32` |
 | `0x97` | `GROUP_FORGOTTEN` | `group` `gid`, `through` `u32` |
+| `0x98` | `MANAGED` | `from` `addr`, `answer` `bytes` up to 128 |
+| `0x99` | `OWNER_CHANGED` | `from` `addr`, `contact` `addr`, `owner` `u8`, `by` `u8` |
 
-Each news frame but `STATE`, the four `_GONE`s and `ASKED` is a
+Each news frame but `STATE`, the four `_GONE`s, `ASKED`, `MANAGED` and `OWNER_CHANGED` is a
 **record**: the whole of one thing as the node holds it now. A record
 replaces any the client holds for the same thing. `STATE` replaces
 those fields of the `MESSAGE`, `GROUP_MESSAGE` or `INVITE` with its
-`id`. `ASKED` is something that
-happened, and the node does not hold it: a [sync](#syncing) does not
-send it again.
+`id`, and of nothing when its `id` is a `MANAGE`'s. `ASKED`, `MANAGED`
+and `OWNER_CHANGED` are things that happened, and the node does not hold them: a
+[sync](#syncing) does not send them again.
 
 **The node's count.** A node keeps a count of the news it has sent on
 each connection. It sets it to 0 when it answers a `HELLO`. Each news
@@ -252,7 +259,9 @@ to a contact whose `wake` is not 0 waits with its keeper until the
 contact next wakes, and may stay sent for as long, and longer for each
 try ([Waiting longer](sleeping.md#telling-the-source)); a client SHOULD
 say so where it shows the message, so that the user does not take it
-for lost.
+for lost. `owner` is 1 if the contact is one of the node's
+[owners](managing.md#owners), who may manage it over the mesh, and 0
+if not.
 
 **Messages** (`MESSAGE`). Each has an `id`, given by the node: it is
 at least 1, unique on the node and greater than every `id` before it,
@@ -623,7 +632,10 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 16. Version 15 is version 16 without [forgetting](#the-requests):
+version 17. Version 16 is version 17 without [managing](managing.md):
+the requests `MANAGE`, `OWNER` and `RESTART`, the setting 10, errors
+13 and 14, the news `MANAGED` and `OWNER_CHANGED`, `CONTACT`'s `owner`
+and `SELF`'s `locked`. Version 15 is version 16 without [forgetting](#the-requests):
 the requests `FORGET` and `FORGET_GROUP`, and the news `FORGOTTEN` and
 `GROUP_FORGOTTEN`. Version 14 is version 15 without [sleeping](#what-the-node-holds):
 the settings 8 and 9, the news `SLEEP`, and `CONTACT`'s `wake`. Version 13 is the same in every frame, but its routing ids
@@ -664,7 +676,10 @@ not told of group messages or invites at all: their `id`s are ones it
 never sees. One of version 4 or earlier is told of no positions, and
 of no sharing. One of version 5 or earlier is told of no cards, and
 is sent a `SELF` without `cards` and `card_name`. One of version 7 or
-earlier is told of no fix. One of version 15 or earlier is told nothing
+earlier is told of no fix. One of version 16 or earlier is told nothing
+of managing: it is sent no `MANAGED` or `OWNER_CHANGED`, a `CONTACT`
+without `owner` and a `SELF` without `locked`.
+One of version 15 or earlier is told nothing
 of what is forgotten: it is sent no `FORGOTTEN` or `GROUP_FORGOTTEN`,
 and keeps what it holds of a conversation another client forgot, though
 the node sends it none of that again. One of version 14 or earlier is told
@@ -690,7 +705,9 @@ and one of version 12 answers an `UPDATE_BOOTLOADER` from a client of
 version 11 with `ERROR` 1, and one of version 13 a `WIPE` from a client
 of version 12, and one of version 15 a `SET` of setting 8 from a client
 of version 14, which ignores a `SLEEP`, and one of version 16 a `FORGET`
-from a client of version 15, which ignores a `FORGOTTEN`. A client of version 12 or earlier sends `UPDATE_BEGIN`
+from a client of version 15, which ignores a `FORGOTTEN`, and one of
+version 17 an `OWNER` from a client of version 16, which ignores a
+`MANAGED`. A client of version 12 or earlier sends `UPDATE_BEGIN`
 without a `signature`, and a node that [checks signatures](#signed-images)
 refuses it, as it refuses any image that is not signed.
 A node of version 14 gives every client the routing ids its radio
@@ -832,6 +849,7 @@ was given, counting on from it, until it is given another.
 | 7 | receiver | `u8` | 1 to run the node's satellite receiver, 0 to turn it off |
 | 8 | wake | `u16` | `w`: 0 not to [sleep](sleeping.md), or how long the node lets pass between polls when it does, in seconds, from `WAKE_MIN` to `WAKE_MAX` |
 | 9 | listen | `u8` | `l`: how long the node listens after each poll, in seconds, from `LISTEN_MIN` to 255 |
+| 10 | lock | `u8` | 1 to [lock](managing.md#locking-bluetooth) the node's Bluetooth, 0 to unlock it |
 
 A node MUST refuse, with `ERROR` 3, a region it does not have and a
 power its radio cannot send at or that would let it radiate more than
@@ -964,11 +982,59 @@ while the user decides is not forgotten unseen. A client that hides a
 conversation without forgetting it does so on its own, and tells the
 node nothing.
 
+**`MANAGE`** sends `request`, one companion request, to the node at
+`to` over the mesh, to [manage](managing.md) it: as the content of a
+message for the node of kind `0x05`. `ref` is as for `SEND`, under the
+same rule, with `request` in the place of `text`. `QUEUED` gives the
+request an `id` from the count messages' `id`s come from, and `STATE`
+news with that `id` tells the client what became of it on the air, as
+for a message; the node keeps no record of it, and a sync does not
+send it. A node MUST refuse an invalid `to`, or its own address, with
+`ERROR` 4, and an empty `request` with `ERROR` 3. It makes first
+contact if it has no session with `to`.
+
+Each answer that comes back, in a message of kind `0x06` from any
+node, the node sends to every client as `MANAGED`, with `from` the
+address that sent it and `answer` its content after the kind: the
+frames, each with its length. The node reads none of them. A client
+reads them at the version it gave the managed node in its last
+`HELLO` over the mesh, and matches each answer to its request by `seq`
+as over a link. A `MANAGED` from a node the client sent no request to
+it MUST ignore. What a node may be asked over the mesh, and what it
+answers, is [Managing](managing.md#the-connection)'s rule.
+
+**`OWNER_CHANGED`** tells every client that the node at `from` said
+its owners changed, in a [notice](managing.md#telling-the-owners):
+`contact` became one of them if `owner` is 1, and stopped being one if
+it is 0, `by` saying whether that was over a link to that node (0) or
+by one of its owners over the mesh (1). A client SHOULD tell its user,
+who may not have made the change, and say how.
+
+`SET` 10 [locks](managing.md#locking-bluetooth) the node's Bluetooth
+with 1 and unlocks it with 0, and a node MUST refuse any other value
+with `ERROR` 3. `SELF`'s `locked` is 1 while it is locked.
+
+**`OWNER`** makes the contact `address` one of the node's
+[owners](managing.md#owners) when `owner` is 1, and not one when it is
+0, and the node sends every client the contact's `CONTACT`. A node
+MUST refuse an address that is not a contact with `ERROR` 12, an
+`owner` other than 0 or 1 with `ERROR` 3, and a new owner when it holds
+`OWNERS` already with `ERROR` 5. A client MUST NOT make a contact an
+owner unless its user asked it to, and SHOULD say first that an owner
+can change the node's settings and who it takes, from anywhere on the
+mesh.
+
+**`RESTART`** restarts the node. A node MUST answer it with `OK`, and
+then restart as from its reset, keeping what it keeps across any
+restart. Every connection drops, and a client connects again. As with
+`OFF`, a node restarts only once its answer has gone.
+
 **`SAVE_CONTACT`** saves `address` as a contact with `name`, or
 renames it if it is one already. An empty name is a name. A node MUST
 refuse an invalid address, or its own, with `ERROR` 4.
 
-**`REMOVE_CONTACT`** removes the contact. It removes the name, ends
+**`REMOVE_CONTACT`** removes the contact. It removes the name, makes
+it no longer an owner, ends
 any sharing of the node's position with the address, and forgets the
 [position](positions.md#reading-a-position) held from it, and nothing
 else: messages to and from the address are kept, and so is any session
@@ -1428,7 +1494,9 @@ An implementation conforms to this section if, for
   it `UPDATE_BOOTLOADER`; and refuses a client of version 12 an update,
   which carries no signature, and `WIPE`; and sends a client of
   version 14 no `SLEEP`, and refuses it `SET` 8; and refuses a client
-  of version 15 `FORGET`;
+  of version 15 `FORGET`; and sends a client of version 16 a `CONTACT`
+  without `owner` and a `SELF` without `locked`, and refuses it
+  `OWNER`;
 * **signatures:** given `release_key` and `digest`, it builds
   `message`, and takes `signature` as verifying exactly when `verifies`
   is true. A conforming client and a conforming node both do this;
@@ -1450,7 +1518,14 @@ An implementation conforms to this section if, for
 * **forget:** as a node holding what `forget` shows, given the client's
   frames of each of its connections in order, it sends the node's. The
   message it receives in the first comes when the file says; the second
-  is a client that was away, and is told what the first forgot.
+  is a client that was away, and is told what the first forgot;
+* **manage:** as a node holding what `manage` shows, given the
+  client's frames in order, it sends the node's: it refuses an owner
+  that is not a contact and one that is neither 0 nor 1, and a
+  `MANAGE` to itself or of nothing; and each `MANAGE` it delivers, it
+  answers with the `MANAGED` that come back, which the file gives as
+  the managed node's answers to them
+  ([Managing's vectors](../vectors/managing.json) check those).
 
 What a node holds, and so which news it sends and when, depends on the
 rest of the node, and is checked by running a client against it. The
