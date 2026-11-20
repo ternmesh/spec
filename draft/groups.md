@@ -301,6 +301,10 @@ is everything before it.
   `G`, byte for the `#`, and alphanumeric after it. Then a version 4
   code at error correction level L holds any join code, and a version 3
   code one whose name is 12 bytes or fewer.
+* An implementation that shows a join code as text, or hands it on for
+  a person to send or tap, SHOULD write `https://ternmesh.org/g#` in
+  lower case, for the reason [an address's link](sharing.md#the-link)
+  is.
 * An implementation MUST NOT show or send a join code unless its user
   asked for that group's, and SHOULD say, wherever it shows one, that
   anyone who sees it can read the group.
