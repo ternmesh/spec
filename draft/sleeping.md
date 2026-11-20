@@ -269,6 +269,18 @@ whose last poll or announce now names another keeper, or which has
 them: it passes each on by its route, as a frame it receives, without
 taking `hops` down again. A relay that forgets the leaf drops them.
 
+**A keeper that restarts.** A keeper SHOULD keep, across a restart,
+which leaves it keeps and, for each, its `w` and `l` from its last poll
+(or `promise`, if it has not polled), and take each again as a sleeping
+leaf it keeps, asleep, until it polls or announces, or until the keeper
+forgets it as it would any neighbour. It answers the leaf's polls as
+before. A keeper takes a leaf it keeps as the next hop for frames for
+that leaf whether or not its link to the leaf is up: they are held,
+and handed over once it polls. Without this, a keeper that restarts
+answers none of the leaf's polls until the leaf next announces, up to
+`SLEEP_ANNOUNCE` later, and gives what it has for the leaf up for want
+of a route; the leaf, its polls unanswered, changes keeper.
+
 ## Changing keeper
 
 A leaf whose `POLL_TRIES` polls in a row have had no answer from its
@@ -331,6 +343,16 @@ ACK_WAIT + ACK_FACTOR × the route's metric + 1000 × w + 1000 × LISTEN_MIN, in
 
 in place of [Messages](forwarding.md#messages)' wait, `w` being in
 seconds.
+
+**A frame held.** A source that hears a [held notice](#holding) for a
+frame of its own, holding no `w` for its destination, waits for that
+frame, for this try and each after it, as one that holds `WAKE_MAX`
+for it does. So does an initiator of
+[first contact](first-contact.md#sending-again), which holds no `w` for
+a node it has no session with: its frame is held until the leaf
+polls, and the leaf's answer comes after. Sending it again sooner
+would gain nothing: the keeper answers each copy with another held
+notice.
 
 **Copies.** A sleeping leaf acknowledges a copy for `COPY_TIME` plus
 `RETRIES + 1` times its `w`, not `COPY_TIME` alone: the source's later
