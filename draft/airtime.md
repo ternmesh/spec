@@ -90,6 +90,7 @@ bucket for those it passes on **and** by the relayed part.
 | `0x50` | an [acknowledgement](forwarding.md#messages) | own: never held | relayed: never held |
 | `0x51` to `0x54` | a [first-contact frame](first-contact.md#the-frame) | own: waits | relayed: dropped |
 | `0x55` | a [held notice](sleeping.md#holding) | own: never held | |
+| `0x56`, `0x57` | a [trace or a trace answer](forwarding.md#traces) | own: waits | relayed: dropped |
 | `0x59` to `0x5C` | an [announce, request, solicit or answer](routing.md#announces) | routing | routing |
 | `0x5D` | a [poll](sleeping.md#polls) | routing | |
 | `0x5E` | a [poll answer](sleeping.md#polls) | own: never held | |

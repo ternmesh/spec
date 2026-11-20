@@ -209,7 +209,9 @@ poll.
 
 **What is held.** A keeper that has a frame to send to its sleeping
 leaf as the next hop, while the leaf is not awake, MUST NOT send it. It
-**holds** it, and answers the node it came from at once, as below. Its
+**holds** it, and answers the node it came from at once, as below. A
+[trace](forwarding.md#traces) is not held: the keeper answers it for
+the leaf, and drops it. Its
 own frames for the leaf are held too, and counted in its answers, but
 for one: an acknowledgement of a message it has just received from the
 leaf, as its destination, which it sends at once. The leaf listens for

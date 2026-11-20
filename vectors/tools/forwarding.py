@@ -37,6 +37,13 @@ POWER_MARGIN = 10
 STEP = 3
 RETRY_JITTER = 4
 HEAD_WAIT = 13
+# Traces (draft/forwarding.md, Traces): a trace carries the routing id it came from, a trace answer
+# its flags and how many entries went out; each entry is a routing id and an SNR in quarter dB.
+HDR_TRACE, HDR_ANSWER = 0x56, 0x57
+TRACES = (HDR_TRACE, HDR_ANSWER)
+TRACE_MIN, ANSWER_MIN, ENTRY = HEAD + TAG + 4, HEAD + TAG + 2, 5
+TRACE_ENTRIES = 16
+FLAGS = (0, 1, 2)
 
 
 def head(h):
@@ -45,7 +52,7 @@ def head(h):
 
 def accepted(frame):
     """Whether a receiver takes a frame at all."""
-    if len(frame) > 255 or not frame or frame[0] not in (*MESSAGES, HDR_ACK, *CONTACT_LEN):
+    if len(frame) > 255 or not frame or frame[0] not in (*MESSAGES, HDR_ACK, *CONTACT_LEN, *TRACES):
         return False
     if frame[0] in CONTACT_LEN and len(frame) != CONTACT_LEN[frame[0]]:
         return False
@@ -53,32 +60,86 @@ def accepted(frame):
         return False
     if frame[0] in MESSAGES and len(frame) < MESSAGE_MIN:
         return False
+    if frame[0] in TRACES and entries_of(frame) is None:
+        return False
     _, _, _, nxt, dst = struct.unpack(">BBbII", frame[:HEAD])
     return nxt not in RESERVED and dst not in RESERVED
 
 
+def entries_of(frame):
+    """A trace's or a trace answer's entries as (routing id, SNR in quarter dB), and for an answer
+    its flags and out; None if the frame is not one a receiver takes."""
+    least = TRACE_MIN if frame[0] == HDR_TRACE else ANSWER_MIN
+    if len(frame) < least or (len(frame) - least) % ENTRY:
+        return None
+    entries = [struct.unpack(">Ib", frame[i : i + ENTRY]) for i in range(least, len(frame), ENTRY)]
+    if frame[0] == HDR_TRACE:
+        return (entries, None, None) if len(entries) <= TRACE_ENTRIES else None
+    flags, out = frame[HEAD + TAG], frame[HEAD + TAG + 1]
+    if flags not in FLAGS or out > len(entries) or out > TRACE_ENTRIES:
+        return None
+    if len(entries) - out > TRACE_ENTRIES:
+        return None
+    return entries, flags, out
+
+
+def passed_on(sent, heard):
+    """Whether heard is sent as its neighbour passes it on: hops one less, and for a trace or a
+    trace answer, one entry added at the end."""
+    if sent[0] != heard[0] or heard[1] + 1 != sent[1]:
+        return False
+    if sent[0] in TRACES:
+        return len(heard) == len(sent) + ENTRY and heard[AT_DEST : len(sent)] == sent[AT_DEST:]
+    return sent[AT_DEST:] == heard[AT_DEST:]
+
+
 def ends(sent, heard):
     """Whether hearing one frame ends the hop of another this node sent: both whole frames."""
-    passed = sent[AT_DEST:] == heard[AT_DEST:] and sent[0] == heard[0] and heard[1] + 1 == sent[1]
-    answered = (
-        sent[0] in MESSAGES
-        and heard[0] == HDR_ACK
-        and heard[HEAD : HEAD + TAG] == sent[HEAD : HEAD + TAG]
+    same_tag = heard[HEAD : HEAD + TAG] == sent[HEAD : HEAD + TAG]
+    answered = (sent[0] in MESSAGES and heard[0] == HDR_ACK and same_tag) or (
+        sent[0] == HDR_TRACE and heard[0] == HDR_ANSWER and same_tag
     )
-    return passed or answered
+    return passed_on(sent, heard) or answered
 
 
 def teaches(sent, heard):
     """Whether hearing it is a sample of the neighbour's floor: only the frame passed on. An
-    acknowledgement ends a hop and teaches nothing, since no node on the way can check it."""
-    return sent[AT_DEST:] == heard[AT_DEST:] and sent[0] == heard[0] and heard[1] + 1 == sent[1]
+    acknowledgement or a trace answer ends a hop and teaches nothing, since no node on the way can
+    check it."""
+    return passed_on(sent, heard)
 
 
 def hop_heard(frame):
     """Whether a node that has sent a frame listens for the hop to succeed. On the last hop of an
-    acknowledgement or a first-contact frame there is nothing to hear."""
+    acknowledgement, a first-contact frame or a trace answer there is nothing to hear."""
     _, _, _, nxt, dst = struct.unpack(">BBbII", frame[:HEAD])
-    return frame[0] in MESSAGES or nxt != dst
+    return frame[0] in MESSAGES or frame[0] == HDR_TRACE or nxt != dst
+
+
+def entry(rid, snr_quarters):
+    return struct.pack(">Ib", rid, max(-128, min(127, snr_quarters)))
+
+
+def pass_on(frame, rid, snr_quarters):
+    """What a relay passes on of a trace or trace answer it received: (hops, the bytes from
+    destination on), or None where it drops it."""
+    entries, _, out = entries_of(frame)
+    full = len(entries) >= TRACE_ENTRIES if out is None else len(entries) - out >= TRACE_ENTRIES
+    if frame[1] <= 1 or full:
+        return None
+    return frame[1] - 1, frame[AT_DEST:] + entry(rid, snr_quarters)
+
+
+def answer(frame, rid, snr_quarters, flags):
+    """The trace answer a node sends to a trace it received: the bytes from destination on, or None
+    where it cannot add its entry and drops the trace."""
+    entries, _, _ = entries_of(frame)
+    if len(entries) >= TRACE_ENTRIES:
+        return None
+    (source,) = struct.unpack(">I", frame[HEAD + TAG : TRACE_MIN])
+    tag = frame[HEAD : HEAD + TAG]
+    return (struct.pack(">I", source) + tag + bytes([flags, len(entries) + 1])
+            + frame[TRACE_MIN:] + entry(rid, snr_quarters))
 
 
 def clamp(sixteenths, lowest, full):
@@ -212,6 +273,16 @@ def build():
          bytes(range(0x50, 0x50 + 4 + 65))),
         ({"hdr": 0x54, "hops": 2, "power": -9, "next": 0x30313233, "destination": 0x30313233},
          bytes(range(0x60, 0x60 + 4 + 9))),
+        ({"hdr": 0x56, "hops": 32, "power": 14, "next": 0x1D2E3F40, "destination": 0x0A0B0C0D},
+         bytes.fromhex("c0ffee02") + struct.pack(">I", 0x30313233)),
+        ({"hdr": 0x56, "hops": 30, "power": 8, "next": 0x0A0B0C0D, "destination": 0x0A0B0C0D},
+         bytes.fromhex("c0ffee02") + struct.pack(">I", 0x30313233) + entry(0x1D2E3F40, 33)
+         + entry(0x2A4A0644, -50)),
+        ({"hdr": 0x57, "hops": 32, "power": 11, "next": 0x2A4A0644, "destination": 0x30313233},
+         bytes.fromhex("c0ffee02") + bytes([0, 3]) + entry(0x1D2E3F40, 33) + entry(0x2A4A0644, -50)
+         + entry(0x0A0B0C0D, 4)),
+        ({"hdr": 0x57, "hops": 31, "power": 2, "next": 0x30313233, "destination": 0x30313233},
+         bytes.fromhex("c0ffee03") + bytes([1, 1]) + entry(0x1D2E3F40, -128) + entry(0x2A4A0644, 127)),
     ]:
         frame = head(h) + body
         assert accepted(frame)
@@ -239,6 +310,19 @@ def build():
         ("a first-contact message_4 a byte long", head({**good, "hdr": 0x54}) + bytes(14)),
         ("a first-contact message_4 for neighbour zero", head({**good, "hdr": 0x54, "next": 0}) + bytes(13)),
         ("first contact has no message_5", head({**good, "hdr": 0x55}) + bytes(13)),
+        ("a trace with no routing id it came from", head({**good, "hdr": 0x56}) + bytes(4)),
+        ("a trace a byte short of its routing id", head({**good, "hdr": 0x56}) + bytes(7)),
+        ("a trace with part of an entry", head({**good, "hdr": 0x56}) + bytes(8 + 4)),
+        ("a trace with 17 entries", head({**good, "hdr": 0x56}) + bytes(8 + 17 * ENTRY)),
+        ("a trace answer with no out", head({**good, "hdr": 0x57}) + bytes(5)),
+        ("a trace answer with more out than entries",
+         head({**good, "hdr": 0x57}) + bytes(4) + bytes([0, 2]) + bytes(ENTRY)),
+        ("a trace answer with a reserved flag",
+         head({**good, "hdr": 0x57}) + bytes(4) + bytes([3, 1]) + bytes(ENTRY)),
+        ("a trace answer with 17 entries back",
+         head({**good, "hdr": 0x57}) + bytes(4) + bytes([0, 1]) + bytes(18 * ENTRY)),
+        ("a trace for every destination",
+         head({**good, "hdr": 0x56, "destination": 0xFFFFFFFF}) + bytes(8)),
     ]:
         assert not accepted(frame)
         rejected.append({"why": why, "frame": frame.hex()})
@@ -251,6 +335,14 @@ def build():
 
     def ack(hops, destination=77, t=tag, nxt=7):
         return head({"hdr": 0x50, "hops": hops, "power": 3, "next": nxt, "destination": destination}) + t + bytes(4)
+
+    def trace(hops, ents=(), destination=9, nxt=7, source=77):
+        h = {"hdr": HDR_TRACE, "hops": hops, "power": 5, "next": nxt, "destination": destination}
+        return head(h) + tag + struct.pack(">I", source) + b"".join(entry(r, q) for r, q in ents)
+
+    def trace_answer(hops, ents, out, flags=0, destination=77, nxt=7, t=tag):
+        h = {"hdr": HDR_ANSWER, "hops": hops, "power": 5, "next": nxt, "destination": destination}
+        return head(h) + t + bytes([flags, out]) + b"".join(entry(r, q) for r, q in ents)
 
     def contact(n, hops, destination=9, nxt=7, fill=0x70):
         h = {"hdr": 0x50 + n, "hops": hops, "power": 6, "next": nxt, "destination": destination}
@@ -281,6 +373,20 @@ def build():
         ("first contact is not ended by an acknowledgement with its tag", contact(1, 20), ack(32)),
         ("first contact is not ended by its answer", contact(1, 20), contact(2, 32, destination=77)),
         ("a message is not ended by first contact with its tag", message(20), contact(4, 19)),
+        ("a trace passed on, its entry added", trace(20), trace(19, [(8, 12)], nxt=9)),
+        ("a trace passed on with no entry added", trace(20), trace(19, nxt=9)),
+        ("a trace passed on with two entries added", trace(20), trace(19, [(8, 12), (9, 3)], nxt=9)),
+        ("a trace passed on, an entry before changed", trace(20, [(5, 8)]),
+         trace(19, [(5, 9), (8, 12)], nxt=9)),
+        ("a trace answered", trace(20, nxt=9), trace_answer(32, [(9, 40)], 1, destination=77)),
+        ("a trace answered by a keeper", trace(20), trace_answer(32, [(8, 40)], 1, flags=1, destination=77)),
+        ("another trace answered", trace(20), trace_answer(32, [(9, 40)], 1, t=other, destination=77)),
+        ("a trace is not ended by an acknowledgement with its tag", trace(20), ack(32)),
+        ("a message is not ended by a trace answer with its tag", message(20), trace_answer(32, [(9, 4)], 1)),
+        ("a trace answer passed on, its entry added", trace_answer(20, [(9, 40)], 1),
+         trace_answer(19, [(9, 40), (6, -4)], 1, nxt=8)),
+        ("a trace answer is not ended by another answer", trace_answer(20, [(9, 40)], 1),
+         trace_answer(32, [(9, 40)], 1, nxt=8)),
     ]:
         assert accepted(s) and accepted(h)
         assert ends(s, h) or not teaches(s, h)
@@ -298,9 +404,60 @@ def build():
         ("first contact to the node it is for", contact(1, 32, nxt=9)),
         ("the last frame of first contact to the node it is for", contact(4, 3, nxt=9)),
         ("the last frame of first contact on its way", contact(4, 3)),
+        ("a trace on its way", trace(32)),
+        ("a trace to its destination: its answer is listened for", trace(32, nxt=9)),
+        ("a trace answer on its way", trace_answer(32, [(9, 4)], 1)),
+        ("a trace answer to the node that began the trace", trace_answer(30, [(9, 4)], 1, nxt=77)),
     ]:
         assert accepted(f)
         waits.append({"why": why, "sent": f.hex(), "listens": hop_heard(f)})
+
+    # A relay passing a trace or an answer on, and a node answering one. Routing ids are small here
+    # but for the last case, so the entries are easy to read.
+    full_trace = trace(20, [(100 + i, i) for i in range(TRACE_ENTRIES)], nxt=8)
+    full_back = trace_answer(20, [(9, 4)] + [(100 + i, i) for i in range(TRACE_ENTRIES)], 1, nxt=8)
+    entries = []
+    for why, f, rid, q in [
+        ("a trace with no entries", trace(32, nxt=8), 8, 12),
+        ("a trace with two", trace(30, [(5, 20), (6, -7)], nxt=8), 8, -33),
+        ("a signal-to-noise ratio above what an entry holds", trace(30, nxt=8), 8, 300),
+        ("one below it", trace(30, nxt=8), 8, -300),
+        ("a trace with one hop left: not passed on", trace(1, nxt=8), 8, 12),
+        ("a trace with no hops left", trace(0, nxt=8), 8, 12),
+        ("a trace that already holds as many entries as it may", full_trace, 8, 12),
+        ("one entry short of it", trace(20, [(100 + i, i) for i in range(TRACE_ENTRIES - 1)], nxt=8), 8, 12),
+        ("an answer on its way back", trace_answer(29, [(5, 20), (9, 4)], 2, nxt=8), 8, 16),
+        ("an answer with as many entries back as it may", full_back, 8, 16),
+        ("an answer with a full way out and none back",
+         trace_answer(29, [(100 + i, i) for i in range(TRACE_ENTRIES)], TRACE_ENTRIES, nxt=8), 8, 16),
+    ]:
+        assert accepted(f)
+        out = pass_on(f, rid, q)
+        if out is not None:
+            assert accepted(f[:1] + bytes([out[0]]) + f[2:AT_DEST] + out[1])
+            assert ends(f, f[:1] + bytes([out[0]]) + f[2:AT_DEST] + out[1])
+        entries.append({"why": why, "frame": f.hex(), "id": rid, "snr_quarter_db": q,
+                        "hops": None if out is None else out[0],
+                        "passed": None if out is None else out[1].hex()})
+
+    answers = []
+    for why, f, rid, q, flags in [
+        ("by its destination, with no relay on the way", trace(32, nxt=9), 9, 40, 0),
+        ("by its destination, through two relays", trace(30, [(5, 20), (6, -7)], nxt=9), 9, 40, 0),
+        ("by the keeper of its destination, asleep", trace(31, [(5, 20)], nxt=6), 6, -2, 1),
+        ("by a relay with no route to it", trace(31, [(5, 20)], nxt=6), 6, 3, 2),
+        ("with a routing id of every bit", trace(32, [(0xFFFFFFFE, 1)], destination=0xA1B2C3D4,
+         nxt=0xA1B2C3D4, source=0x80000001), 0xA1B2C3D4, 7, 0),
+        ("a trace too full to answer", trace(20, [(100 + i, i) for i in range(TRACE_ENTRIES)], nxt=9), 9, 40, 0),
+    ]:
+        assert accepted(f)
+        a = answer(f, rid, q, flags)
+        if a is not None:
+            assert accepted(bytes([HDR_ANSWER, HOP_MAX, 0, 0, 0, 0, 1]) + a)
+            assert ends(f, bytes([HDR_ANSWER, HOP_MAX, 0, 0, 0, 0, 1]) + a)
+        answers.append({"why": why, "frame": f.hex(), "id": rid, "snr_quarter_db": q,
+                        "as": ["destination", "keeper", "no route"][flags],
+                        "answer": None if a is None else a.hex()})
 
     backs = [
         {
@@ -342,7 +499,13 @@ def build():
         "are numbers; frames and tags are hex. In hops, sent is the frame the node sent and "
         "heard the one it then received; ends is whether that ends the hop, and teaches whether the "
         "node takes it as a sample of its neighbour's floor. In waits, listens is whether a node that has sent the "
-        "frame listens for its hop to succeed, and sends it again if it does not. In backs, power is what a frame was sent at in dBm and "
+        "frame listens for its hop to succeed, and sends it again if it does not. In entries, a relay "
+        "with routing id id receives the trace or trace answer frame, for it, heard at "
+        "snr_quarter_db, and passes on a frame whose hops is hops and whose bytes from destination "
+        "on are passed, or drops it where passed is null. In answers, the node id receives the "
+        "trace frame, heard at snr_quarter_db, as its destination, the keeper of its destination "
+        "asleep, or a relay with no route to it (as), and answers with a trace answer whose bytes "
+        "from destination on are answer, or drops it where answer is null. In backs, power is what a frame was sent at in dBm and "
         "snr_quarter_db what it was heard at, and needs is what an answer must go at for its "
         "sender to hear it, between the node's lowest and full power. In powers, neighbour is "
         "what Routes gives for the neighbour, its boost included, back is what the node the "
@@ -360,6 +523,8 @@ def build():
         "rejected": rejected,
         "hops": hops,
         "waits": waits,
+        "entries": entries,
+        "answers": answers,
         "backs": backs,
         "powers": powers,
         "agains": agains,
