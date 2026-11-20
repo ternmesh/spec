@@ -41,8 +41,8 @@ BOARD_MAX, RELEASE_MAX = 31, 31
 LINK_MAX = 102  # the longest join code (draft/groups.md#join-codes)
 UPDATE_CHUNK = 172
 SIGNATURE = 64  # an Ed25519 signature
-MANAGE_MAX = 141  # a MANAGE's request: what fits a frame (draft/managing.md#parameters)
-MANAGED_MAX = 145  # a MANAGED's answer: what fits a frame
+MANAGE_MAX = 128  # a MANAGE's request: as long as a message's text (draft/managing.md)
+MANAGED_MAX = 128  # a MANAGED's answer: the same
 OWNERS = 4  # owners a node holds, at most
 
 # Each field is (name, kind, and for a string or bytes its longest). Kinds: u8, i8, u16, i16, u32,

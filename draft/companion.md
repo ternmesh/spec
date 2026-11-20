@@ -108,7 +108,7 @@ its field allows, or if a `str` is not valid UTF-8.
 | `0x10` | `SEND` | `ref` `u32`, `to` `addr`, `text` `str` up to 128 | `QUEUED` |
 | `0x11` | `READ` | `through` `u32` | `OK` |
 | `0x12` | `FORGET` | `contact` `addr`, `through` `u32` | `OK` |
-| `0x13` | `MANAGE` | `ref` `u32`, `to` `addr`, `request` `bytes` up to 141 | `QUEUED` |
+| `0x13` | `MANAGE` | `ref` `u32`, `to` `addr`, `request` `bytes` up to 128 | `QUEUED` |
 | `0x14` | `OWNER` | `address` `addr`, `owner` `u8` | `OK` |
 | `0x18` | `SAVE_CONTACT` | `address` `addr`, `name` `str` up to 31 | `OK` |
 | `0x19` | `REMOVE_CONTACT` | `address` `addr` | `OK` |
@@ -213,7 +213,7 @@ a refusal.
 | `0x95` | `SLEEP` | `wake` `u16`, `listen` `u8`, `state` `u8`, `keeper` `u32`, `retry` `u16` |
 | `0x96` | `FORGOTTEN` | `contact` `addr`, `through` `u32` |
 | `0x97` | `GROUP_FORGOTTEN` | `group` `gid`, `through` `u32` |
-| `0x98` | `MANAGED` | `from` `addr`, `answer` `bytes` up to 145 |
+| `0x98` | `MANAGED` | `from` `addr`, `answer` `bytes` up to 128 |
 
 Each news frame but `STATE`, the four `_GONE`s, `ASKED` and `MANAGED` is a
 **record**: the whole of one thing as the node holds it now. A record

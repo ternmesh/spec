@@ -79,8 +79,8 @@ def self_check():
     assert read_answer(b"\x06\x00") is None
     assert read_answer(b"\x06") is None
     # Frames are never split: a frame that does not fit starts the next answer.
-    big = [c.encode("SAVE_CONTACT", i, address=c.BOB, name="x" * 31) for i in range(3)]
-    assert [len(a) for a in answers(big)] == [1 + 2 * 67, 1 + 67]
+    big = [c.encode("SAVE_CONTACT", i, address=c.BOB, name="x" * 20) for i in range(3)]
+    assert [len(a) for a in answers(big)] == [1 + 2 * 56, 1 + 56]
     assert not holds(TRIAL_S, False) and holds(TRIAL_S - 1, False) and holds(10 * TRIAL_S, True)
 
 

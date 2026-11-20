@@ -175,7 +175,7 @@ node.
 An answer is a frame of the managed node's own, and is paid for from
 the own part of its [airtime budget](airtime.md#the-parts); a request
 is paid for from the manager's. A sync of a relay with one contact and
-three neighbours takes two answers, and with twenty neighbours three;
+three neighbours takes two answers, and with twenty neighbours four;
 every other request takes one.
 
 ## Parameters
@@ -183,8 +183,8 @@ every other request takes one.
 | Name | Value | |
 |---|---|---|
 | `OWNERS` | 4 | owners a node holds, at most |
-| `REQUEST_MAX` | 141 bytes | a request's `frame`, at most: what a companion `MANAGE` carries |
-| `ANSWER_MAX` | 145 bytes | an answer's `frames`, at most: what a companion `MANAGED` carries |
+| `REQUEST_MAX` | 128 bytes | a request's `frame`, at most: as long as a message's text |
+| `ANSWER_MAX` | 128 bytes | an answer's `frames`, at most: as long as a message's text |
 | `MESH_ANSWER_WAIT` | 120 s | after delivery, before a client gives a request up |
 | `TRIAL` | 900 s | after a `SET` over the mesh is answered, before it is taken back |
 
@@ -219,6 +219,13 @@ their lengths and timing that a node is being managed. The managed
 node's keeper, if it sleeps, learns only that frames are held for it.
 
 ## Rationale
+
+**Why 128 bytes.** A request and an answer are each held by the node
+that sends them until they are acknowledged, as a message is, and a
+message's text is at most 128 bytes ([Companion](companion.md#the-requests)).
+At the same length a node holds them in the room it holds messages in,
+which on the smallest boards is all the room there is. No request a
+node acts on over the mesh is longer than 66 bytes.
 
 **Why the companion protocol, inside messages.** MeshCore manages a
 repeater with its own set of commands behind a password; Meshtastic
