@@ -87,6 +87,20 @@ check that an address it has read is [valid](first-contact.md#addresses)
 before it keeps it as a contact. Reading a link MUST NOT need the
 network: everything in the address is in the link.
 
+**A link shown as text.** Where an implementation shows the link as
+text, or hands it on for a person to send or tap, rather than encoding
+it in a QR code, it SHOULD write `https://ternmesh.org/a/` in lower case
+and the base32 as above:
+
+```
+https://ternmesh.org/a/23IV7K54ILHFMF2KINR6OV2DPJFHXL2CDNUQZKREM5XT6TYXZGLA
+```
+
+It is the same link, which every reader takes. A phone opens the
+lower-case form in an app that claims it, and the upper-case one in a
+browser: Android verifies an app's claim to a link only for the host as
+DNS writes it, and iOS matches the path's letters as given.
+
 **What is at the link.** A browser that opens it fetches a page from
 `ternmesh.org` that reads the address out of the link and shows it, as
 the text form and with its short code, for the person to copy into
