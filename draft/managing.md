@@ -212,6 +212,28 @@ A node keeps the lock across restarts, and a wipe clears it. `SELF`
 says whether the node is locked. A client SHOULD say, before it locks a
 node, that only USB and the node's owners can unlock it.
 
+## A node that sleeps
+
+A [sleeping leaf](sleeping.md) hears a request only when its keeper
+hands it over, at its next poll, and its owner's next request, and the
+acknowledgement of its answer, wait for the poll after that: one wake
+each, five minutes or more. So a sleeping node that acts on a request
+from one of its owners SHOULD poll its keeper every `MANAGED_POLL`
+until `MANAGED_AWAKE` after that request, as [polling](sleeping.md#polling)
+lets a leaf poll sooner than its wake, and then by its wake again. Each
+request from an owner starts `MANAGED_AWAKE` again. Its first request
+still waits for its wake; those after it take seconds.
+
+Its polls are paid for as any other, from the requests' part of [the
+cap](routing.md#the-cap): one it cannot pay for waits, so a cap that
+runs short spaces them out. At `MANAGED_POLL` 5 s, with the shortest
+listen, a node is awake 2 s in every 7 for `MANAGED_AWAKE`, and sends
+about 24 polls, under two seconds on the air with US915's settings.
+A request from anyone but an owner changes nothing.
+
+A client SHOULD say, while its first request to a node that sleeps is
+held, that the node answers once it wakes.
+
 ## Paid for
 
 An answer is a frame of the managed node's own, and is paid for from
@@ -229,6 +251,8 @@ every other request takes one.
 | `ANSWER_MAX` | 128 bytes | an answer's `frames`, at most: as long as a message's text |
 | `MESH_ANSWER_WAIT` | 120 s | after delivery, before a client gives a request up |
 | `TRIAL` | 900 s | after a `SET` over the mesh is answered, before it is taken back |
+| `MANAGED_POLL` | 5 s | between a managed sleeping node's polls |
+| `MANAGED_AWAKE` | 120 s | after an owner's last request, before it polls by its wake again |
 
 ## Conformance
 
@@ -266,6 +290,15 @@ their lengths and timing that a node is being managed. The managed
 node's keeper, if it sleeps, learns only that frames are held for it.
 
 ## Rationale
+
+**Why a managed node polls fast.** Managing a node takes a few
+requests in a row: `HELLO`, a sync, a `SET`, the request that confirms
+it. A sleeping node that polled only by its wake took a wake for each,
+twenty minutes on two boards for a change of name. Polling fast for two
+minutes after each request costs about two seconds on the air, from the
+part of the cap meant for such frames, and only when an owner asks.
+Staying awake instead would cost more and would need its keeper to know
+it was awake; polling needs nothing new of the keeper.
 
 **Why 128 bytes.** A request and an answer are each held by the node
 that sends them until they are acknowledged, as a message is, and a
