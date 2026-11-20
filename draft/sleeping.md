@@ -199,6 +199,14 @@ it until `l` seconds have passed since then, by that poll's `l`: awake
 while less than `l` has passed, and asleep from `l` on. Any other frame
 from the leaf does not wake it, to its keeper.
 
+Once it has answered the poll, though, the leaf listens only for the
+`held` frames the answer told it of ([Polls](#polls)), and for none when `held` is 0. So a keeper
+MUST NOT send its leaf, after its answer, more than `held` frames of
+those it holds and its own, each counted once however often its hop
+sends it: a frame that comes after the answer, or one beyond `held`, is
+held as if the leaf were asleep, and counted in the answer to its next
+poll.
+
 **What is held.** A keeper that has a frame to send to its sleeping
 leaf as the next hop, while the leaf is not awake, MUST NOT send it. It
 **holds** it, and answers the node it came from at once, as below. Its
@@ -406,8 +414,9 @@ An implementation conforms to this section if, for
 * **sleep:** given `wake`, it produces exactly `content`; and it
   accepts, or ignores, each `content` as `valid` says;
 * **holds:** as a keeper, `at_ms` milliseconds after it received its
-  leaf's last poll, that poll having given `listen`, it
-  holds a frame for the leaf, or sends it, as `holds` says;
+  leaf's last poll, that poll having given `listen`, and before it has
+  answered that poll, it holds a frame for the leaf, or sends it, as
+  `holds` says;
 * **poll_ids:** as a keeper whose last answered poll from a leaf had
   `id` `last` (`null` for none), it answers a poll from it with `id`,
   or does not, as `answers` says;
