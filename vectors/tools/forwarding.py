@@ -253,6 +253,57 @@ def self_check():
     assert receiving(9, 500_000, late, 325_768_000) and not receiving(9, 500_000, late, 365_768_000)
 
 
+def route_round(routes, avoid, leaf, nearest):
+    """A node's route round the neighbour `avoid` (None for none): of the routes it holds through
+    neighbours it may use but `avoid`, feasible or not, one through a neighbour no hop has been
+    given up at since it was last heard, if any; of those the lowest metric. A leaf with none that
+    takes default routes takes its nearest relay (nearest, already not `avoid`, or None)."""
+    ok = sorted((r.get("lost", False), r["metric"], r["next"]) for r in routes
+                if r["usable"] and r["next"] != avoid)
+    if ok:
+        assert len(ok) == 1 or ok[0][:2] != ok[1][:2], "the vectors leave no tie to break"
+        return ok[0][2]
+    return nearest if leaf else None
+
+
+def ack_next(hops, leaf, nearest, source, routes, selected):
+    """Where a message's destination sends its acknowledgement: the neighbour, or None. routes are
+    the routes it holds to the message's source, selected the index of the one selected or None,
+    and nearest a leaf's nearest relay, if it takes default routes, or None."""
+    chosen = routes[selected]["next"] if selected is not None else None
+    if chosen is None and leaf and nearest is not None:
+        chosen = nearest  # a default route is a route
+    if chosen is not None and not (chosen == source and hops < HOP_MAX):
+        return chosen
+    return route_round(routes, source, leaf, nearest) or chosen
+
+
+def retry_next(heard, last, leaf, nearest, routes, selected):
+    """Where a source's next try goes first: the route it has, if its last try was heard at its
+    first hop `last`; if not, its route round `last`; with neither, the route it has. With no route
+    it may select (selected None, and no default route), its route round no neighbour."""
+    chosen = routes[selected]["next"] if selected is not None else nearest if leaf else None
+    if chosen is None:
+        return route_round(routes, None, leaf, nearest)
+    if heard:
+        return chosen
+    return route_round(routes, last, leaf, nearest) or chosen
+
+
+def attributed_ack(sent, heard):
+    """Whom an acknowledgement heard, after this node sent the message `sent`, is a worse sample
+    of: the message's next hop, if that was its destination and the acknowledgement has the
+    message's tag and HOP_MAX hops; otherwise no one."""
+    s, h = head_of(sent), head_of(heard)
+    return ("next" if heard[0] == 0x50 and h["hops"] == HOP_MAX and s["next"] == s["destination"]
+            and sent[HEAD:HEAD + TAG] == heard[HEAD:HEAD + TAG] else None)
+
+
+def head_of(frame):
+    hdr, hops, power, nxt, destination = struct.unpack(">BBbII", frame[:HEAD])
+    return {"hdr": hdr, "hops": hops, "power": power, "next": nxt, "destination": destination}
+
+
 def build():
     self_check()
     heads = []
@@ -494,6 +545,89 @@ def build():
 
     listens = [c for sf, bw in [(9, 500_000), (7, 125_000), (12, 125_000)] for c in listen_cases(sf, bw)]
 
+    source, desk_relay, other_relay = 0x0A0B0C0D, 0x1D2E3F40, 0x2A4A0644
+
+    def rt(nxt, relay, usable, feasible, metric, lost=False):
+        return {"next": nxt, "relay": relay, "usable": usable, "feasible": feasible,
+                "metric": metric, "lost": lost}
+
+    direct = rt(source, False, True, True, 70)
+    via = rt(desk_relay, True, True, False, 140)
+    via_far = rt(other_relay, True, True, False, 210)
+    acked = []
+    for why, hops_at, leaf, nearest, routes, selected in [
+        ("the field test's: direct selected, the message passed on by a relay", 31, False, None,
+         [direct, via], 0),
+        ("the message came direct: the selected route", 32, False, None, [direct, via], 0),
+        ("of two relays, the lower metric", 30, False, None, [direct, via_far, via], 0),
+        ("no relay to go by: direct as before", 31, False, None, [direct], 0),
+        ("a relay it may not use is not gone by", 31, False, None,
+         [direct, rt(desk_relay, True, False, False, 140)], 0),
+        ("the selected route is through a relay already", 31, False, None,
+         [rt(desk_relay, True, True, True, 140), rt(other_relay, True, True, True, 70)], 0),
+        ("no route selected: an infeasible one through a relay", 31, False, None,
+         [rt(source, False, False, True, 70), via], None),
+        ("no route selected and none through a relay: none", 31, False, None,
+         [rt(source, False, False, True, 70)], None),
+        ("as a leaf: a relay's route held", 31, True, other_relay, [direct, via], 0),
+        ("as a leaf with none: its nearest relay", 31, True, other_relay, [direct], 0),
+        ("as a leaf with no route selected: its default route", 31, True, other_relay,
+         [rt(source, False, False, True, 70), via], None),
+        ("as a leaf that takes no default route: direct", 31, True, None, [direct], 0),
+    ]:
+        acked.append({"why": why, "hops": hops_at, "leaf": leaf, "nearest": nearest,
+                      "source": source, "routes": routes, "selected": selected,
+                      "next_after": ack_next(hops_at, leaf, nearest, source, routes, selected)})
+
+    leafward = rt(source, False, True, True, 70)  # here the destination, a leaf neighbour
+    retried = []
+    for why, heard_, leaf, nearest, routes, selected in [
+        ("the field test's: direct, unheard; through a relay, infeasible", False, False, None,
+         [leafward, via], 0),
+        ("heard at its first hop: the same way again", True, False, None, [leafward, via], 0),
+        ("of two others, the lower metric", False, False, None, [leafward, via_far, via], 0),
+        ("no other way: the same", False, False, None, [leafward], 0),
+        ("another it may not use is not gone by", False, False, None,
+         [leafward, rt(desk_relay, True, False, False, 140)], 0),
+        ("through a relay, unheard: direct to the destination", False, False, None,
+         [rt(desk_relay, True, True, True, 140), leafward], 0),
+        ("as a leaf with none: its nearest relay", False, True, other_relay, [leafward], 0),
+        ("as a leaf that takes no default route: the same", False, True, None, [leafward], 0),
+        # the drive's: a relay on the hill ties with the patio on metric, and frames have been lost
+        # to it since it was last heard; the patio has lost none
+        ("round a neighbour frames were lost to since it was heard", False, False, None,
+         [leafward, rt(other_relay, True, True, False, 140, True), via], 0),
+        ("every other lost to as well: the lowest metric", False, False, None,
+         [leafward, rt(other_relay, True, True, False, 210, True),
+          rt(desk_relay, True, True, False, 140, True)], 0),
+        ("no route it may select: round no neighbour", False, False, None,
+         [rt(source, False, False, True, 70), via], None),
+        ("no route it may select, none held: none", False, False, None,
+         [rt(source, False, False, True, 70)], None),
+    ]:
+        last = routes[selected]["next"] if selected is not None else None
+        retried.append({"why": why, "heard": heard_, "last": last, "leaf": leaf,
+                        "nearest": nearest, "routes": routes, "selected": selected,
+                        "next_after": retry_next(heard_, last, leaf, nearest, routes, selected)})
+
+    msg_to = lambda nxt, dest: head({"hdr": 0x48, "hops": 31, "power": 14, "next": nxt,
+                                     "destination": dest}) + body
+    ack_of = lambda hops_, t=tag: head({"hdr": 0x50, "hops": hops_, "power": 10, "next": 77,
+                                        "destination": 77}) + t + bytes(4)
+    attributed = []
+    for why, sent, heard in [
+        ("its destination's acknowledgement, made there", msg_to(9, 9), ack_of(HOP_MAX)),
+        ("passed on since: anyone's", msg_to(9, 9), ack_of(HOP_MAX - 1)),
+        ("the message went on beyond its next hop", msg_to(7, 9), ack_of(HOP_MAX)),
+        ("another message's tag", msg_to(9, 9), ack_of(HOP_MAX, other)),
+    ]:
+        attributed.append({"why": why, "sent": sent.hex(), "heard": heard.hex(),
+                           "from": attributed_ack(sent, heard)})
+    for hops_at in (HOP_MAX, HOP_MAX - 1, 1):
+        attributed.append({"why": "a message for this node, made by its source" if hops_at ==
+                           HOP_MAX else "a message for this node, passed on",
+                           "hops": hops_at, "from": "source" if hops_at == HOP_MAX else None})
+
     return {
         "description": "Frames that follow routes, draft 0 (draft/forwarding.md). Routing ids "
         "are numbers; frames and tags are hex. In hops, sent is the frame the node sent and "
@@ -517,7 +651,20 @@ def build():
         "that spreading factor and bandwidth finds a preamble or a header, says a frame has ended "
         "(end), or is given a frame to send (sent) at the times in events, and receiving is "
         "whether a node may not start to send at each time in asks, every event at or before "
-        "that time having happened.",
+        "that time having happened. In acknowledged, a message arrived with hops at its "
+        "destination, a leaf or not, whose nearest relay is nearest if it is a leaf that takes "
+        "default routes (null for none); routes are the routes it holds to the message's source, "
+        "each through the neighbour next, a relay or not, that it may use or not, feasible or not, "
+        "with its metric, and selected the index of the one selected (null for none); next_after "
+        "is the neighbour it sends the acknowledgement to (null for none). In retried, a source holds "
+        "routes to its message's destination as in acknowledged, its last try having gone first "
+        "to last and been heard there or not, selected null where it has no route it may select; each "
+        "route's lost says whether a hop has been given up at its neighbour since it was last heard; "
+        "next_after is where its next try goes first (null for nowhere). In "
+        "attributed, a node sent the message sent and then received the acknowledgement heard, and "
+        "takes a worse sample of the message's next hop (from next) or of no one (null); or, as "
+        "the destination of a message it accepts that arrived with hops, of its source (source) or "
+        "of no one.",
         "generator": "vectors/tools/forwarding.py",
         "heads": heads,
         "rejected": rejected,
@@ -529,6 +676,9 @@ def build():
         "powers": powers,
         "agains": agains,
         "listens": listens,
+        "acknowledged": acked,
+        "retried": retried,
+        "attributed": attributed,
     }
 
 

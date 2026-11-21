@@ -236,10 +236,36 @@ neighbour it was sent to. The node takes its `power` and
 signal-to-noise ratio as it would an announce's
 ([Links](routing.md#links)): a sample for the neighbour's floor, and
 proof that it was heard just now. It also takes 1 dB off the
-neighbour's boost. An acknowledgement teaches nothing, even one that
-ends a hop: a node MUST NOT take a sample, or take anything off a
-boost, from one. No node on the way can check it, and anyone can send
-one.
+neighbour's boost. An acknowledgement teaches nothing better, even one
+that ends a hop: a node MUST NOT take from one anything but a worse
+sample, below, nor anything off a boost. No node on the way can check
+it, and anyone can send one.
+
+**Who sent it.** The head names the node a frame is for, not the one
+that sent it. A node knows the sender of a frame it hears only:
+
+* of [the same frame](#the-head) heard passed on, one hop further: the
+  neighbour it sent it to, as above;
+* of an acknowledgement whose `hops` is `HOP_MAX`, with the `tag` of a
+  message this node sent to that message's own destination as the next
+  hop: that destination, which made it;
+* of a message for this node whose `hops` is `HOP_MAX`, which it accepts
+  or takes as a [copy](#messages): its source, whose session says who it
+  is;
+* of a message passed on to this node whose `hops` was `HOP_MAX`: its
+  source, which this node learns only when an acknowledgement with the
+  message's `tag` comes back for it to pass on to its destination, that
+  source, as the next hop.
+
+A relay passing such an acknowledgement on SHOULD send it no quieter
+than that message's source needed, by the one frame it heard
+([How loud](#sending)), if it still holds what that was: the source
+listens for it, and the relay's floor for it may be from long ago.
+
+From each of the last three, if it keeps the sender as a neighbour, a node
+takes a [worse sample](routing.md#links), which can make the link look
+worse and never better. From any other frame it takes nothing of the
+link.
 
 **A hop given up.** The neighbour's boost goes up by `STEP`, and never
 above the node's full power less its lowest. A neighbour with
@@ -259,7 +285,8 @@ Feasible routes cannot lead back. A leaf with no such route that takes
 to its nearest relay it has not given this frame up at, in the same way
 and within the same `SALVAGE`. An acknowledgement, a trace and a trace
 answer are not sent another way: a trace shows the route a node has
-selected, and one sent another way would show another.
+selected, and one sent another way would show another. Which way an
+acknowledgement goes first is [below](#messages).
 
 ## Messages
 
@@ -268,6 +295,35 @@ selected, and one sent another way would show another.
 answers with an acknowledgement to the node it came from, which it
 knows from the session the tag belongs to. It answers copies too, as
 below: an acknowledgement is one frame, and as easily lost as any.
+
+**A route round a neighbour.** A node's **route round** a neighbour `X`
+to a destination is, of the routes it holds to the destination through
+neighbours it may [use](routing.md#roles) other than `X`, whether or
+not they are [feasible](routing.md#selecting-a-route): one through a
+neighbour at which no [hop has been given up](#hops) since it last
+heard from it, if there is one; of those, the one with the lowest
+metric; of two as low, either. A leaf that holds none, and takes
+[default routes](routing.md#a-leafs-default-route), takes its nearest
+relay other than `X`. A route round no neighbour is the same with no
+`X`. Only a frame's first hop is ever chosen so: the relays pass it on
+by their own selected routes.
+
+**Which way the acknowledgement goes.** It goes by the destination's
+[selected route](routing.md#selecting-a-route) to the message's source,
+as any frame, but in two cases. In them it goes instead by the
+destination's route round the source. The two cases:
+
+* the selected route's neighbour is the source itself, and the message
+  arrived with `hops` below `HOP_MAX`: a relay passed it on, so the
+  source did not send it here direct;
+* the destination has no route to the source it may use, and none it
+  takes by default.
+
+With no such route either, it goes as it would have: by the selected
+route, or, with none, not at all. A keeper's acknowledgement to a
+[sleeping leaf it keeps](sleeping.md#holding) goes as that section
+says, and not by this. Only the acknowledgement's first hop is chosen
+so: a relay passes it on by its own selected route, as any frame.
 
 **A copy** is a message frame that the destination does not accept, of
 the same length and `hdr` as a message it has accepted, in any session
@@ -337,21 +393,29 @@ keeps the tag key of the message's epoch while it waits, as
 a valid acknowledgement
 by then it starts the message again — the same frame, with `hops` at
 `HOP_MAX`, on whatever route it has now, whatever had become of the
-copy before, and [not at once](#hops) — up to `RETRIES` times. After
+copy before, and [not at once](#hops) — up to `RETRIES` times. If no
+hop of the try that ended succeeded at its first neighbour — nothing
+heard passed on, no acknowledgement, no held notice — the next try
+avoids that neighbour: it goes by the source's route round it, and
+with none, by the route it has. After
 the last wait it **gives the message up** and tells the application.
 A message given up counts toward
 [starting the session again](unicast-security.md#starting-again).
 
 A source with no route, and none it takes
 [by default](routing.md#a-leafs-default-route), asks for one, as a
-relay does, and counts that as a try, waiting `ACK_WAIT`.
+relay does. Meanwhile, each try goes by its route round no neighbour,
+if it holds one; with none, it counts asking as a try, waiting
+`ACK_WAIT`.
 
 Once a message is acknowledged or given up, nothing of it goes on the
 air from its source again.
 
-A source that has sent a message to the same neighbour more than
-`HOP_RETRIES` times, over however many tries, and never heard it passed
-on, counts that as a hop given up.
+A try whose first hop never succeeded — nothing heard passed on, no
+acknowledgement, no held notice — counts as a hop given up at that
+neighbour, as any other: it raises the boost, and counts toward
+`SOLICIT_HOPS` and `DEAD_HOPS`. A try is two sends at rising power and
+a wait of a few journeys, what a hop's own sends are.
 
 **First contact.** The node that begins a handshake keeps each of its
 two frames as a source keeps a message, with the next frame of the
@@ -532,6 +596,24 @@ An implementation conforms to this section if, for
   event at or before that time having happened, that it may not start
   to send, or may, as `receiving` says.
 
+* **retried:** as the source of a message, holding the `routes` given
+  to its destination, as in **acknowledged**, its last try having gone
+  first to `last` and been heard there or not (`heard`), it sends the
+  next try first to `next_after`;
+* **attributed:** having sent the message `sent` to the neighbour its
+  `next` names, and then received the acknowledgement `heard`, it takes
+  a worse sample of that neighbour or of none, as `from` says (`next`
+  or `null`); and as the destination of a message it accepts, heard
+  with `hops`, of its source or of none (`source` or `null`);
+* **acknowledged:** as the destination of a message that arrived with
+  `hops`, a leaf or not (`leaf`), with `nearest` its nearest relay if
+  it is a leaf that takes default routes (`null` for none), holding
+  the `routes` given to the message's `source`, each through the
+  neighbour `next`, a relay or not, that it may use or not
+  (`usable`), feasible or not, with its `metric`, and `selected`
+  the index of the one selected (`null` for none), it sends the
+  acknowledgement to `next_after` (`null` for none).
+
 and, for
 [`vectors/unicast-security.json`](../vectors/unicast-security.json),
 which holds the cases that need a session's keys:
@@ -711,7 +793,10 @@ the acknowledgement and not its neighbour. A node that can forge an
 acknowledgement in earshot of a relay can as easily keep that relay
 from hearing anything, and the source, which checks `proof`, is not
 deceived. So a forged acknowledgement can cost a message a retry from
-its source, and nothing more.
+its source, and nothing more. A [worse sample](routing.md#links) from
+one is not that first draft: it can turn a node up, never down, and a
+forger can make it send louder, or route round a neighbour, which
+jamming does as well.
 
 **Why copies are answered so far and no further.** The same runs, with
 a destination that answered no more than four acknowledgements of a
@@ -762,6 +847,95 @@ that sleeps waits with its keeper, and one to a destination a relay has
 no route to dies there. Those are the two places a person most needs
 to see, and a trace that went unanswered would show neither.
 
+**Why an acknowledgement may go another way.** On the first field test
+(v0.7.0-alpha.3, 2026-11-21) a leaf driven away from a relay sent it a
+message through another relay, two hops, which arrived well. The relay
+it was for still held the leaf as a neighbour up, from before it left,
+and sent the
+acknowledgement direct, by its selected route. It was lost, and the
+leaf sent the message again. An acknowledgement's last hop is not
+listened for, so the relay never knew, and an acknowledgement is not
+sent another way when a hop is given up. The leaf had told the relay as
+much: a source whose route to a neighbour goes direct sends direct, and
+this one had routed round.
+
+The route the acknowledgement takes instead may be infeasible, as the
+route through another relay to a neighbour's leaf most often is. It
+cannot loop. Only its first hop is chosen so; the relay passes it on by
+its own selected route, and routes selected cannot loop. At worst that
+route leads back to this node, which passes it on by its own selected
+route, so it costs a few hops of one 19-byte frame, within `HOP_MAX`.
+No table changes, so no route is drawn anywhere.
+
+The head says nothing of the node a frame came from, and a field for it
+would cost four bytes in every frame and be no more authenticated than
+`hops` is. `hops` is enough to say that a relay passed the message on.
+It is not authenticated either. A relay on the way that leaves `hops`
+at `HOP_MAX` sends the acknowledgement by the selected route, as before.
+A node that sends the message again with `hops` lowered sends a
+[copy](#messages), which is acknowledged at most `COPY_ACKS` times
+and for `COPY_TIME`, each now by a relay: the most it can cost is a
+few acknowledgements' airtime over a longer way. Sending every
+acknowledgement both ways would double what each costs to find what
+one case needs; trying direct first and then another way needs a hop
+listened for, which a last hop is not.
+
+Measured in the simulator, the firmware's core over the field test as
+a scenario (ternmesh/sim `scenarios/core/drive.tsim`, ten seeds, a
+message each way every four minutes for 100 minutes), with this, the
+next try another way and worse samples together, against the firmware
+before them:
+
+| | before | after |
+|---|---|---|
+| both ways at once: delivered, of 500 | 275 | 490 |
+| both ways at once: given up by their sources | 407 | 15 |
+| from the leaf alone: delivered, of 250 | 228 | 236 |
+| from the leaf alone: given up though delivered | 182 | 7 |
+| to the leaf alone: delivered, of 250 | 47 | 250 |
+
+**Why a source's next try avoids its last first hop.** A source waits
+`ACK_WAIT` plus a few journeys for its acknowledgement, some five
+seconds on a route of one link, and a hop is given up only after its
+third send, `HOP_WAIT` apart, some twelve. So the source starts again
+before any hop of its own is given up, and [another
+way](#hops), which follows a hop given up, never comes: each try went
+to the same neighbour, twice, as long as the route lasted. A route that
+lasts is what a stale link is. On the field test the relay at the desk
+sent everything for a leaf that had driven away direct, try after try.
+
+The next try goes elsewhere only when nothing of the last was heard at
+its first hop. A message passed on there whose acknowledgement was lost
+further on tries the same way again, and a first hop that has truly
+gone soon shows it: two sends unheard in each try. The route taken
+instead may be infeasible, as the route through another relay to a
+relay's own leaf most often is. As for an acknowledgement (above), only
+the first hop is chosen so, and the relays pass it on by their selected
+routes, which cannot loop; at worst it reaches the source again, which
+holds the same frame and ignores it, and the try is lost. As first written the next try avoided the last neighbour and
+nothing else changed, and in the simulator's drive that did harm: with
+tries alternating between two neighbours, no neighbour was ever sent
+the message more than `HOP_RETRIES` times, so no hop was ever counted
+given up, no boost rose, and a leaf never reached `SOLICIT_HOPS` at the
+relay it had left, so never solicited, which is what had mended its
+floor for the relay it now needed. So a try unheard is a hop given up.
+Forgetting still takes `DEAD_HOPS` of them, with nothing heard between.
+
+Measured as first written, the next try took the lowest metric of the
+other routes, and in four seeds of ten the relay at the desk never
+reached the leaf. It still held routes to the leaf through the relays on
+the hill, learnt while everyone was in one house, through links it had
+not heard since and still held up; they tied on metric with the route
+through the relay that could reach the leaf, and came first. Tries then
+went back and forth between the leaf and a relay on the hill, and never
+by the one that worked. A neighbour that frames have been lost to since
+it was last heard is the one a stale link leads to, so a route round
+prefers the others; that counter is kept for `DEAD_HOPS` already. And
+once the desk had given `DEAD_HOPS` hops up at the leaf and forgotten it,
+it held no route it might select and only asked, though the route
+through the patio was still there: so a source with no route sends by
+its route round no neighbour while it asks.
+
 **Why 24 hops given up, and not 3.** In the simulator, forgetting a
 neighbour sooner delivered less with every node up and less with a
 quarter of the relays going down and coming back: at 3, 6 and 12 hops
@@ -794,5 +968,10 @@ dead found sooner.
   the channel is full.
 * **Frames for every node** are [their own section](flooding.md), and
   follow no route.
+* **First-contact answers the way the frame came.** A handshake's
+  answer to a source that routed round a stale direct link meets what
+  an acknowledgement met on the field test; it is sent another way
+  when its hop is given up, but only by a feasible route, and its last
+  hop is not listened for.
 * **Fragments**: a message is one frame.
 * **Priority** between messages.

@@ -401,6 +401,15 @@ def link_next(up, mine, theirs):
     return m >= (LINK_MARGIN - LINK_BAND if up else LINK_MARGIN)
 
 
+def worse(floor, theirs, up, full, power, snr_quarters, sf):
+    """A neighbour's floor and link after a worse sample: the sample goes into the floor only if it
+    is above it, and a link that was up is judged afresh; one that was down stays down."""
+    s = 16 * power - 4 * (snr_quarters - snr_floor_quarters(sf))
+    if s > floor:
+        floor = (3 * floor + s) // 4
+    return floor, up and link_next(True, 16 * full - floor, theirs)
+
+
 def withdrawn(named, number, round_):
     allowed = min(NAMED_ROUNDS * max(round_, 1) + 1, 0x7FFF)
     return (number - named) % 65536 >= allowed
@@ -1085,6 +1094,25 @@ def build():
         return {"relay": is_relay, "up": up, "out_of_use": out, "margin_sixteenths": margin,
                 "heard_s": heard, "promise_s": promise}
 
+    worse_ = []
+    for why, floor, theirs, up, power, snr in [
+        ("worse: a quarter of the way", 16 * -20, 200, True, 22, 0),
+        ("better: nothing", 16 * 10, 200, True, 22, 40),
+        ("as good: nothing", 16 * 2, 200, True, 22, 30),  # the sample is the floor exactly
+        # heard below the profile's floor, as the field test's -13.5 dB at SF9
+        ("down, past the band", 396, 200, True, 22, -66),
+        ("just within the band", 396, 200, True, 22, -65),
+        ("a down link stays down, however good the frame", 16 * -20, 200, False, 22, 200),
+        ("a down link takes a worse sample all the same", 16 * -20, 200, False, 22, 0),
+        ("one deep fade does not take a good link down", 16 * 2, 200, True, 22, -50),
+        ("the power heard is the boosted power sent", 16 * -10, 200, True, 7, -20),
+        ("the neighbour's margin as well as this node's", 16 * -20, 125, True, 22, 0),
+    ]:
+        f, u = worse(floor, theirs, up, 22, power, snr, 9)
+        worse_.append({"why": why, "floor_sixteenths": floor, "their_margin": theirs, "up": up,
+                       "full_power": 22, "power": power, "snr_quarter_db": snr,
+                       "spreading_factor": 9, "floor_after": f, "up_after": u})
+
     anchors = []
     for rs in [
         [relay(True, False, 80, 100, 600), relay(True, False, 160, 100, 600)],
@@ -1334,7 +1362,11 @@ def build():
         "heard_first says whether the leaf heard from it in the first solicit of the pair. In "
         "in_use_again, a node keeps a neighbour out of use and hears from it what heard says: an "
         "announce it takes, one it discards (as a copy, by its number), a frame the neighbour "
-        "passed on, a solicit or an answer; out_of_use_after is whether it is then out of use.",
+        "passed on, a solicit or an answer; out_of_use_after is whether it is then out of use. In "
+        "worse, a node keeps a neighbour with floor_sixteenths, the margin it gave "
+        "(their_margin, a margin byte) and its link up or not, its own full power full_power, and "
+        "takes a worse sample from a frame sent at power and heard at snr_quarter_db at "
+        "spreading_factor: floor_after and up_after are its floor and link then.",
         "generator": "vectors/tools/routing.py",
         "ids": ids,
         "no_ids": no_ids,
@@ -1357,6 +1389,7 @@ def build():
         "verified": verified,
         "floors": floors,
         "links": links,
+        "worse": worse_,
         "named": named,
         "places": places,
         "numbering": numbered,

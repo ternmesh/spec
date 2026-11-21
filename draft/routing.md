@@ -276,6 +276,28 @@ missing. The link is **up** once its margin is `LINK_MARGIN` or more,
 and stays up until it falls more than `LINK_BAND` below that, or the
 neighbour's margin is withdrawn.
 
+**Worse, never better.** A neighbour's floor and link are judged up or
+down by its announces, solicits, answers and polls, and by frames it
+[passes on](forwarding.md#hops). Some other frames are known to come
+from a neighbour too, [as Frames that follow routes
+says](forwarding.md#hops), though nothing in them is signed. From one
+of those, sent at `power` and heard with `snr`, a node takes a **worse
+sample**:
+
+```
+sample = power - (snr - SNR_FLOOR)
+floor  = (3 floor + sample) / 4          if sample > floor
+```
+
+and otherwise leaves the floor as it was. If the link was up, the node
+then judges it afresh, so that it goes down if its margin has fallen
+more than `LINK_BAND` below `LINK_MARGIN`; a link that is down stays
+down. A worse sample is nothing else: it is not a sign of life, it
+takes nothing off a boost, and it is not counted as hearing from the
+neighbour, for forgetting, for being [out of use](#leaves-that-move) or
+for anything else. A node MUST NOT lower a floor, or bring a link up,
+on any frame but those that judge a link both ways.
+
 A node MUST forget a neighbour, and every route through it, once it has
 heard nothing from it for `SILENT_MAX` and for two of its promises. A
 neighbour whose last announce made no promise is not forgotten for its
@@ -811,6 +833,11 @@ An implementation conforms to this section if, for
   with `full_power` names the neighbour with each `margin`;
 * **links:** from down, with its own margin and the neighbour's as
   given at each step, it holds the link `up` or not;
+* **worse:** keeping a neighbour with `floor_sixteenths`, the margin it
+  gave (`their_margin`) and its link up or not, with `full_power`, and
+  taking a worse sample from a frame sent at `power` and heard at
+  `snr_quarter_db` at `spreading_factor`, it holds `floor_after` and
+  its link `up_after`;
 * **named:** it takes a margin as withdrawn, or not, as `withdrawn`
   says, when the neighbour last named it in announce `named` and has
   now sent `number`, with `round`;
@@ -1166,6 +1193,51 @@ against 80.5%. On the deployed preset, SF8 at 62.5 kHz, routes settled
 sooner: 77.6% of pairs held one six hours on, against 64.8%, on a tenth
 less airtime, and 95% either way at twelve.
 
+**Worse samples, and why only worse.** On the first field test
+(v0.7.0-alpha.3, 2026-11-21) every board started in one house, and a
+leaf was then driven away. A relay that still heard it kept a floor for
+it from when it stood beside it, 35 dB too low in the simulator's model
+of the drive (ternmesh/sim `scenarios/core/drive.tsim`), and sent it
+frames too quiet to arrive: requests for its `seq`, and
+acknowledgements on their last hop. The leaf's announces each moved the
+floor a quarter of the way, and came eight to twenty-five minutes
+apart. Frames that follow routes come far more often, but are not
+signed, and anyone in earshot can send one with any `power` in its
+head.
+
+So they may only make a link look worse. A frame sent in a
+neighbour's name can then make a node send to it louder, or take its
+link down and route round it, which a jammer near that neighbour can do
+already by making it lose frames. Making a link look better, which
+draws routes through it, still takes a signed announce, or frames the
+neighbour passes on. Where a frame's sender is not known for certain it
+gives nothing, and the head does not say who sent a frame, only who it
+is for.
+
+A worse sample goes into the floor as an announce's does, a quarter of
+the way. Taking the sample itself, the worst heard, would let one
+deep fade set the floor: frames are lost to fades, and then sent at
+full power for a long while. A quarter of the way, a fade of `d` dB
+raises a floor by `d / 4`, and a link with `m` dB to spare goes down
+only on a fade deeper than `4 (m + LINK_BAND)`: some 50 dB for a link
+with 10 dB to spare, while a link that has truly fallen by that much
+gets there in a few frames. The `power` heard is what the frame was
+sent at, boost and all, so a neighbour sending louder to make up for
+its losses is not taken for a nearer one.
+
+**No leaf gone quiet.** A rule was drafted for the same field test: a
+relay takes out of use a leaf it has lost `SOLICIT_HOPS` hops to and not
+heard from for two of its promises, as a leaf does to a relay that its
+solicits find gone. In the simulator's drive (ten seeds, a message each
+way every four minutes) it never acted. A leaf's promise at `I_MAX` is
+some half an hour, and the relay had given `DEAD_HOPS` hops up, two to a
+message, and forgotten the leaf before two had passed; with one promise
+it did no better. Forgetting was not what kept frames from the leaf:
+a source sending every try the same stale way was, and the floor at the
+relay that still heard it, which [a source's next
+try](forwarding.md#messages) and worse samples address. So it was left
+out.
+
 **Signed announces, not a network key.** Unsigned, any radio can send
 an announce in another node's name: list routes it does not have, claim
 to be a destination and draw its frames, say a neighbour is
@@ -1413,6 +1485,9 @@ specified](#not-yet-specified).
   and a relay carry that signature with the route only when the `seq`
   changes; and a node could stop using a neighbour whose frames are not
   acknowledged.
+* **Better from frames that follow routes.** A link that has truly
+  come back is judged so only by announces, solicits, answers, polls
+  and frames passed on.
 * **Signed requests.** A request names no sender, and anyone may send
   one. The most it can do is make a node take a newer `seq`, or send a
   request on, within the requests' share of [the cap](#the-cap).
