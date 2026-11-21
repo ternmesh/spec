@@ -30,7 +30,7 @@ import sharing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 18
+VERSION = 19
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -110,7 +110,7 @@ FRAMES = {
                     ("time", U32), ("cards", U8), ("card_name", STR, NAME_MAX), ("most", U8),
                     ("pairing", U8), ("locked", U8)]),
     0x81: ("CONTACT", [("address", ADDR), ("session", U8), ("name", STR, NAME_MAX),
-                       ("wake", U16), ("owner", U8)]),
+                       ("wake", U16), ("owner", U8), ("says", STR, NAME_MAX)]),
     0x82: ("CONTACT_GONE", [("address", ADDR)]),
     0x83: ("MESSAGE", [("id", U32), ("contact", ADDR), ("time", U32), ("flags", U8),
                        ("state", U8), ("reason", U8), ("wait", U16), ("text", STR, TEXT_MAX)]),
@@ -120,7 +120,7 @@ FRAMES = {
     0x86: ("NEIGHBOUR_GONE", [("routing_id", U32)]),
     0x87: ("AIRTIME", [("period", U32), ("allowed", U32), ("used", U32), ("wait", U32)]),
     0x88: ("POWER", [("millivolts", U16), ("percent", U8), ("flags", U8)]),
-    0x89: ("ASKED", [("address", ADDR), ("why", U8)]),
+    0x89: ("ASKED", [("address", ADDR), ("why", U8), ("name", STR, NAME_MAX)]),
     0x8A: ("GROUP", [("group", GID), ("name", STR, NAME_MAX)]),
     0x8B: ("GROUP_GONE", [("group", GID)]),
     0x8C: ("GROUP_MESSAGE", [("id", U32), ("group", GID), ("from", U32), ("time", U32),
@@ -160,9 +160,9 @@ NEWS_NAMES = {name for t, (name, _) in FRAMES.items() if t >= 0x80}
 SINCE = {(0x43, "news"): 3, (0x42, "board"): 4, (0x42, "release"): 4, (0x80, "cards"): 6,
          (0x80, "card_name"): 6, (0x80, "most"): 10, (0x80, "pairing"): 11, (0x42, "update"): 12,
          (0x30, "signature"): 13, (0x81, "wake"): 15,
-         (0x81, "owner"): 17, (0x80, "locked"): 17}
+         (0x81, "owner"): 17, (0x80, "locked"): 17, (0x81, "says"): 19, (0x89, "name"): 19}
 # A field a later version added that a frame built here leaves at its default unless given.
-DEFAULTS = {(0x80, "locked"): 0}
+DEFAULTS = {(0x80, "locked"): 0, (0x81, "says"): "", (0x89, "name"): ""}
 
 # SET 4's value for the node's default passkey, and the default of a node without a screen.
 PASSKEY_DEFAULT = 0xFFFFFFFF
@@ -686,7 +686,7 @@ def build():
                      "cards": 0, "card_name": "", "most": 0, "pairing": PAIRING_SET}),
         ("SELF", 2, {"address": ALICE, "role": 1, "region": "US915", "power": 22, "time": 0,
                      "cards": 0, "card_name": "", "most": 1, "pairing": PAIRING_DEFAULT}),
-        ("CONTACT", 2, {"address": BOB, "session": 1, "name": "Bob", "wake": 0, "owner": 0}),
+        ("CONTACT", 2, {"address": BOB, "session": 1, "name": "Bob", "wake": 0, "owner": 0, "says": "Robert at the ridge"}),
         ("CONTACT_GONE", 3, {"address": BOB}),
         ("MESSAGE", 4, {"id": 17, "contact": BOB, "time": 1_789_999_000, "flags": 1, "state": 4,
                         "reason": 0, "wait": 0, "text": "Where are you?"}),
@@ -702,7 +702,7 @@ def build():
         ("POWER", 12, {"millivolts": 3987, "percent": 81, "flags": 1}),
         ("POWER", 13, {"millivolts": 0, "percent": 255, "flags": 2}),
         ("ASKED", 14, {"address": CAROL, "why": 1}),
-        ("ASKED", 15, {"address": CAROL, "why": 2}),
+        ("ASKED", 15, {"address": CAROL, "why": 2, "name": "Carol"}),
         ("GROUP", 16, {"group": HUT, "name": "Hut"}),
         ("GROUP", 17, {"group": RIDGE, "name": ""}),
         ("GROUP_GONE", 18, {"group": HUT}),

@@ -193,7 +193,7 @@ a refusal.
 | `type` | News | Fields |
 |---|---|---|
 | `0x80` | `SELF` | `address` `addr`, `role` `u8`, `region` `str` up to 15, `power` `i8`, `time` `u32`, `cards` `u8`, `card_name` `str` up to 31, `most` `u8`, `pairing` `u8`, `locked` `u8` |
-| `0x81` | `CONTACT` | `address` `addr`, `session` `u8`, `name` `str` up to 31, `wake` `u16`, `owner` `u8` |
+| `0x81` | `CONTACT` | `address` `addr`, `session` `u8`, `name` `str` up to 31, `wake` `u16`, `owner` `u8`, `says` `str` up to 31 |
 | `0x82` | `CONTACT_GONE` | `address` `addr` |
 | `0x83` | `MESSAGE` | `id` `u32`, `contact` `addr`, `time` `u32`, `flags` `u8`, `state` `u8`, `reason` `u8`, `wait` `u16`, `text` `str` up to 128 |
 | `0x84` | `STATE` | `id` `u32`, `state` `u8`, `reason` `u8`, `wait` `u16` |
@@ -201,7 +201,7 @@ a refusal.
 | `0x86` | `NEIGHBOUR_GONE` | `routing_id` `u32` |
 | `0x87` | `AIRTIME` | `period` `u32`, `allowed` `u32`, `used` `u32`, `wait` `u32` |
 | `0x88` | `POWER` | `millivolts` `u16`, `percent` `u8`, `flags` `u8` |
-| `0x89` | `ASKED` | `address` `addr`, `why` `u8` |
+| `0x89` | `ASKED` | `address` `addr`, `why` `u8`, `name` `str` up to 31 |
 | `0x8A` | `GROUP` | `group` `gid`, `name` `str` up to 31 |
 | `0x8B` | `GROUP_GONE` | `group` `gid` |
 | `0x8C` | `GROUP_MESSAGE` | `id` `u32`, `group` `gid`, `from` `u32`, `time` `u32`, `flags` `u8`, `state` `u8`, `reason` `u8`, `wait` `u16`, `text` `str` up to 128 |
@@ -268,7 +268,13 @@ try ([Waiting longer](sleeping.md#telling-the-source)); a client SHOULD
 say so where it shows the message, so that the user does not take it
 for lost. `owner` is 1 if the contact is one of the node's
 [owners](managing.md#owners), who may manage it over the mesh, and 0
-if not.
+if not. `says` is the name the contact gave itself in the last
+[first contact](first-contact.md#names) the node made with it, empty if
+it gave none or there has been none since the node kept names. It is
+the contact's claim, not the user's name for it: a client SHOULD show
+it as such where the user gave the contact no name, MAY offer it when
+the user names one, and MUST NOT put it in the place of the user's name
+unless the user says so.
 
 **Messages** (`MESSAGE`). Each has an `id`, given by the node: it is
 at least 1, unique on the node and greater than every `id` before it,
@@ -620,7 +626,11 @@ node that is refused asks again within seconds. `why` is:
 | 2 | it has no room for another session |
 
 Other values are reserved, and a client treats one it does not know as
-a refusal it cannot name.
+a refusal it cannot name. `name` is the name the asking node gave itself
+in its `message_3` ([Names](first-contact.md#names)), empty if none: its
+claim, which a client SHOULD show with the address's short code, so
+that the user can tell who is asking before saving them, and MAY offer
+as the contact's name.
 
 So a client lets a node in by saving it as a contact, and makes room
 by [ending a session](#the-requests). Neither tells the node that
@@ -685,7 +695,9 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 18. Version 17 is version 18 without
+version 19. Version 18 is version 19 without
+[names in first contact](first-contact.md#names): `ASKED`'s `name` and
+`CONTACT`'s `says`. Version 17 is version 18 without
 [how messages went](#what-the-node-holds) and traces: the request
 `TRACE` and the news `ROUTE` and `TRACED`. Version 16 is version 17
 without [managing](managing.md):
@@ -732,7 +744,8 @@ not told of group messages or invites at all: their `id`s are ones it
 never sees. One of version 4 or earlier is told of no positions, and
 of no sharing. One of version 5 or earlier is told of no cards, and
 is sent a `SELF` without `cards` and `card_name`. One of version 7 or
-earlier is told of no fix. One of version 17 or earlier is told nothing
+earlier is told of no fix. One of version 18 or earlier is sent an
+`ASKED` without `name` and a `CONTACT` without `says`. One of version 17 or earlier is told nothing
 of how messages went: it is sent no `ROUTE` or `TRACED`. One of
 version 16 or earlier is told nothing
 of managing: it is sent no `MANAGED` or `OWNER_CHANGED`, a `CONTACT`
@@ -905,7 +918,7 @@ was given, counting on from it, until it is given another.
 | 3 | power | `i8` | the most the node transmits at, in dBm; -128 for the most it may |
 | 4 | passkey | `u32` | the [Bluetooth](#bluetooth-le) passkey, 0 to 999999, or `0xFFFFFFFF` for the node's default |
 | 5 | cards | `u8` | 1 to send [cards](#cards), 0 to send none |
-| 6 | card name | `str` up to 31 | the name the node's cards carry; empty for none |
+| 6 | card name | `str` up to 31 | the name the node's cards carry, and that it gives itself in [first contact](first-contact.md#names); empty for none |
 | 7 | receiver | `u8` | 1 to run the node's satellite receiver, 0 to turn it off |
 | 8 | wake | `u16` | `w`: 0 not to [sleep](sleeping.md), or how long the node lets pass between polls when it does, in seconds, from `WAKE_MIN` to `WAKE_MAX` |
 | 9 | listen | `u8` | `l`: how long the node listens after each poll, in seconds, from `LISTEN_MIN` to 255 |
