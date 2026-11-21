@@ -888,11 +888,11 @@ before them:
 
 | | before | after |
 |---|---|---|
-| both ways at once: delivered, of 500 | 275 | 431 |
-| both ways at once: given up by their sources | 407 | 122 |
+| both ways at once: delivered, of 500 | 275 | 490 |
+| both ways at once: given up by their sources | 407 | 15 |
 | from the leaf alone: delivered, of 250 | 228 | 236 |
-| from the leaf alone: given up though delivered | 182 | 81 |
-| to the leaf alone: delivered, of 250 | 47 | 89 |
+| from the leaf alone: given up though delivered | 182 | 7 |
+| to the leaf alone: delivered, of 250 | 47 | 250 |
 
 **Why a source's next try avoids its last first hop.** A source waits
 `ACK_WAIT` plus a few journeys for its acknowledgement, some five
