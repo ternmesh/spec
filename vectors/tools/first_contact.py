@@ -45,6 +45,8 @@ CTAG_LABEL = b"tern v0 contact"
 METHOD = 3  # static DH on both sides
 SUITE = 0  # AES-CCM-16-64-128, SHA-256, 8-byte MAC, X25519, EdDSA
 KID_R = b"\x00"
+NAME_LABEL = 116  # the EAD item that carries a name: not registered with IANA (RFC 9528, 10.5)
+NAME_MAX = 31  # bytes of UTF-8, as a card's
 CONTACT_ANSWERS = 4  # message_2 frames, first or again, in any CONTACT_SPAN
 CONTACT_SPAN = 600  # seconds
 
@@ -162,7 +164,8 @@ def sign1(seed, id_cred, ext_aad, payload):
     return Ed25519PrivateKey.from_private_bytes(seed).sign(cbor(["Signature1", id_cred, ext_aad, payload]))
 
 
-def edhoc(curve, method, suites_i, x, y, c_i, c_r, id_cred_i, kid_i, cred_i, id_cred_r, kid_r, cred_r, sk_i, sk_r):
+def edhoc(curve, method, suites_i, x, y, c_i, c_r, id_cred_i, kid_i, cred_i, id_cred_r, kid_r, cred_r, sk_i, sk_r,
+          ead_3=b"", ead_4=b""):
     """Both ends of one EDHOC session, as RFC 9529 lays it out. id_cred_* are encoded maps, kid_* the
     kid when the map is {4: kid}, cred_* encoded credentials, sk_* static DH private keys (or Ed25519
     seeds, for a side that signs). Returns the messages and the values RFC 9529 publishes."""
@@ -183,14 +186,14 @@ def edhoc(curve, method, suites_i, x, y, c_i, c_r, id_cred_i, kid_i, cred_i, id_
         prk_4e3m = prk_3e2m
     else:
         prk_4e3m = extract(kdf(prk_3e2m, 5, th_3, HASH_LEN), curve.dh(y, curve.public(sk_i)))
-    mac_3 = kdf(prk_4e3m, 6, id_cred_i + cbor(th_3) + cred_i, HASH_LEN if i_signs else MAC_LEN)
-    sm_3 = sign1(sk_i, id_cred_i, cbor(th_3) + cred_i, mac_3) if i_signs else mac_3
-    pt_3 = compact(id_cred_i, kid_i) + cbor(sm_3)
+    mac_3 = kdf(prk_4e3m, 6, id_cred_i + cbor(th_3) + cred_i + ead_3, HASH_LEN if i_signs else MAC_LEN)
+    sm_3 = sign1(sk_i, id_cred_i, cbor(th_3) + cred_i + ead_3, mac_3) if i_signs else mac_3
+    pt_3 = compact(id_cred_i, kid_i) + cbor(sm_3) + ead_3
     k_3, iv_3 = kdf(prk_3e2m, 3, th_3, KEY_LEN), kdf(prk_3e2m, 4, th_3, IV_LEN)
     v["message_3"] = cbor(seal(k_3, iv_3, th_3, pt_3))
     th_4 = H(cbor(th_3) + pt_3 + cred_i)
     k_4, iv_4 = kdf(prk_4e3m, 8, th_4, KEY_LEN), kdf(prk_4e3m, 9, th_4, IV_LEN)
-    v["message_4"] = cbor(seal(k_4, iv_4, th_4, b""))
+    v["message_4"] = cbor(seal(k_4, iv_4, th_4, ead_4))
     v["PRK_out"] = kdf(prk_4e3m, 7, th_4, HASH_LEN)
     v.update(TH_2=th_2, TH_3=th_3, TH_4=th_4)
     return v
@@ -386,6 +389,35 @@ ID_CRED_R = cbor({4: KID_R})
 CRED_PREFIX = cred(bytes(32))[:-32]
 
 
+def name_ead(name: bytes, raw: bytes = None) -> bytes:
+    """The EAD item that carries a name: NAME_LABEL, and a byte string of 32 bytes, the name's
+    length, the name, and zeros after it. raw, for a rejected vector, is those 32 bytes as given."""
+    if raw is None:
+        assert len(name) <= NAME_MAX
+        name.decode("utf-8")
+        raw = bytes([len(name)]) + name + bytes(NAME_MAX - len(name))
+    return cbor(NAME_LABEL) + cbor(raw)
+
+
+NAME_EAD_LEN = len(name_ead(b""))  # 36
+
+
+def read_name(ead: bytes):
+    """The name in an EAD item that carries one, or None for anything but that exact form."""
+    head = cbor(NAME_LABEL) + b"\x58\x20"
+    if len(ead) != NAME_EAD_LEN or ead[: len(head)] != head:
+        return None
+    raw = ead[len(head) :]
+    n = raw[0]
+    if n > NAME_MAX or any(raw[1 + n :]):
+        return None
+    try:
+        raw[1 : 1 + n].decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return raw[1 : 1 + n]
+
+
 def ctags(g_x: bytes, g_rx: bytes):
     prk = extract(g_x, g_rx)
     return {n: expand(prk, CTAG_LABEL + bytes([n]), 4) for n in (1, 2, 3, 4)}
@@ -465,8 +497,8 @@ def responder_receive_1(seed, y, c_r, f):
     return st, frame(2, ct[2], m2, source)
 
 
-def initiator_receive_2(st, f, c_i):
-    """message_3 in reply to f, or None if it fails."""
+def initiator_receive_2(st, f, c_i, name=b"", raw_name=None):
+    """message_3 in reply to f, carrying name, or None if it fails."""
     if len(f) != PREFIX + 45 or f[0] != hdr(2) or ctag_of(f) != st["ctag"][2]:
         return None
     m2 = f[PREFIX:]
@@ -493,26 +525,36 @@ def initiator_receive_2(st, f, c_i):
         return None
     prk_4e3m = extract(kdf(prk_3e2m, 5, th_3, HASH_LEN), g_iy)
     me = address(st["seed"])
-    mac_3 = kdf(prk_4e3m, 6, id_cred_i(me) + cbor(th_3) + cred(me), MAC_LEN)
-    pt_3 = id_cred_i(me) + cbor(mac_3)
+    ead_3 = name_ead(name, raw_name)
+    mac_3 = kdf(prk_4e3m, 6, id_cred_i(me) + cbor(th_3) + cred(me) + ead_3, MAC_LEN)
+    pt_3 = id_cred_i(me) + cbor(mac_3) + ead_3
     k_3, iv_3 = kdf(prk_3e2m, 3, th_3, KEY_LEN), kdf(prk_3e2m, 4, th_3, IV_LEN)
     m3 = cbor(seal(k_3, iv_3, th_3, pt_3))
     st.update(prk_4e3m=prk_4e3m, th_4=H(cbor(th_3) + pt_3 + cred(me)))
     return frame(3, st["ctag"][3], m3, rid(st["target"]))
 
 
-def responder_receive_3(st, f, check_address=True, check_mac=True):
-    """(message_4, the initiator's address, S), or None if f fails. check_address and check_mac
-    are only for showing that a rejected vector would otherwise be accepted."""
-    if len(f) != PREFIX + 65 or f[0] != hdr(3) or ctag_of(f) != st["ctag"][3]:
+M3_LEN = 2 + 55 + NAME_EAD_LEN + MAC_LEN  # 101
+M4_LEN = 2 + NAME_EAD_LEN + MAC_LEN  # 46
+
+
+def responder_receive_3(st, f, name=b"", check_address=True, check_mac=True):
+    """(message_4 carrying name, the initiator's address, S, the initiator's name), or None if f
+    fails. check_address and check_mac are only for showing that a rejected vector would otherwise
+    be accepted."""
+    if len(f) != PREFIX + M3_LEN or f[0] != hdr(3) or ctag_of(f) != st["ctag"][3]:
         return None
     m3 = f[PREFIX:]
-    if m3[:2] != b"\x58\x3f":
+    if m3[:2] != b"\x58" + bytes([M3_LEN - 2]):
         return None
     th_3, prk_3e2m = st["th_3"], st["prk_3e2m"]
     k_3, iv_3 = kdf(prk_3e2m, 3, th_3, KEY_LEN), kdf(prk_3e2m, 4, th_3, IV_LEN)
     pt_3 = unseal(k_3, iv_3, th_3, m3[2:])
-    if pt_3 is None or len(pt_3) != 55 or pt_3[:14] != b"\xa1\x0e" + CRED_PREFIX or pt_3[46:47] != b"\x48":
+    if pt_3 is None or len(pt_3) != 55 + NAME_EAD_LEN or pt_3[:14] != b"\xa1\x0e" + CRED_PREFIX or pt_3[46:47] != b"\x48":
+        return None
+    ead_3 = pt_3[55:]
+    their_name = read_name(ead_3)
+    if their_name is None:
         return None
     a_i = pt_3[14:46]
     if check_address and not valid_address(a_i):
@@ -521,26 +563,29 @@ def responder_receive_3(st, f, check_address=True, check_mac=True):
     if g_iy is None:
         return None
     prk_4e3m = extract(kdf(prk_3e2m, 5, th_3, HASH_LEN), g_iy)
-    mac_3 = kdf(prk_4e3m, 6, id_cred_i(a_i) + cbor(th_3) + cred(a_i), MAC_LEN)
-    if check_mac and not hmac.compare_digest(mac_3, pt_3[47:]):
+    mac_3 = kdf(prk_4e3m, 6, id_cred_i(a_i) + cbor(th_3) + cred(a_i) + ead_3, MAC_LEN)
+    if check_mac and not hmac.compare_digest(mac_3, pt_3[47:55]):
         return None
     th_4 = H(cbor(th_3) + pt_3 + cred(a_i))
     k_4, iv_4 = kdf(prk_4e3m, 8, th_4, KEY_LEN), kdf(prk_4e3m, 9, th_4, IV_LEN)
-    m4 = cbor(seal(k_4, iv_4, th_4, b""))
+    m4 = cbor(seal(k_4, iv_4, th_4, name_ead(name)))
     # An address that is not valid has no routing id: only reached with check_address off.
     to = rid(a_i) if valid_address(a_i) else 0
-    return frame(4, st["ctag"][4], m4, to), a_i, session_secret(prk_4e3m, th_4)
+    return frame(4, st["ctag"][4], m4, to), a_i, session_secret(prk_4e3m, th_4), their_name
 
 
 def initiator_receive_4(st, f):
-    """S, or None if f fails."""
-    if len(f) != PREFIX + 9 or f[0] != hdr(4) or ctag_of(f) != st["ctag"][4] or f[PREFIX] != 0x48:
+    """(S, the responder's name), or None if f fails."""
+    head = b"\x58" + bytes([M4_LEN - 2])
+    if len(f) != PREFIX + M4_LEN or f[0] != hdr(4) or ctag_of(f) != st["ctag"][4] or f[PREFIX : PREFIX + 2] != head:
         return None
     prk_4e3m, th_4 = st["prk_4e3m"], st["th_4"]
     k_4, iv_4 = kdf(prk_4e3m, 8, th_4, KEY_LEN), kdf(prk_4e3m, 9, th_4, IV_LEN)
-    if unseal(k_4, iv_4, th_4, f[PREFIX + 1 :]) != b"":
+    pt_4 = unseal(k_4, iv_4, th_4, f[PREFIX + 2 :])
+    their_name = read_name(pt_4) if pt_4 is not None else None
+    if their_name is None:
         return None
-    return session_secret(prk_4e3m, th_4)
+    return session_secret(prk_4e3m, th_4), their_name
 
 
 def session_secret(prk_4e3m, th_4):
@@ -558,27 +603,27 @@ def det(label: str, n: int = 32) -> bytes:
     return hashlib.sha256(b"tern first contact vectors " + label.encode()).digest()[:n]
 
 
-def run(i_seed, r_seed, x, y, c_i, c_r):
+def run(i_seed, r_seed, x, y, c_i, c_r, i_name=b"", r_name=b""):
     """A full handshake through the two roles, checked against the EDHOC core."""
     st_i, f1 = initiator_start(i_seed, address(r_seed), x, c_i)
     st_r, f2 = responder_receive_1(r_seed, y, c_r, f1)
-    f3 = initiator_receive_2(st_i, f2, c_i)
-    f4, a_i, s_r = responder_receive_3(st_r, f3)
-    s_i = initiator_receive_4(st_i, f4)
-    assert f3 and a_i == address(i_seed) and s_i == s_r
+    f3 = initiator_receive_2(st_i, f2, c_i, i_name)
+    f4, a_i, s_r, heard_i = responder_receive_3(st_r, f3, r_name)
+    s_i, heard_r = initiator_receive_4(st_i, f4)
+    assert f3 and a_i == address(i_seed) and s_i == s_r and heard_i == i_name and heard_r == r_name
     core = edhoc(
         X25519, METHOD, SUITE, x, y, c_i, c_r,
         id_cred_i(address(i_seed)), None, cred(address(i_seed)),
         ID_CRED_R, KID_R, cred(address(r_seed)),
-        x25519_private(i_seed), x25519_private(r_seed),
+        x25519_private(i_seed), x25519_private(r_seed), name_ead(i_name), name_ead(r_name),
     )  # fmt: skip
     for n, f in enumerate((f1, f2, f3, f4), 1):
         assert f[PREFIX_1 if n == 1 else PREFIX :] == core[f"message_{n}"], f"message_{n} differs from the EDHOC core"
     return dict(st_i=st_i, st_r=st_r, frames=(f1, f2, f3, f4), s=s_i, core=core)
 
 
-def handshake_case(name, note, i_seed, r_seed, x, y, c_i, c_r):
-    h = run(i_seed, r_seed, x, y, c_i, c_r)
+def handshake_case(name, note, i_seed, r_seed, x, y, c_i, c_r, i_name=b"", r_name=b""):
+    h = run(i_seed, r_seed, x, y, c_i, c_r, i_name, r_name)
     st_i = h["st_i"]
     return h, {
         "name": name,
@@ -589,6 +634,8 @@ def handshake_case(name, note, i_seed, r_seed, x, y, c_i, c_r):
         "responder_ephemeral": y.hex(),
         "c_i": c_i.hex(),
         "c_r": c_r.hex(),
+        "initiator_name": i_name.decode("utf-8"),
+        "responder_name": r_name.decode("utf-8"),
         "frames": [f.hex() for f in h["frames"]],
         "session_secret": h["s"].hex(),
         "intermediate": {
@@ -654,16 +701,17 @@ def build() -> dict:
 
     i_seed, r_seed, other_seed = seeds
     h0, case0 = handshake_case(
-        "first", "a handshake with small connection identifiers",
-        i_seed, r_seed, det("x 0"), det("y 0"), b"\x00", b"\x01",
+        "first", "a handshake with small connection identifiers, each end naming itself",
+        i_seed, r_seed, det("x 0"), det("y 0"), b"\x00", b"\x01", "Ridge hut".encode(), "RAK1".encode(),
     )  # fmt: skip
     h1, case1 = handshake_case(
-        "negative-ids", "the roles reversed, with negative connection identifiers",
+        "negative-ids", "the roles reversed, with negative connection identifiers, and neither end naming itself",
         r_seed, i_seed, det("x 1"), det("y 1"), b"\x37", b"\x20",
     )  # fmt: skip
     _, case2 = handshake_case(
-        "third", "a third node contacting the first",
-        other_seed, i_seed, det("x 2"), det("y 2"), b"\x17", b"\x17",
+        "third", "a third node contacting the first, with a name of 31 bytes, not all of it ASCII, "
+        "and the first naming none",
+        other_seed, i_seed, det("x 2"), det("y 2"), b"\x17", b"\x17", "Panadería Pérez en Rincón PR".encode(),
     )  # fmt: skip
 
     f1, f2, f3, f4 = h0["frames"]
@@ -735,8 +783,22 @@ def build() -> dict:
 
     def as_initiator_4(f):
         st = i_state()
-        assert initiator_receive_2(st, f2, b"\x00")
+        assert initiator_receive_2(st, f2, b"\x00", "Ridge hut".encode())
         return initiator_receive_4(st, f)
+
+    def named_3(raw):
+        """message_3 of the first handshake with its name's 32 bytes as given."""
+        f = initiator_receive_2(i_state(), f2, b"\x00", raw_name=raw)
+        assert f is not None
+        return f
+
+    def named_4(raw):
+        """message_4 of the first handshake with its name's 32 bytes as given, sealed as the
+        responder would seal it."""
+        st = i_state()
+        assert initiator_receive_2(st, f2, b"\x00", "Ridge hut".encode())
+        k_4, iv_4 = kdf(st["prk_4e3m"], 8, st["th_4"], KEY_LEN), kdf(st["prk_4e3m"], 9, st["th_4"], IV_LEN)
+        return frame(4, st["ctag"][4], cbor(seal(k_4, iv_4, st["th_4"], name_ead(b"", raw))), rid(address(i_seed)))
 
     reject("message_1-ead", "message_1 with one byte of EAD padding: v0 carries none", 1, f1 + b"\x00", as_responder)
     reject("message_1-suites", "message_1 offering suites [6, 0]", 1,
@@ -754,6 +816,18 @@ def build() -> dict:
     reject("message_3-ciphertext", "message_3 with a bit of CIPHERTEXT_3 flipped", 3, flip(f3, PREFIX + 12), as_responder_3)
     reject("message_4-ciphertext", "message_4 with a bit of its tag flipped", 4, flip(f4, len(f4) - 1), as_initiator_4)
 
+    # Names not in the one form. Each is sealed, and MACed, as its sender would, so only the check
+    # of the form refuses it.
+    for raw, key, what in [
+        (bytes([32]) + b"A" * 31, "long", "a length of 32"),
+        (bytes([4]) + b"RAK1" + bytes(26) + b"\x01", "padding", "a byte after the name that is not zero"),
+        (bytes([2]) + b"\xc3\x28" + bytes(29), "utf8", "a name that is not UTF-8"),
+    ]:
+        reject(f"message_3-name-{key}", f"message_3 whose name has {what}", 3, named_3(raw), as_responder_3)
+        reject(f"message_4-name-{key}", f"message_4 whose name has {what}", 4, named_4(raw), as_initiator_4)
+    old_4 = frame(4, f4[HEAD:PREFIX], b"\x48" + bytes(8), destination_of(f4))
+    reject("message_4-no-name", "message_4 of an earlier draft's form, carrying no name", 4, old_4, as_initiator_4)
+
     # message_3 that decrypts, but names a point of order 8 as the initiator's address. X25519 on
     # any small-order point gives all zeros, because its scalars are multiples of 8, so an
     # implementation that skipped the address check would still have to refuse it there.
@@ -761,7 +835,7 @@ def build() -> dict:
     k_3 = kdf(st_r["prk_3e2m"], 3, st_r["th_3"], KEY_LEN)
     iv_3 = kdf(st_r["prk_3e2m"], 4, st_r["th_3"], IV_LEN)
     bad = encode(small_order_points()[-1])
-    pt_3 = id_cred_i(bad) + cbor(bytes(MAC_LEN))
+    pt_3 = id_cred_i(bad) + cbor(bytes(MAC_LEN)) + name_ead(b"")
     f3_bad = frame(3, st_r["ctag"][3], cbor(seal(k_3, iv_3, st_r["th_3"], pt_3)), rid(address(r_seed)))
     reject("message_3-address", "message_3 that decrypts, naming a small-order address", 3, f3_bad, as_responder_3)
 
@@ -769,8 +843,8 @@ def build() -> dict:
     # G_IY for both, so the MAC is right: only the address check refuses it.
     g_iy = X25519.dh(det("y 0"), x25519_public(address(i_seed)))
     prk_4e3m = extract(kdf(st_r["prk_3e2m"], 5, st_r["th_3"], HASH_LEN), g_iy)
-    mac_3 = kdf(prk_4e3m, 6, id_cred_i(mixed) + cbor(st_r["th_3"]) + cred(mixed), MAC_LEN)
-    pt_3 = id_cred_i(mixed) + cbor(mac_3)
+    mac_3 = kdf(prk_4e3m, 6, id_cred_i(mixed) + cbor(st_r["th_3"]) + cred(mixed) + name_ead(b""), MAC_LEN)
+    pt_3 = id_cred_i(mixed) + cbor(mac_3) + name_ead(b"")
     f3_mixed = frame(3, st_r["ctag"][3], cbor(seal(k_3, iv_3, st_r["th_3"], pt_3)), rid(address(r_seed)))
     assert responder_receive_3(r_state(), f3_mixed, check_address=False) is not None
     reject("message_3-mixed-order", "message_3 from the initiator's own key, claiming its address plus a "
@@ -780,8 +854,8 @@ def build() -> dict:
     # address is valid; but MAC_3 needs G_IY from the claimed address's private key, which it does
     # not have, so it uses its own. Only the MAC_3 check refuses this.
     victim = address(other_seed)
-    mac_3 = kdf(prk_4e3m, 6, id_cred_i(victim) + cbor(st_r["th_3"]) + cred(victim), MAC_LEN)
-    pt_3 = id_cred_i(victim) + cbor(mac_3)
+    mac_3 = kdf(prk_4e3m, 6, id_cred_i(victim) + cbor(st_r["th_3"]) + cred(victim) + name_ead(b""), MAC_LEN)
+    pt_3 = id_cred_i(victim) + cbor(mac_3) + name_ead(b"")
     f3_imp = frame(3, st_r["ctag"][3], cbor(seal(k_3, iv_3, st_r["th_3"], pt_3)), rid(address(r_seed)))
     assert responder_receive_3(r_state(), f3_imp, check_mac=False) is not None
     reject("message_3-impersonation", "message_3 from the initiator, claiming the third node's address: it "

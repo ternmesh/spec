@@ -99,7 +99,7 @@ choices:
 | `ID_CRED_I` | `{14: CRED_I}`, the credential by value (`kccs`, RFC 9528 section 10.6), 46 bytes |
 | `ID_CRED_R` | `{4: h'00'}`, a `kid` that the initiator does not need to resolve, sent in its compact form, the one byte `0x00` |
 | `C_I`, `C_R` | one byte each, from `0x00` to `0x17` or `0x20` to `0x37`, so each is sent as one byte |
-| EAD | none, in any message |
+| EAD | in `message_3` and `message_4` only, one item each: a [name](#names) |
 | `message_4` | always sent |
 | Error messages | never sent |
 | `S` | `EDHOC_Exporter(32768, h'', 32)` |
@@ -113,8 +113,11 @@ The messages are then always these lengths, which a receiver checks:
 |---|---|---|
 | `message_1` | 37 | `h'03' \|\| h'00' \|\| h'5820' \|\| G_X \|\| C_I` |
 | `message_2` | 45 | `h'582b' \|\| G_Y \|\| CIPHERTEXT_2`, where `PLAINTEXT_2` is `C_R \|\| h'00' \|\| h'48' \|\| MAC_2` |
-| `message_3` | 65 | `h'583f' \|\| CIPHERTEXT_3`, where `PLAINTEXT_3` is `h'a10e' \|\| CRED_I \|\| h'48' \|\| MAC_3` |
-| `message_4` | 9 | `h'48' \|\| CIPHERTEXT_4` |
+| `message_3` | 101 | `h'5863' \|\| CIPHERTEXT_3`, where `PLAINTEXT_3` is `h'a10e' \|\| CRED_I \|\| h'48' \|\| MAC_3 \|\| EAD_3` |
+| `message_4` | 46 | `h'582c' \|\| CIPHERTEXT_4`, where `PLAINTEXT_4` is `EAD_4` |
+
+`EAD_3` and `EAD_4` are each a [name item](#names), 36 bytes, and are
+in `MAC_3`'s context and the transcript as RFC 9528 has any EAD.
 
 Each X25519 computation in the handshake, the ones RFC 9528 makes and
 the one below, MUST be checked for an all-zero result, and the handshake
@@ -130,7 +133,7 @@ aborted if it is one (RFC 7748, section 6.1; RFC 9528, section 9.2).
 | 15 | 4 | `source`: in `message_1`'s frame only |
 | 15, or 19 | 37, 45, 65 or 9 | `message_n` |
 
-So the four frames are exactly 56, 60, 80 and 24 bytes.
+So the four frames are exactly 56, 60, 116 and 61 bytes.
 
 `hdr` has format `01` (draft 0), type `010` (first contact), and as its
 flags the message number `n`, from 1 to 4. So it is `0x51`, `0x52`,
@@ -191,10 +194,11 @@ To contact the node with address `A_R`:
 3. On a frame with `hdr` `0x52` and `ctag_2`, it processes `message_2`
    as RFC 9528, section 5.3.3 requires, with
    `CRED_R = h'a108a101a301012006215820' || A_R`. It MUST reject a
-   `PLAINTEXT_2` other than the form above. It then sends `message_3`
-   in a frame with `ctag_3`.
+   `PLAINTEXT_2` other than the form above. It then sends `message_3`,
+   carrying its [name](#names) in `EAD_3`, in a frame with `ctag_3`.
 4. On a frame with `hdr` `0x54` and `ctag_4`, it processes `message_4`,
-   and on success derives `S`.
+   and on success derives `S` and reads the responder's name from
+   `EAD_4`. It MUST reject a `PLAINTEXT_4` other than one name item.
 
 The initiator MUST NOT send a unicast frame in the session before it
 has verified `message_4`.
@@ -212,10 +216,13 @@ has verified `message_4`.
    `source`.
 3. On a frame with `hdr` `0x53` and `ctag_3`, it processes `message_3`
    as RFC 9528, section 5.4.3 requires. It MUST reject a `PLAINTEXT_3`
-   other than the form above, and one whose `CRED_I` holds an invalid
-   address. The address in `CRED_I` is the initiator's.
-4. On success it sends `message_4` in a frame with `ctag_4`, to
-   `rid(A_I)`, and derives `S`.
+   other than the form above, one whose `CRED_I` holds an invalid
+   address, and one whose `EAD_3` is not a name item. The address in
+   `CRED_I` is the initiator's, and the name in `EAD_3` the one it
+   gives itself.
+4. If it takes the initiator, it sends `message_4`, carrying its own
+   name in `EAD_4`, in a frame with `ctag_4`, to `rid(A_I)`, and
+   derives `S`.
 
 Whether a node accepts contact from a given address is up to it. This
 section only establishes who the address is.
@@ -235,6 +242,44 @@ and its user's messages would wait.
 long as its user chooses. It can still begin first contact itself. It
 is the only way a node can keep strangers from making it send: it also
 keeps its contacts from reaching it, until it writes to them first.
+
+## Names
+
+Each end tells the other, inside the handshake, the name its user goes
+by, so that whoever makes contact need not ask "who is this?" and type
+a name in. A **name item** is an EAD item (RFC 9528, section 3.8) with
+`ead_label` `NAME_LABEL`, which is not critical, and an `ead_value`
+that is always a byte string of 32 bytes:
+
+| Offset | Bytes | |
+|---|---|---|
+| 0 | 1 | `n`, the name's length, 0 to 31 |
+| 1 | `n` | the name, UTF-8 |
+| 1 + `n` | 31 - `n` | zeros |
+
+so the item is `h'1874' || h'5820'` and those 32 bytes, 36 in all. A
+receiver MUST reject one with any other label or length, with `n` above
+31, with a byte after the name that is not zero, or whose name is not
+valid UTF-8. `n` of 0 is no name.
+
+The name is the one the node's user chose to be known by: the one its
+[cards](cards.md) carry, whether or not it sends cards, and empty unless
+the user gave one. A node MUST NOT put any other name in it, as
+[Cards](cards.md#sending) says of a card's.
+
+A name is a claim, as a card's is: `MAC_3` and the transcript prove
+that the node whose address it is chose it, not that it is true. A
+node keeps the name each end gave and tells its clients
+([`ASKED` and `CONTACT`](companion.md#who-may-make-first-contact)); a
+client shows it as the other's own, and never in the place of a name
+its user gave a contact unless the user takes it.
+
+Who learns it: `EAD_3` is sealed under `K_3`, which only the node the
+initiator set out to contact can compute, and that node learns the
+initiator's name whether or not it then takes the initiator, so that
+its user can decide knowing who asks. `EAD_4` goes only to an initiator
+the responder has taken, after `MAC_3` has proved who it is. An observer
+learns nothing: the item is always 32 bytes, whatever the name.
 
 ## Failures and repeats
 
@@ -311,6 +356,7 @@ secrecy the new handshake gave.
 | `CONTACT_HOLD` | 60 s | provisional |
 | `CONTACT_ANSWERS` | 4 | `message_2` frames in any `CONTACT_SPAN`; provisional |
 | `CONTACT_SPAN` | 10 min | provisional |
+| `NAME_LABEL` | 116 | the [name item](#names)'s `ead_label`; not registered with IANA |
 
 ## Conformance
 
@@ -327,12 +373,14 @@ An implementation conforms to this section if, for every case in
   as its sender sets them for a destination it hears;
 * **handshakes:** as the initiator, given `initiator_seed`, the address
   of `responder_seed`, and as test hooks `initiator_ephemeral` and
-  `c_i`, it sends `frames[0]`, then `frames[2]` on receiving
-  `frames[1]`, and on receiving `frames[3]` derives `session_secret`;
+  `c_i`, and naming itself `initiator_name`, it sends `frames[0]`,
+  then `frames[2]` on receiving `frames[1]`, and on receiving
+  `frames[3]` derives `session_secret` and reads `responder_name`;
   as the responder, given `responder_seed` and as test hooks
-  `responder_ephemeral` and `c_r`, it sends `frames[1]` on receiving
-  `frames[0]`, then `frames[3]` on receiving `frames[2]`, learning the
-  initiator's address, and derives `session_secret`;
+  `responder_ephemeral` and `c_r`, and naming itself `responder_name`,
+  it sends `frames[1]` on receiving `frames[0]`, then `frames[3]` on
+  receiving `frames[2]`, learning the initiator's address and
+  `initiator_name`, and derives `session_secret`;
 * **not for me:** given `responder_seed` and `frame`, it sends nothing;
 * **sources:** as the responder, given `responder_seed` and as test
   hooks `responder_ephemeral` and `c_r`, it sends `reply` on receiving
@@ -363,7 +411,8 @@ who hears a `message_1` knows that the node with one routing id is
 making first contact with the node with another, and anyone who knows
 both addresses knows which nodes those are. It does not learn either
 address from the frames, nor from the nodes' announces, nor anything
-the handshake carries.
+the handshake carries: the [names](#names) are sealed, and the same
+length whatever they are.
 
 A responder that refuses the initiator is silent after `message_3`, so
 an observer who hears three frames and no fourth may guess as much.
@@ -491,7 +540,32 @@ unicast frames.
 use. Tern will register a label of its own if the specification is
 published as a standard.
 
+**Why names in the handshake.** Without them, a person who makes
+contact from a link or a QR code has an address and twelve digits, and
+the person contacted has only "someone wants to talk", and each has to
+ask the other who they are and type a name in. The incumbents name
+nodes in broadcasts anyone hears, as their public documentation has it:
+Meshtastic's node information and MeshCore's adverts carry a node's
+name in clear. Here a name goes only to the node the other set out to
+contact, or took, sealed, so it costs no privacy that sharing the
+address did not. EDHOC's EAD is where RFC 9528 puts such data, and
+`message_3` and `message_4` are where it is sealed to a party already
+chosen; in `message_2` it would go to anyone who knew the address. The
+item is a fixed 32 bytes, padded, so that a name's length tells an
+observer nothing; it costs 36 bytes in each of two frames,
+of air each at SF9 and 500 kHz, about 41 ms.
+
+A node of an earlier draft refuses a `message_3` that carries a name,
+and one of this draft refuses a `message_4` that carries none, so first
+contact between the two fails. Sessions already made are unaffected.
+
 ## Not yet specified
+
+* **Registering `NAME_LABEL`** with IANA, which RFC 9528 asks of any
+  label from 24 to 65535 ("Specification Required"), once this section
+  is frozen.
+* **Telling contacts of a new name.** A node that changes its name says
+  so in its next first contact with each, and not before.
 
 * **Which settings first contact uses in each region.** Under a 400 ms
   dwell limit it needs SF8 or faster at 125 kHz, and under CN470's
