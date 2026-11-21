@@ -30,7 +30,7 @@ import sharing  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "companion.json"
 
-VERSION = 19
+VERSION = 20
 MAX_FRAME = 180
 MAGIC = b"\xf5\x54"
 STREAM_HEAD = 4  # magic and length
@@ -70,6 +70,7 @@ FRAMES = {
     0x12: ("FORGET", [("contact", ADDR), ("through", U32)]),
     0x13: ("MANAGE", [("ref", U32), ("to", ADDR), ("request", RAW, MANAGE_MAX)]),
     0x15: ("TRACE", [("ref", U32), ("to", U32)]),
+    0x16: ("LOOK", []),
     0x14: ("OWNER", [("address", ADDR), ("owner", U8)]),
     0x18: ("SAVE_CONTACT", [("address", ADDR), ("name", STR, NAME_MAX)]),
     0x19: ("REMOVE_CONTACT", [("address", ADDR)]),
@@ -202,6 +203,7 @@ TYPE_SINCE = {
     **{t: 16 for t in (0x12, 0x28, 0x96, 0x97)},  # forgetting
     **{t: 17 for t in (0x13, 0x14, 0x38, 0x98, 0x99)},  # managing
     **{t: 18 for t in (0x15, 0x9A, 0x9B)},  # how messages went, and traces
+    0x16: 20,  # asking for cards
 }
 
 # TRACED's result: answered by the node traced, by its keeper, by a relay with no route to it; not
@@ -762,6 +764,9 @@ def build():
         ("MANAGED", 45, {"from": BOB, "answer": pack([encode("OK", 7)])[0]}),
         ("CONTACT", 46, {"address": BOB, "session": 1, "name": "Bob", "wake": 0, "owner": 1}),
         ("TRACE", 52, {"ref": 0xC0FFEE20, "to": 0x1D2E3F40}),
+        ("LOOK", 53, {}),
+        ("ERROR", 53, {"code": 16}),
+        ("ASKED", 54, {"address": CAROL, "why": 1, "name": "Carol"}),
         ("ROUTE", 49, {"id": 17, "hops": 2, "snr": -38, "rssi": -112, "via": 0, "goes": 0,
                        "took": 0}),
         ("ROUTE", 50, {"id": 18, "hops": 1, "snr": 25, "rssi": -71, "via": 0x0A0B0C0D, "goes": 2,

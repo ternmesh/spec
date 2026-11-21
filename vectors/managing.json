@@ -1,5 +1,5 @@
 {
-  "description": "Managing a node over the mesh (draft/managing.md). A request is the content of a message for the node, its kind and one companion request; an answer is its kind and companion frames, each after a u8 length, packed in order into as few answers as fit. Companion frames are as vectors/companion.json has them, at version 19. Syncs are of a relay whose one contact is its owner, the first address, with no satellite receiver, awake: with three neighbours, and with twenty. Addresses are those of vectors/companion.json.",
+  "description": "Managing a node over the mesh (draft/managing.md). A request is the content of a message for the node, its kind and one companion request; an answer is its kind and companion frames, each after a u8 length, packed in order into as few answers as fit. Companion frames are as vectors/companion.json has them, at version 20. Syncs are of a relay whose one contact is its owner, the first address, with no satellite receiver, awake: with three neighbours, and with twenty. Addresses are those of vectors/companion.json.",
   "generator": "vectors/tools/managing.py",
   "parameters": {
     "OWNERS": 4,
@@ -14,8 +14,8 @@
   "requests": [
     {
       "why": "HELLO, at this version",
-      "frame": "010113",
-      "content": "05010113"
+      "frame": "010114",
+      "content": "05010114"
     },
     {
       "why": "a sync",
@@ -84,10 +84,10 @@
     {
       "why": "INFO",
       "frames": [
-        "420113147465726e20302e322e302068656c7465632d76330968656c7465632d763305302e322e3001"
+        "420114147465726e20302e322e302068656c7465632d76330968656c7465632d763305302e322e3001"
       ],
       "contents": [
-        "0629420113147465726e20302e322e302068656c7465632d76330968656c7465632d763305302e322e3001"
+        "0629420114147465726e20302e322e302068656c7465632d76330968656c7465632d763305302e322e3001"
       ]
     },
     {
@@ -259,6 +259,11 @@
       "allowed": false
     },
     {
+      "type": "LOOK",
+      "setting": null,
+      "allowed": false
+    },
+    {
       "type": "SAVE_CONTACT",
       "setting": null,
       "allowed": true
@@ -371,7 +376,7 @@
       ],
       "from": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
       "refused_s": null,
-      "request": "010113",
+      "request": "010114",
       "answer": "acts",
       "refusal": null
     },
@@ -381,7 +386,7 @@
       ],
       "from": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
       "refused_s": 0,
-      "request": "010113",
+      "request": "010114",
       "answer": "acts",
       "refusal": null
     },
@@ -391,7 +396,7 @@
       ],
       "from": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
       "refused_s": null,
-      "request": "010113",
+      "request": "010114",
       "answer": "refuses",
       "refusal": "060341010f"
     },
@@ -401,7 +406,7 @@
       ],
       "from": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
       "refused_s": 59,
-      "request": "010113",
+      "request": "010114",
       "answer": "nothing",
       "refusal": null
     },
@@ -411,7 +416,7 @@
       ],
       "from": "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
       "refused_s": 60,
-      "request": "010113",
+      "request": "010114",
       "answer": "refuses",
       "refusal": "060341010f"
     },
@@ -419,7 +424,7 @@
       "owners": [],
       "from": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
       "refused_s": null,
-      "request": "010113",
+      "request": "010114",
       "answer": "refuses",
       "refusal": "060341010f"
     },
@@ -431,7 +436,7 @@
       ],
       "from": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
       "refused_s": null,
-      "request": "010113",
+      "request": "010114",
       "answer": "acts",
       "refusal": null
     }
@@ -535,6 +540,10 @@
     },
     {
       "type": "TRACE",
+      "allowed": false
+    },
+    {
+      "type": "LOOK",
       "allowed": false
     },
     {
