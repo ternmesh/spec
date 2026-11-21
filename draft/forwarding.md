@@ -828,6 +828,14 @@ acknowledgement both ways would double what each costs to find what
 one case needs; trying direct first and then another way needs a hop
 listened for, which a last hop is not.
 
+Measured in the simulator, the firmware's core over the field test as
+a scenario (ternmesh/sim `scenarios/core/drive.tsim`, ten seeds, 250
+messages from the leaf): 228 arrived either way, through the relay that
+still heard it, and the leaf gave up 204 of its 250 before, 182 of them
+though they had arrived, against 101 and 79 after. The 79 left are
+acknowledgements the next relay sent the leaf too quietly, by a floor
+from when the leaf stood beside it.
+
 **Why 24 hops given up, and not 3.** In the simulator, forgetting a
 neighbour sooner delivered less with every node up and less with a
 quarter of the relays going down and coming back: at 3, 6 and 12 hops

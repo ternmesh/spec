@@ -1239,8 +1239,19 @@ A leaf taken out of use that has not moved costs what a link going
 down costs: the routes through it are not selected, a relay's Trickle
 starts again, and the relay asks after the leaf
 [patiently](#leaves-that-move). The leaf's next frame heard undoes it.
-Measured in the simulator: see the scenario `scenarios/core/drive.tsim`
-in [ternmesh/sim](https://github.com/ternmesh/sim).
+
+Measured in the simulator, the firmware's core run over the field test
+as a scenario (ternmesh/sim `scenarios/core/drive.tsim`: five relays,
+the leaf driven to where only one hears it, a message each way every
+four minutes for 100 minutes, ten seeds), this rule changed nothing:
+the relay gave `DEAD_HOPS` hops up, two to each message, and forgot the
+leaf before two of its promises had passed; one promise in place of two
+did no better. In eight seeds of ten no message reached the leaf after
+it left, before or after: the relay asked after it, and the requests
+went no further than the relay that still heard the leaf, which sent
+them at a floor from when the leaf was beside it, refreshed only by the
+leaf's routing frames. What the rule is for is a relay that sends a
+leaf fewer messages than that.
 
 **Signed announces, not a network key.** Unsigned, any radio can send
 an announce in another node's name: list routes it does not have, claim
@@ -1475,7 +1486,9 @@ specified](#not-yet-specified).
   moved re-attaches for answers lost.
 * **A leaf gone quiet, on radios**: how soon a relay takes a leaf that
   has driven away out of use, against the hour two promises can be, and
-  how often it takes out of use one that has not moved.
+  how often it takes out of use one that has not moved. In the
+  simulator's drive it never came first: `DEAD_HOPS` did, and a floor
+  gone stale at the next relay kept the repair from reaching the leaf.
 * **Why a crowded network with small tables does not always settle.**
   With 32 or 64 places at SF7, six hours on, some seeds still sent
   requests and five times the announces of the others.
