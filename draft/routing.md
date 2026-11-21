@@ -276,14 +276,35 @@ missing. The link is **up** once its margin is `LINK_MARGIN` or more,
 and stays up until it falls more than `LINK_BAND` below that, or the
 neighbour's margin is withdrawn.
 
+**Worse, never better.** A neighbour's floor and link are judged up or
+down by its announces, solicits, answers and polls, and by frames it
+[passes on](forwarding.md#hops). Some other frames are known to come
+from a neighbour too, [as Frames that follow routes
+says](forwarding.md#hops), though nothing in them is signed. From one
+of those, sent at `power` and heard with `snr`, a node takes a **worse
+sample**:
+
+```
+sample = power - (snr - SNR_FLOOR)
+floor  = (3 floor + sample) / 4          if sample > floor
+```
+
+and otherwise leaves the floor as it was. If the link was up, the node
+then judges it afresh, so that it goes down if its margin has fallen
+more than `LINK_BAND` below `LINK_MARGIN`; a link that is down stays
+down. A worse sample is nothing else: it is not a sign of life, it
+takes nothing off a boost, and it is not counted as hearing from the
+neighbour, for forgetting, for being [out of use](#leaves-that-move) or
+for anything else. A node MUST NOT lower a floor, or bring a link up,
+on any frame but those that judge a link both ways.
+
 A node MUST forget a neighbour, and every route through it, once it has
 heard nothing from it for `SILENT_MAX` and for two of its promises. A
 neighbour whose last announce made no promise is not forgotten for its
 silence, however long: it said it could not tell how long it would be.
 Silence is otherwise no signal here, announces being lost too often for
 it to be one. What tells of a neighbour that has gone is
-[frames sent to it and lost](forwarding.md#hops), and of a leaf, those
-and its silence together ([a leaf gone quiet](#leaves-that-move)).
+[frames sent to it and lost](forwarding.md#hops).
 
 **Numbers out of order.** An announce whose `number` is not newer than
 the last from the same sender is a copy, is late, or is recorded and
@@ -661,25 +682,6 @@ it keeps, offered by another neighbour a route to that leaf with a
 out of use: it has moved, and raised its `seq` where this node did not
 hear it.
 
-**A leaf gone quiet.** A node MUST take out of use a leaf neighbour
-whose link is up once both of these hold, as soon as the second comes
-to:
-
-* `SOLICIT_HOPS` [hops have been given up](forwarding.md#hops) in a row
-  there, with nothing heard from it between;
-* it has heard nothing from it for longer than two of its promises.
-
-A neighbour is a leaf here as its own last announce said. One whose
-last announce made no promise is never quiet so, however long it is
-silent, and the promise counts however long it is. A leaf that
-[sleeps](sleeping.md), by its last announce or poll, is never taken out
-of use so: its keeper holds what is for it and hands it over when it
-polls, and every other node reaches it through the keeper. As for any
-neighbour out of use, anything heard from the leaf brings it back into
-use. A relay's leaf neighbours are what this is for; a leaf takes its
-own leaf neighbours out of use by the same rule, and then reaches them
-as it reaches other nodes.
-
 **Routes to leaves, repaired patiently.** A relay that loses its
 selected route to a leaf, having announced one, MUST NOT retract it at
 once, nor ask at once. It is starved, whether or not it holds an
@@ -797,7 +799,7 @@ routing's frames.
 | `NUMBER_SAVE` | 256 | announce numbers a node stores ahead |
 | `FORGOTTEN_KEPT` | 64 | forgotten neighbours whose numbers a node keeps |
 | `SOLICIT_SPARSE` | 4 | relays a leaf hears, at most, where it solicits |
-| `SOLICIT_HOPS` | 3 | hops given up in a row at a relay before a leaf asks after it, and at a quiet leaf before it goes out of use |
+| `SOLICIT_HOPS` | 3 | hops given up in a row at a relay before a leaf asks after it |
 | `SOLICIT_GAP` | 60 s | between a leaf's solicits, but for the second of a pair |
 | `SOLICIT_WAIT` | 10 s | for a solicit's answers |
 | `SOLICIT_TRIES` | 3 | solicits in a row with no answer before a leaf waits for a relay new to it |
@@ -831,6 +833,11 @@ An implementation conforms to this section if, for
   with `full_power` names the neighbour with each `margin`;
 * **links:** from down, with its own margin and the neighbour's as
   given at each step, it holds the link `up` or not;
+* **worse:** keeping a neighbour with `floor_sixteenths`, the margin it
+  gave (`their_margin`) and its link up or not, with `full_power`, and
+  taking a worse sample from a frame sent at `power` and heard at
+  `snr_quarter_db` at `spreading_factor`, it holds `floor_after` and
+  its link `up_after`;
 * **named:** it takes a margin as withdrawn, or not, as `withdrawn`
   says, when the neighbour last named it in announce `named` and has
   now sent `number`, with `round`;
@@ -894,13 +901,6 @@ An implementation conforms to this section if, for
 * **elsewhere:** keeping a neighbour as given, whose own last announce
   gave `own_seq`, and offered a route to it at `offered_seq` by another
   neighbour, it holds that neighbour out of use or not as
-  `out_of_use_after` says;
-* **quiet:** as a relay or not (`as_relay`), keeping a neighbour, a
-  relay or not, a leaf that sleeps or not (`sleeps`), its link up or not
-  and out of use or not, last heard `heard_s` seconds ago against its
-  promise `promise_s` (`null` for none), having given `hops` hops up in
-  a row there, and then letting `later_s` seconds pass with nothing
-  heard, it holds that neighbour out of use or not as
   `out_of_use_after` says;
 * **samples:** keeping a neighbour as given (or none, where `kept` is
   false), and hearing from it the solicit or answer given, it holds the
@@ -1193,65 +1193,48 @@ against 80.5%. On the deployed preset, SF8 at 62.5 kHz, routes settled
 sooner: 77.6% of pairs held one six hours on, against 64.8%, on a tenth
 less airtime, and 95% either way at twelve.
 
-**A leaf gone quiet.** On the first field test (v0.7.0-alpha.3,
-2026-11-21) every board was started in one house, so every link began
-direct and strong, and then a leaf was driven 1 to 3 km away. The relay
-at the desk kept it as a neighbour in use for more than 35 minutes, its
-link up with 24 dB to spare by a floor last sampled in the house, and
-sent it everything direct at 10 dBm, while the leaf's own frames
-arrived through another relay. Nothing in the rules could change that:
-a relay's link to a leaf is refreshed only by the leaf's routing frames,
-which no longer reached it, and silence and lost hops took nothing out
-of use short of `DEAD_HOPS`. A relay takes a leaf out of use when it
-hears of the leaf's newer `seq` from elsewhere, but this leaf had not
-re-attached: it had heard the desk answer its solicits now and then.
+**Worse samples, and why only worse.** On the first field test
+(v0.7.0-alpha.3, 2026-11-21) every board started in one house, and a
+leaf was then driven away. A relay that still heard it kept a floor for
+it from when it stood beside it, 35 dB too low in the simulator's model
+of the drive (ternmesh/sim `scenarios/core/drive.tsim`), and sent it
+frames too quiet to arrive: requests for its `seq`, and
+acknowledgements on their last hop. The leaf's announces each moved the
+floor a quarter of the way, and came eight to twenty-five minutes
+apart. Frames that follow routes come far more often, but are not
+signed, and anyone in earshot can send one with any `power` in its
+head.
 
-`DEAD_HOPS` stays as it is: [fewer are no
-evidence](forwarding.md#hops), a busy channel losing far more frames
-than a dead neighbour does, and forgetting is not undone by the next
-frame heard. Out of use is: the link and the routes are kept, and the
-leaf's next announce or solicit brings it back. What a leaf already does
-to its relays is the model: `SOLICIT_HOPS` hops given up there take one
-out of use, while a solicit asks whether it is still there. A relay
-cannot ask a leaf, so the leaf's own silence stands in for the
-question: two of its promises without a frame from it is what a leaf
-takes as a relay gone quiet, and what forgetting asks for besides
-`SILENT_MAX`. Either alone is no evidence, three hops being lost to a
-busy channel in a few minutes and a promise to a lost announce or two;
-together they say that the leaf has missed what it promised and that
-frames sent to it are not arriving.
+So they may only make a link look worse. A frame sent in a
+neighbour's name can then make a node send to it louder, or take its
+link down and route round it, which a jammer near that neighbour can do
+already by making it lose frames. Making a link look better, which
+draws routes through it, still takes a signed announce, or frames the
+neighbour passes on. Where a frame's sender is not known for certain it
+gives nothing, and the head does not say who sent a frame, only who it
+is for.
 
-The promise counts however long it is. It is the leaf's own word for
-how long its silence is ordinary, and a shorter bound would take out of
-use a leaf that was only as quiet as it said it would be. On a profile
-at 500 kHz a leaf whose Trickle is at `I_MAX` promises up to about 36
-minutes, so a leaf that drives away is taken out of use some 70
-minutes after it was last heard, if frames have been lost to it; until
-then [acknowledgements go the way the
-message came](forwarding.md#messages), and
-only frames to the leaf are lost. A leaf that makes no promise is never
-silent, as for forgetting. A leaf that sleeps is left alone: its silence
-between announces is its sleep, its keeper holds what is for it rather
-than losing it, and a keeper that took it out of use would stop holding
-([Leaves that sleep](sleeping.md#holding)).
+A worse sample goes into the floor as an announce's does, a quarter of
+the way. Taking the sample itself, the worst heard, would let one
+deep fade set the floor: frames are lost to fades, and then sent at
+full power for a long while. A quarter of the way, a fade of `d` dB
+raises a floor by `d / 4`, and a link with `m` dB to spare goes down
+only on a fade deeper than `4 (m + LINK_BAND)`: some 50 dB for a link
+with 10 dB to spare, while a link that has truly fallen by that much
+gets there in a few frames. The `power` heard is what the frame was
+sent at, boost and all, so a neighbour sending louder to make up for
+its losses is not taken for a nearer one.
 
-A leaf taken out of use that has not moved costs what a link going
-down costs: the routes through it are not selected, a relay's Trickle
-starts again, and the relay asks after the leaf
-[patiently](#leaves-that-move). The leaf's next frame heard undoes it.
-
-Measured in the simulator, the firmware's core run over the field test
-as a scenario (ternmesh/sim `scenarios/core/drive.tsim`: five relays,
-the leaf driven to where only one hears it, a message each way every
-four minutes for 100 minutes, ten seeds), this rule changed nothing:
-the relay gave `DEAD_HOPS` hops up, two to each message, and forgot the
-leaf before two of its promises had passed; one promise in place of two
-did no better. In eight seeds of ten no message reached the leaf after
-it left, before or after: the relay asked after it, and the requests
-went no further than the relay that still heard the leaf, which sent
-them at a floor from when the leaf was beside it, refreshed only by the
-leaf's routing frames. What the rule is for is a relay that sends a
-leaf fewer messages than that.
+**No leaf gone quiet.** A rule was drafted for the same field test: a
+relay takes out of use a leaf it has lost `SOLICIT_HOPS` hops to and not
+heard from for two of its promises, as a leaf does to a relay that its
+solicits find gone. In the simulator's drive (ten seeds, a message each
+way every four minutes) it never acted. A leaf's promise at `I_MAX` is
+some half an hour, and the relay had given `DEAD_HOPS` hops up, two to a
+message, and forgotten the leaf before two had passed; with one promise
+it did no better. Forgetting was not what kept frames from the leaf:
+the floor at the relay that still heard it was, which worse samples
+mend. So it was left out.
 
 **Signed announces, not a network key.** Unsigned, any radio can send
 an announce in another node's name: list routes it does not have, claim
@@ -1484,11 +1467,6 @@ specified](#not-yet-specified).
 * **A leaf's busy share on radios**, against what the simulator gave.
 * **Leaves that move, on radios**, and how often a leaf that has not
   moved re-attaches for answers lost.
-* **A leaf gone quiet, on radios**: how soon a relay takes a leaf that
-  has driven away out of use, against the hour two promises can be, and
-  how often it takes out of use one that has not moved. In the
-  simulator's drive it never came first: `DEAD_HOPS` did, and a floor
-  gone stale at the next relay kept the repair from reaching the leaf.
 * **Why a crowded network with small tables does not always settle.**
   With 32 or 64 places at SF7, six hours on, some seeds still sent
   requests and five times the announces of the others.
@@ -1505,6 +1483,9 @@ specified](#not-yet-specified).
   and a relay carry that signature with the route only when the `seq`
   changes; and a node could stop using a neighbour whose frames are not
   acknowledged.
+* **Better from frames that follow routes.** A link that has truly
+  come back is judged so only by announces, solicits, answers, polls
+  and frames passed on.
 * **Signed requests.** A request names no sender, and anyone may send
   one. The most it can do is make a node take a newer `seq`, or send a
   request on, within the requests' share of [the cap](#the-cap).

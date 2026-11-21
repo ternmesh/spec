@@ -361,17 +361,6 @@ def given_up(relays, at, hops):
     return [x["out_of_use"] for x in relays], False, None, False
 
 
-def quiet(relay, sleeps, up, out, heard_s, promise_s, hops, later_s):
-    """Whether a node holds a neighbour out of use after giving `hops` hops up in a row there, the
-    neighbour last heard `heard_s` ago against its promise (None for none), and then `later_s`
-    passing with nothing heard: a leaf that does not sleep, whose link is up, goes out of use once
-    SOLICIT_HOPS hops are given up and it has been unheard for longer than two promises."""
-    if out:
-        return True
-    silent = promise_s is not None and heard_s + later_s > 2 * promise_s
-    return not relay and not sleeps and up and hops >= SOLICIT_HOPS and silent
-
-
 def heard_elsewhere(up, out, relay, own_seq, offered_seq, retracts):
     """Whether a node takes a neighbour out of use when another neighbour offers a route to it: it
     is a leaf whose link is up, and the route's seq is newer than its own announce gave."""
@@ -410,6 +399,15 @@ def link_next(up, mine, theirs):
         return False
     m = min(mine, 16 * (theirs - 128))
     return m >= (LINK_MARGIN - LINK_BAND if up else LINK_MARGIN)
+
+
+def worse(floor, theirs, up, full, power, snr_quarters, sf):
+    """A neighbour's floor and link after a worse sample: the sample goes into the floor only if it
+    is above it, and a link that was up is judged afresh; one that was down stays down."""
+    s = 16 * power - 4 * (snr_quarters - snr_floor_quarters(sf))
+    if s > floor:
+        floor = (3 * floor + s) // 4
+    return floor, up and link_next(True, 16 * full - floor, theirs)
 
 
 def withdrawn(named, number, round_):
@@ -1096,6 +1094,25 @@ def build():
         return {"relay": is_relay, "up": up, "out_of_use": out, "margin_sixteenths": margin,
                 "heard_s": heard, "promise_s": promise}
 
+    worse_ = []
+    for why, floor, theirs, up, power, snr in [
+        ("worse: a quarter of the way", 16 * -20, 200, True, 22, 0),
+        ("better: nothing", 16 * 10, 200, True, 22, 40),
+        ("as good: nothing", 16 * 2, 200, True, 22, 30),  # the sample is the floor exactly
+        # heard below the profile's floor, as the field test's -13.5 dB at SF9
+        ("down, past the band", 396, 200, True, 22, -66),
+        ("just within the band", 396, 200, True, 22, -65),
+        ("a down link stays down, however good the frame", 16 * -20, 200, False, 22, 200),
+        ("a down link takes a worse sample all the same", 16 * -20, 200, False, 22, 0),
+        ("one deep fade does not take a good link down", 16 * 2, 200, True, 22, -50),
+        ("the power heard is the boosted power sent", 16 * -10, 200, True, 7, -20),
+        ("the neighbour's margin as well as this node's", 16 * -20, 125, True, 22, 0),
+    ]:
+        f, u = worse(floor, theirs, up, 22, power, snr, 9)
+        worse_.append({"why": why, "floor_sixteenths": floor, "their_margin": theirs, "up": up,
+                       "full_power": 22, "power": power, "snr_quarter_db": snr,
+                       "spreading_factor": 9, "floor_after": f, "up_after": u})
+
     anchors = []
     for rs in [
         [relay(True, False, 80, 100, 600), relay(True, False, 160, 100, 600)],
@@ -1227,29 +1244,6 @@ def build():
         ]
     ]
 
-    quiet_ = []
-    for as_relay, rl, sleeps, up, out, heard_s, promise_s, hops, later_s in [
-        (True, False, False, True, False, 2101, 1050, 3, 0),  # the field test's: quiet and lost
-        (True, False, False, True, False, 2100, 1050, 3, 0),  # two promises exactly: not yet
-        (True, False, False, True, False, 2101, 1050, 2, 0),  # two hops: not yet
-        (True, False, False, True, False, 300, 1050, 3, 0),  # heard lately: lost hops alone
-        (True, False, False, True, False, 300, 1050, 3, 1801),  # and then quiet long enough
-        (True, False, False, True, False, 300, 1050, 3, 1800),  # one second short
-        (True, False, False, True, False, 300, 1050, 24, 0),  # many hops, heard lately
-        (True, False, False, True, False, 99999, None, 3, 0),  # promised nothing: never quiet
-        (True, False, False, True, False, 99999, 32767, 3, 0),  # a long promise counts
-        (True, False, True, True, False, 99999, 1050, 3, 0),  # a leaf that sleeps: never
-        (True, True, False, True, False, 2101, 1050, 3, 0),  # a relay: never so
-        (True, False, False, False, False, 2101, 1050, 3, 0),  # a link down is not in use anyway
-        (True, False, False, True, True, 10, 1050, 0, 0),  # out of use already, it stays so
-        (False, False, False, True, False, 2101, 1050, 3, 0),  # a leaf's leaf neighbour too
-    ]:
-        quiet_.append(
-            {"as_relay": as_relay, "relay": rl, "sleeps": sleeps, "up": up, "out_of_use": out,
-             "heard_s": heard_s, "promise_s": promise_s, "hops": hops, "later_s": later_s,
-             "out_of_use_after": quiet(rl, sleeps, up, out, heard_s, promise_s, hops, later_s)}
-        )
-
     samples = []
     for row in [
         # a leaf hears its relay's answer: the margin given, and the link up at once
@@ -1369,11 +1363,10 @@ def build():
         "in_use_again, a node keeps a neighbour out of use and hears from it what heard says: an "
         "announce it takes, one it discards (as a copy, by its number), a frame the neighbour "
         "passed on, a solicit or an answer; out_of_use_after is whether it is then out of use. In "
-        "quiet, a node, a relay or not (as_relay), keeps a neighbour, a relay or not, a leaf that "
-        "sleeps or not, its link up or not and out of use or not, last heard heard_s seconds ago "
-        "against its promise promise_s (null for none); it gives hops hops up in a row there, and "
-        "then later_s seconds pass with nothing heard; out_of_use_after is whether it is then out "
-        "of use.",
+        "worse, a node keeps a neighbour with floor_sixteenths, the margin it gave "
+        "(their_margin, a margin byte) and its link up or not, its own full power full_power, and "
+        "takes a worse sample from a frame sent at power and heard at snr_quarter_db at "
+        "spreading_factor: floor_after and up_after are its floor and link then.",
         "generator": "vectors/tools/routing.py",
         "ids": ids,
         "no_ids": no_ids,
@@ -1396,6 +1389,7 @@ def build():
         "verified": verified,
         "floors": floors,
         "links": links,
+        "worse": worse_,
         "named": named,
         "places": places,
         "numbering": numbered,
@@ -1412,7 +1406,6 @@ def build():
         "powers": powers,
         "given_up": given,
         "elsewhere": elsewhere,
-        "quiet": quiet_,
         "samples": samples,
         "in_use_again": again,
     }
