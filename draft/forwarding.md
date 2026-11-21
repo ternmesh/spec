@@ -251,9 +251,18 @@ that sent it. A node knows the sender of a frame it hears only:
   hop: that destination, which made it;
 * of a message for this node whose `hops` is `HOP_MAX`, which it accepts
   or takes as a [copy](#messages): its source, whose session says who it
-  is.
+  is;
+* of a message passed on to this node whose `hops` was `HOP_MAX`: its
+  source, which this node learns only when an acknowledgement with the
+  message's `tag` comes back for it to pass on to its destination, that
+  source, as the next hop.
 
-From each of the last two, if it keeps the sender as a neighbour, a node
+A relay passing such an acknowledgement on SHOULD send it no quieter
+than that message's source needed, by the one frame it heard
+([How loud](#sending)), if it still holds what that was: the source
+listens for it, and the relay's floor for it may be from long ago.
+
+From each of the last three, if it keeps the sender as a neighbour, a node
 takes a [worse sample](routing.md#links), which can make the link look
 worse and never better. From any other frame it takes nothing of the
 link.
@@ -400,9 +409,11 @@ relay does, and counts that as a try, waiting `ACK_WAIT`.
 Once a message is acknowledged or given up, nothing of it goes on the
 air from its source again.
 
-A source that has sent a message to the same neighbour more than
-`HOP_RETRIES` times, over however many tries, and never heard it passed
-on, counts that as a hop given up.
+A try whose first hop never succeeded — nothing heard passed on, no
+acknowledgement, no held notice — counts as a hop given up at that
+neighbour, as any other: it raises the boost, and counts toward
+`SOLICIT_HOPS` and `DEAD_HOPS`. A try is two sends at rising power and
+a wait of a few journeys, what a hop's own sends are.
 
 **First contact.** The node that begins a handshake keeps each of its
 two frames as a source keeps a message, with the next frame of the
@@ -893,9 +904,14 @@ instead may be infeasible, as the route through another relay to a
 relay's own leaf most often is. As for an acknowledgement (above), only
 the first hop is chosen so, and the relays pass it on by their selected
 routes, which cannot loop; at worst it reaches the source again, which
-holds the same frame and ignores it, and the try is lost. Nothing is
-forgotten or taken out of use for it: which way the next try goes is
-all that changes, and the hop given up is counted as before.
+holds the same frame and ignores it, and the try is lost. As first written the next try avoided the last neighbour and
+nothing else changed, and in the simulator's drive that did harm: with
+tries alternating between two neighbours, no neighbour was ever sent
+the message more than `HOP_RETRIES` times, so no hop was ever counted
+given up, no boost rose, and a leaf never reached `SOLICIT_HOPS` at the
+relay it had left, so never solicited, which is what had mended its
+floor for the relay it now needed. So a try unheard is a hop given up.
+Forgetting still takes `DEAD_HOPS` of them, with nothing heard between.
 
 **Why 24 hops given up, and not 3.** In the simulator, forgetting a
 neighbour sooner delivered less with every node up and less with a
