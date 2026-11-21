@@ -253,6 +253,25 @@ def self_check():
     assert receiving(9, 500_000, late, 325_768_000) and not receiving(9, 500_000, late, 365_768_000)
 
 
+def ack_next(hops, leaf, nearest, source, routes, selected):
+    """Where a message's destination sends its acknowledgement: the neighbour, or None. routes are
+    the routes it holds to the message's source, selected the index of the one selected or None,
+    and nearest a leaf's nearest relay, if it takes default routes, or None."""
+    chosen = routes[selected]["next"] if selected is not None else None
+    if chosen is None and leaf and nearest is not None:
+        chosen = nearest  # a default route is a route
+    if chosen is not None and not (chosen == source and hops < HOP_MAX):
+        return chosen
+    around = sorted((r["metric"], r["next"]) for r in routes
+                    if r["relay"] and r["usable"] and r["next"] != source)
+    if around:
+        assert len(around) == 1 or around[0][0] != around[1][0], "the vectors leave no tie to break"
+        return around[0][1]
+    if leaf and nearest is not None:
+        return nearest
+    return chosen
+
+
 def build():
     self_check()
     heads = []
@@ -494,6 +513,40 @@ def build():
 
     listens = [c for sf, bw in [(9, 500_000), (7, 125_000), (12, 125_000)] for c in listen_cases(sf, bw)]
 
+    source, desk_relay, other_relay = 0x0A0B0C0D, 0x1D2E3F40, 0x2A4A0644
+
+    def rt(nxt, relay, usable, feasible, metric):
+        return {"next": nxt, "relay": relay, "usable": usable, "feasible": feasible,
+                "metric": metric}
+
+    direct = rt(source, False, True, True, 70)
+    via = rt(desk_relay, True, True, False, 140)
+    via_far = rt(other_relay, True, True, False, 210)
+    acked = []
+    for why, hops_at, leaf, nearest, routes, selected in [
+        ("the field test's: direct selected, the message passed on by a relay", 31, False, None,
+         [direct, via], 0),
+        ("the message came direct: the selected route", 32, False, None, [direct, via], 0),
+        ("of two relays, the lower metric", 30, False, None, [direct, via_far, via], 0),
+        ("no relay to go by: direct as before", 31, False, None, [direct], 0),
+        ("a relay it may not use is not gone by", 31, False, None,
+         [direct, rt(desk_relay, True, False, False, 140)], 0),
+        ("the selected route is through a relay already", 31, False, None,
+         [rt(desk_relay, True, True, True, 140), rt(other_relay, True, True, True, 70)], 0),
+        ("no route selected: an infeasible one through a relay", 31, False, None,
+         [rt(source, False, False, True, 70), via], None),
+        ("no route selected and none through a relay: none", 31, False, None,
+         [rt(source, False, False, True, 70)], None),
+        ("as a leaf: a relay's route held", 31, True, other_relay, [direct, via], 0),
+        ("as a leaf with none: its nearest relay", 31, True, other_relay, [direct], 0),
+        ("as a leaf with no route selected: its default route", 31, True, other_relay,
+         [rt(source, False, False, True, 70), via], None),
+        ("as a leaf that takes no default route: direct", 31, True, None, [direct], 0),
+    ]:
+        acked.append({"why": why, "hops": hops_at, "leaf": leaf, "nearest": nearest,
+                      "source": source, "routes": routes, "selected": selected,
+                      "next_after": ack_next(hops_at, leaf, nearest, source, routes, selected)})
+
     return {
         "description": "Frames that follow routes, draft 0 (draft/forwarding.md). Routing ids "
         "are numbers; frames and tags are hex. In hops, sent is the frame the node sent and "
@@ -517,7 +570,12 @@ def build():
         "that spreading factor and bandwidth finds a preamble or a header, says a frame has ended "
         "(end), or is given a frame to send (sent) at the times in events, and receiving is "
         "whether a node may not start to send at each time in asks, every event at or before "
-        "that time having happened.",
+        "that time having happened. In acknowledged, a message arrived with hops at its "
+        "destination, a leaf or not, whose nearest relay is nearest if it is a leaf that takes "
+        "default routes (null for none); routes are the routes it holds to the message's source, "
+        "each through the neighbour next, a relay or not, that it may use or not, feasible or not, "
+        "with its metric, and selected the index of the one selected (null for none); next_after "
+        "is the neighbour it sends the acknowledgement to (null for none).",
         "generator": "vectors/tools/forwarding.py",
         "heads": heads,
         "rejected": rejected,
@@ -529,6 +587,7 @@ def build():
         "powers": powers,
         "agains": agains,
         "listens": listens,
+        "acknowledged": acked,
     }
 
 

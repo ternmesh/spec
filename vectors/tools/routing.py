@@ -361,6 +361,17 @@ def given_up(relays, at, hops):
     return [x["out_of_use"] for x in relays], False, None, False
 
 
+def quiet(relay, sleeps, up, out, heard_s, promise_s, hops, later_s):
+    """Whether a node holds a neighbour out of use after giving `hops` hops up in a row there, the
+    neighbour last heard `heard_s` ago against its promise (None for none), and then `later_s`
+    passing with nothing heard: a leaf that does not sleep, whose link is up, goes out of use once
+    SOLICIT_HOPS hops are given up and it has been unheard for longer than two promises."""
+    if out:
+        return True
+    silent = promise_s is not None and heard_s + later_s > 2 * promise_s
+    return not relay and not sleeps and up and hops >= SOLICIT_HOPS and silent
+
+
 def heard_elsewhere(up, out, relay, own_seq, offered_seq, retracts):
     """Whether a node takes a neighbour out of use when another neighbour offers a route to it: it
     is a leaf whose link is up, and the route's seq is newer than its own announce gave."""
@@ -1216,6 +1227,29 @@ def build():
         ]
     ]
 
+    quiet_ = []
+    for as_relay, rl, sleeps, up, out, heard_s, promise_s, hops, later_s in [
+        (True, False, False, True, False, 2101, 1050, 3, 0),  # the field test's: quiet and lost
+        (True, False, False, True, False, 2100, 1050, 3, 0),  # two promises exactly: not yet
+        (True, False, False, True, False, 2101, 1050, 2, 0),  # two hops: not yet
+        (True, False, False, True, False, 300, 1050, 3, 0),  # heard lately: lost hops alone
+        (True, False, False, True, False, 300, 1050, 3, 1801),  # and then quiet long enough
+        (True, False, False, True, False, 300, 1050, 3, 1800),  # one second short
+        (True, False, False, True, False, 300, 1050, 24, 0),  # many hops, heard lately
+        (True, False, False, True, False, 99999, None, 3, 0),  # promised nothing: never quiet
+        (True, False, False, True, False, 99999, 32767, 3, 0),  # a long promise counts
+        (True, False, True, True, False, 99999, 1050, 3, 0),  # a leaf that sleeps: never
+        (True, True, False, True, False, 2101, 1050, 3, 0),  # a relay: never so
+        (True, False, False, False, False, 2101, 1050, 3, 0),  # a link down is not in use anyway
+        (True, False, False, True, True, 10, 1050, 0, 0),  # out of use already, it stays so
+        (False, False, False, True, False, 2101, 1050, 3, 0),  # a leaf's leaf neighbour too
+    ]:
+        quiet_.append(
+            {"as_relay": as_relay, "relay": rl, "sleeps": sleeps, "up": up, "out_of_use": out,
+             "heard_s": heard_s, "promise_s": promise_s, "hops": hops, "later_s": later_s,
+             "out_of_use_after": quiet(rl, sleeps, up, out, heard_s, promise_s, hops, later_s)}
+        )
+
     samples = []
     for row in [
         # a leaf hears its relay's answer: the margin given, and the link up at once
@@ -1334,7 +1368,12 @@ def build():
         "heard_first says whether the leaf heard from it in the first solicit of the pair. In "
         "in_use_again, a node keeps a neighbour out of use and hears from it what heard says: an "
         "announce it takes, one it discards (as a copy, by its number), a frame the neighbour "
-        "passed on, a solicit or an answer; out_of_use_after is whether it is then out of use.",
+        "passed on, a solicit or an answer; out_of_use_after is whether it is then out of use. In "
+        "quiet, a node, a relay or not (as_relay), keeps a neighbour, a relay or not, a leaf that "
+        "sleeps or not, its link up or not and out of use or not, last heard heard_s seconds ago "
+        "against its promise promise_s (null for none); it gives hops hops up in a row there, and "
+        "then later_s seconds pass with nothing heard; out_of_use_after is whether it is then out "
+        "of use.",
         "generator": "vectors/tools/routing.py",
         "ids": ids,
         "no_ids": no_ids,
@@ -1373,6 +1412,7 @@ def build():
         "powers": powers,
         "given_up": given,
         "elsewhere": elsewhere,
+        "quiet": quiet_,
         "samples": samples,
         "in_use_again": again,
     }

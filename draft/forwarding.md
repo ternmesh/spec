@@ -259,7 +259,8 @@ Feasible routes cannot lead back. A leaf with no such route that takes
 to its nearest relay it has not given this frame up at, in the same way
 and within the same `SALVAGE`. An acknowledgement, a trace and a trace
 answer are not sent another way: a trace shows the route a node has
-selected, and one sent another way would show another.
+selected, and one sent another way would show another. Which way an
+acknowledgement goes first is [below](#messages).
 
 ## Messages
 
@@ -268,6 +269,29 @@ selected, and one sent another way would show another.
 answers with an acknowledgement to the node it came from, which it
 knows from the session the tag belongs to. It answers copies too, as
 below: an acknowledgement is one frame, and as easily lost as any.
+
+**Which way the acknowledgement goes.** It goes by the destination's
+[selected route](routing.md#selecting-a-route) to the message's source,
+as any frame, but in two cases. In them it goes instead by the route
+the destination holds to the source through a relay neighbour it may
+[use](routing.md#roles), other than the source, with the lowest metric,
+whether or not that route is
+[feasible](routing.md#selecting-a-route); of two as low, either. A
+leaf that holds no such route, and takes
+[default routes](routing.md#a-leafs-default-route), sends it to its
+nearest relay. The two cases:
+
+* the selected route's neighbour is the source itself, and the message
+  arrived with `hops` below `HOP_MAX`: a relay passed it on, so the
+  source did not send it here direct;
+* the destination has no route to the source it may use, and none it
+  takes by default.
+
+With no such route either, it goes as it would have: by the selected
+route, or, with none, not at all. A keeper's acknowledgement to a
+[sleeping leaf it keeps](sleeping.md#holding) goes as that section
+says, and not by this. Only the acknowledgement's first hop is chosen
+so: a relay passes it on by its own selected route, as any frame.
 
 **A copy** is a message frame that the destination does not accept, of
 the same length and `hdr` as a message it has accepted, in any session
@@ -532,6 +556,15 @@ An implementation conforms to this section if, for
   event at or before that time having happened, that it may not start
   to send, or may, as `receiving` says.
 
+* **acknowledged:** as the destination of a message that arrived with
+  `hops`, a leaf or not (`leaf`), with `nearest` its nearest relay if
+  it is a leaf that takes default routes (`null` for none), holding
+  the `routes` given to the message's `source`, each through the
+  neighbour `next`, a relay or not, that it may use or not
+  (`usable`), feasible or not, with its `metric`, and `selected`
+  the index of the one selected (`null` for none), it sends the
+  acknowledgement to `next_after` (`null` for none).
+
 and, for
 [`vectors/unicast-security.json`](../vectors/unicast-security.json),
 which holds the cases that need a session's keys:
@@ -762,6 +795,39 @@ that sleeps waits with its keeper, and one to a destination a relay has
 no route to dies there. Those are the two places a person most needs
 to see, and a trace that went unanswered would show neither.
 
+**Why an acknowledgement may go another way.** On the first field test
+(v0.7.0-alpha.3, 2026-11-21) a leaf driven away from a relay sent it a
+message through another relay, two hops, which arrived well. The relay
+it was for still held the leaf as a neighbour up, from before it left
+([a leaf gone quiet](routing.md#leaves-that-move)), and sent the
+acknowledgement direct, by its selected route. It was lost, and the
+leaf sent the message again. An acknowledgement's last hop is not
+listened for, so the relay never knew, and an acknowledgement is not
+sent another way when a hop is given up. The leaf had told the relay as
+much: a source whose route to a neighbour goes direct sends direct, and
+this one had routed round.
+
+The route the acknowledgement takes instead may be infeasible, as the
+route through another relay to a neighbour's leaf most often is. It
+cannot loop. Only its first hop is chosen so; the relay passes it on by
+its own selected route, and routes selected cannot loop. At worst that
+route leads back to this node, which passes it on by its own selected
+route, so it costs a few hops of one 19-byte frame, within `HOP_MAX`.
+No table changes, so no route is drawn anywhere.
+
+The head says nothing of the node a frame came from, and a field for it
+would cost four bytes in every frame and be no more authenticated than
+`hops` is. `hops` is enough to say that a relay passed the message on.
+It is not authenticated either. A relay on the way that leaves `hops`
+at `HOP_MAX` sends the acknowledgement by the selected route, as before.
+A node that sends the message again with `hops` lowered sends a
+[copy](#messages), which is acknowledged at most `COPY_ACKS` times
+and for `COPY_TIME`, each now by a relay: the most it can cost is a
+few acknowledgements' airtime over a longer way. Sending every
+acknowledgement both ways would double what each costs to find what
+one case needs; trying direct first and then another way needs a hop
+listened for, which a last hop is not.
+
 **Why 24 hops given up, and not 3.** In the simulator, forgetting a
 neighbour sooner delivered less with every node up and less with a
 quarter of the relays going down and coming back: at 3, 6 and 12 hops
@@ -794,5 +860,10 @@ dead found sooner.
   the channel is full.
 * **Frames for every node** are [their own section](flooding.md), and
   follow no route.
+* **First-contact answers the way the frame came.** A handshake's
+  answer to a source that routed round a stale direct link meets what
+  an acknowledgement met on the field test; it is sent another way
+  when its hop is given up, but only by a feasible route, and its last
+  hop is not listened for.
 * **Fragments**: a message is one frame.
 * **Priority** between messages.
