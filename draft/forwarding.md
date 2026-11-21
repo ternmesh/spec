@@ -879,12 +879,18 @@ one case needs; trying direct first and then another way needs a hop
 listened for, which a last hop is not.
 
 Measured in the simulator, the firmware's core over the field test as
-a scenario (ternmesh/sim `scenarios/core/drive.tsim`, ten seeds, 250
-messages from the leaf): 228 arrived either way, through the relay that
-still heard it, and the leaf gave up 204 of its 250 before, 182 of them
-though they had arrived, against 101 and 79 after. The 79 left are
-acknowledgements the next relay sent the leaf too quietly, by a floor
-from when the leaf stood beside it.
+a scenario (ternmesh/sim `scenarios/core/drive.tsim`, ten seeds, a
+message each way every four minutes for 100 minutes), with this, the
+next try another way and worse samples together, against the firmware
+before them:
+
+| | before | after |
+|---|---|---|
+| both ways at once: delivered, of 500 | 275 | 431 |
+| both ways at once: given up by their sources | 407 | 122 |
+| from the leaf alone: delivered, of 250 | 228 | 236 |
+| from the leaf alone: given up though delivered | 182 | 81 |
+| to the leaf alone: delivered, of 250 | 47 | 89 |
 
 **Why a source's next try avoids its last first hop.** A source waits
 `ACK_WAIT` plus a few journeys for its acknowledgement, some five

@@ -1233,8 +1233,10 @@ way every four minutes) it never acted. A leaf's promise at `I_MAX` is
 some half an hour, and the relay had given `DEAD_HOPS` hops up, two to a
 message, and forgotten the leaf before two had passed; with one promise
 it did no better. Forgetting was not what kept frames from the leaf:
-the floor at the relay that still heard it was, which worse samples
-mend. So it was left out.
+a source sending every try the same stale way was, and the floor at the
+relay that still heard it, which [a source's next
+try](forwarding.md#messages) and worse samples address. So it was left
+out.
 
 **Signed announces, not a network key.** Unsigned, any radio can send
 an announce in another node's name: list routes it does not have, claim
