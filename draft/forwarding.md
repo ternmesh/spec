@@ -296,16 +296,22 @@ answers with an acknowledgement to the node it came from, which it
 knows from the session the tag belongs to. It answers copies too, as
 below: an acknowledgement is one frame, and as easily lost as any.
 
+**A route round a neighbour.** A node's **route round** a neighbour `X`
+to a destination is, of the routes it holds to the destination through
+neighbours it may [use](routing.md#roles) other than `X`, whether or
+not they are [feasible](routing.md#selecting-a-route): one through a
+neighbour at which no [hop has been given up](#hops) since it last
+heard from it, if there is one; of those, the one with the lowest
+metric; of two as low, either. A leaf that holds none, and takes
+[default routes](routing.md#a-leafs-default-route), takes its nearest
+relay other than `X`. A route round no neighbour is the same with no
+`X`. Only a frame's first hop is ever chosen so: the relays pass it on
+by their own selected routes.
+
 **Which way the acknowledgement goes.** It goes by the destination's
 [selected route](routing.md#selecting-a-route) to the message's source,
-as any frame, but in two cases. In them it goes instead by the route
-the destination holds to the source through a relay neighbour it may
-[use](routing.md#roles), other than the source, with the lowest metric,
-whether or not that route is
-[feasible](routing.md#selecting-a-route); of two as low, either. A
-leaf that holds no such route, and takes
-[default routes](routing.md#a-leafs-default-route), sends it to its
-nearest relay. The two cases:
+as any frame, but in two cases. In them it goes instead by the
+destination's route round the source. The two cases:
 
 * the selected route's neighbour is the source itself, and the message
   arrived with `hops` below `HOP_MAX`: a relay passed it on, so the
@@ -390,21 +396,17 @@ by then it starts the message again — the same frame, with `hops` at
 copy before, and [not at once](#hops) — up to `RETRIES` times. If no
 hop of the try that ended succeeded at its first neighbour — nothing
 heard passed on, no acknowledgement, no held notice — the next try
-avoids that neighbour: it goes by the route the source holds to the
-destination through another neighbour it may
-[use](routing.md#roles), with the lowest metric, whether or not that
-route is
-[feasible](routing.md#selecting-a-route), of two as low either; a leaf
-with none that takes [default routes](routing.md#a-leafs-default-route)
-goes to its nearest relay but that one; with neither, by the route it
-has. Only the try's first hop is chosen so. After
+avoids that neighbour: it goes by the source's route round it, and
+with none, by the route it has. After
 the last wait it **gives the message up** and tells the application.
 A message given up counts toward
 [starting the session again](unicast-security.md#starting-again).
 
 A source with no route, and none it takes
 [by default](routing.md#a-leafs-default-route), asks for one, as a
-relay does, and counts that as a try, waiting `ACK_WAIT`.
+relay does. Meanwhile, each try goes by its route round no neighbour,
+if it holds one; with none, it counts asking as a try, waiting
+`ACK_WAIT`.
 
 Once a message is acknowledged or given up, nothing of it goes on the
 air from its source again.
@@ -918,6 +920,21 @@ given up, no boost rose, and a leaf never reached `SOLICIT_HOPS` at the
 relay it had left, so never solicited, which is what had mended its
 floor for the relay it now needed. So a try unheard is a hop given up.
 Forgetting still takes `DEAD_HOPS` of them, with nothing heard between.
+
+Measured as first written, the next try took the lowest metric of the
+other routes, and in four seeds of ten the relay at the desk never
+reached the leaf. It still held routes to the leaf through the relays on
+the hill, learnt while everyone was in one house, through links it had
+not heard since and still held up; they tied on metric with the route
+through the relay that could reach the leaf, and came first. Tries then
+went back and forth between the leaf and a relay on the hill, and never
+by the one that worked. A neighbour that frames have been lost to since
+it was last heard is the one a stale link leads to, so a route round
+prefers the others; that counter is kept for `DEAD_HOPS` already. And
+once the desk had given `DEAD_HOPS` hops up at the leaf and forgotten it,
+it held no route it might select and only asked, though the route
+through the patio was still there: so a source with no route sends by
+its route round no neighbour while it asks.
 
 **Why 24 hops given up, and not 3.** In the simulator, forgetting a
 neighbour sooner delivered less with every node up and less with a
