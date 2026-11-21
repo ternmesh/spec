@@ -37,6 +37,9 @@ CARD_HOPS = 2
 NEUTRAL = bytes([1]) + bytes(31)  # the encoding of the neutral point, RFC 8032 5.1.2
 ORDER_8 = bytes.fromhex("26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05")
 FLOOD_HOPS = 5
+ASK = 0x69  # format 01, type 101 (card), flags 001: an ask, the whole frame
+CARD_SOON = 900  # seconds: a node answers no ask within this long of its last card
+ASK_GAP = 600  # seconds: a node asks no more often than this
 
 
 def self_check():
@@ -271,6 +274,33 @@ def build():
             held[addr] = num
         deliveries.append({"frame": frame.hex(), "keep": keep})
 
+    # Asking. A node with cards on answers an ask with a card, unless one of its own went on the
+    # air less than CARD_SOON before; a card it sends for any reason counts. Here its cards are
+    # sent at the times given, and asks are heard at the others.
+    last = None
+    answers = []
+    for kind, at in [("card", 0), ("ask", 60), ("ask", 899), ("ask", 900), ("ask", 910),
+                     ("card", 2000), ("ask", 2100), ("ask", 3000), ("ask", 3100)]:
+        if kind == "card":
+            last = at
+            answers.append({"at_s": at, "event": "card"})
+            continue
+        answered = last is None or at - last >= CARD_SOON
+        if answered:
+            last = at
+        answers.append({"at_s": at, "event": "ask", "answered": answered})
+    assert [a.get("answered") for a in answers if a["event"] == "ask"] == [False, False, True, False, False, True, False]
+
+    # A node asks when its user asks it to, and no more often than ASK_GAP.
+    sent_at = None
+    asking = []
+    for at in [0, 30, 599, 600, 700, 1300]:
+        sends = sent_at is None or at - sent_at >= ASK_GAP
+        if sends:
+            sent_at = at
+        asking.append({"at_s": at, "sends": sends})
+    assert [a["sends"] for a in asking] == [True, False, False, True, False, True]
+
     return {
         "description": (
             "Presence cards, draft 0 (draft/cards.md). For each accepted case, a node given seed, "
@@ -282,7 +312,12 @@ def build():
             "MUST keep exactly those whose keep is true. A card's hops and power are not signed: "
             "relayed_still_valid is good with them changed, and MUST be accepted. For each of "
             "verifications, Verify(address, message, signature), as draft/cards.md's Notation "
-            "has it, MUST be valid: strict, and without the cofactor."
+            "has it, MUST be valid: strict, and without the cofactor. "
+            "An ask is the one byte ask; each of asks_rejected MUST be discarded as one. For "
+            "answers, a node with cards on whose own cards go on the air at each event card, "
+            "hearing an ask at each event ask, MUST answer with a card exactly those whose "
+            "answered is true. For asking, a node whose user asks it to ask at each at_s MUST "
+            "send an ask exactly at those whose sends is true."
         ),
         "generator": "vectors/tools/cards.py",
         "hdr": HDR,
@@ -293,6 +328,12 @@ def build():
         "relayed_still_valid": bytes(moved).hex(),
         "deliveries": deliveries,
         "verifications": verifications(s[0]),
+        "ask": bytes([ASK]).hex(),
+        "asks_rejected": [bytes([ASK, 0]).hex(), bytes([0x6A]).hex()],
+        "card_soon_s": CARD_SOON,
+        "ask_gap_s": ASK_GAP,
+        "answers": answers,
+        "asking": asking,
     }
 
 

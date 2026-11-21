@@ -111,6 +111,7 @@ its field allows, or if a `str` is not valid UTF-8.
 | `0x13` | `MANAGE` | `ref` `u32`, `to` `addr`, `request` `bytes` up to 128 | `QUEUED` |
 | `0x14` | `OWNER` | `address` `addr`, `owner` `u8` | `OK` |
 | `0x15` | `TRACE` | `ref` `u32`, `to` `u32` | `QUEUED` |
+| `0x16` | `LOOK` | | `OK` |
 | `0x18` | `SAVE_CONTACT` | `address` `addr`, `name` `str` up to 31 | `OK` |
 | `0x19` | `REMOVE_CONTACT` | `address` `addr` | `OK` |
 | `0x1A` | `END_SESSION` | `address` `addr` | `OK` |
@@ -184,6 +185,7 @@ Error codes:
 | 13 | not over the mesh: a request a node does not act on when [managed](managing.md#the-connection) |
 | 14 | locked: the node's Bluetooth is [locked](managing.md#locking-bluetooth) |
 | 15 | not an owner: a node [managed](managing.md#the-connection) over the mesh by someone it has not made one |
+| 16 | too soon: the node [asked for cards](cards.md#asking) less than `ASK_GAP` ago |
 
 Other codes are reserved. A client MUST treat one it does not know as
 a refusal.
@@ -579,6 +581,14 @@ a client SHOULD show it as such, beside the address's
 contact's name. A node holds cards whether or not it sends its own:
 receiving them puts nothing on the air.
 
+**Looking about** (`LOOK`). A client asks the node to [ask the
+nodes in earshot for their cards](cards.md#asking), which those with
+cards on answer within half a minute; the node answers `OK` once the
+ask is waiting for the air, and `ERROR` 16 if it asked less than
+`ASK_GAP` before. The cards come as `CARD` news, as any card does. A
+client SHOULD offer it where it shows who is about, and SHOULD NOT send
+it unless its user asks.
+
 **Meeting someone from a card.** A client makes a card's sender a
 contact with `SAVE_CONTACT`, giving the card's `address` and whatever
 name the user chooses, which it MAY offer the card's `name` for. That
@@ -695,7 +705,9 @@ then uses only what both versions define: a client MUST NOT send a
 request that the node's version does not define, and a node MUST NOT
 send a frame that the client's version does not define, nor a field of
 a frame that the client's version does not define. This section is
-version 19. Version 18 is version 19 without
+version 20. Version 19 is version 20 without
+[asking for cards](cards.md#asking): the request `LOOK` and error 16.
+Version 18 is version 19 without
 [names in first contact](first-contact.md#names): `ASKED`'s `name` and
 `CONTACT`'s `says`. Version 17 is version 18 without
 [how messages went](#what-the-node-holds) and traces: the request
@@ -779,7 +791,8 @@ of version 14, which ignores a `SLEEP`, and one of version 16 a `FORGET`
 from a client of version 15, which ignores a `FORGOTTEN`, and one of
 version 17 an `OWNER` from a client of version 16, which ignores a
 `MANAGED`, and one of version 18 a `TRACE` from a client of version
-17, which ignores a `ROUTE`. A client of version 12 or earlier sends `UPDATE_BEGIN`
+17, which ignores a `ROUTE`, and one of version 20 a `LOOK` from a
+client of version 19. A client of version 12 or earlier sends `UPDATE_BEGIN`
 without a `signature`, and a node that [checks signatures](#signed-images)
 refuses it, as it refuses any image that is not signed.
 A node of version 14 gives every client the routing ids its radio

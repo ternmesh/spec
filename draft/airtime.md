@@ -94,6 +94,7 @@ bucket for those it passes on **and** by the relayed part.
 | `0x59` to `0x5C` | an [announce, request, solicit or answer](routing.md#announces) | routing | routing |
 | `0x5D` | a [poll](sleeping.md#polls) | routing | |
 | `0x5E` | a [poll answer](sleeping.md#polls) | own: never held | |
+| `0x69` | an [ask for cards](cards.md#asking) | own: waits | |
 | `0x60`, `0x61`, `0x68` | a [flooded frame](flooding.md#the-head) | own and the flood bucket for its own: waits | relayed and the flood bucket for those passed on: dropped |
 
 A first-contact frame that answers another, such as the responder's

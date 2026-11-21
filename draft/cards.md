@@ -129,6 +129,32 @@ over: a node that sent a card less than `CARD_EVERY / 2` before cards
 are turned on again sends its first `CARD_EVERY / 2` after that one,
 so that no client, by toggling them, makes it send more often.
 
+## Asking
+
+A node that has just come among others, or whose user wants to see who
+is about now, need not wait hours for their cards: it can **ask**. An
+ask is one byte, `hdr` `0x69`: format `01`, draft 0; type `101`, a
+card; flag `001`, asking. It is sent once, by the node's own radio,
+and is not flooded or passed on: only nodes in earshot hear it. A
+receiver MUST discard a frame whose first byte is `0x69` and that is
+not exactly one byte long.
+
+* A node sends an ask when its user asks it to, and MAY send one when
+  it starts. It MUST NOT send one less than `ASK_GAP` after the last.
+  An ask carries nothing of the node: no address, no routing id.
+* A node whose cards are on, that hears an ask, sends a card at a
+  random time within `ASK_SPREAD`, so that the nodes about do not all
+  answer at once, unless one of its own cards went on the air less than
+  `CARD_SOON` before, or one it would send is already waiting. A card
+  sent in answer is a card like any other, with the next `number`, but
+  with `hops` 0, so that it reaches only the nodes in earshot, as the
+  ask did. The node draws its next card from when the answer goes, as
+  from any card. A node whose cards are off ignores an ask.
+
+So an ask costs each node about with cards on at most one card in any
+`CARD_SOON`, however many ask, and every card is still paid for from
+the node's [own floods' allowance](flooding.md#the-allowance).
+
 ## Receiving
 
 A node holds, for each address it has a card from, the highest
@@ -171,6 +197,9 @@ SHOULD NOT pass on a card it discarded at step 3 or 4.
 | `CARD_HOPS` | 2 | what a card's flood starts with |
 | `CARD_EVERY` | 2 h | between one node's cards, on average |
 | `CARD_KEPT` | 24 h | a card not heard again for this long is forgotten |
+| `CARD_SOON` | 15 min | a node answers no ask within this long of its last card |
+| `ASK_GAP` | 10 min | between one node's asks |
+| `ASK_SPREAD` | 30 s | within which a node answers an ask |
 
 ## Conformance
 
@@ -191,13 +220,24 @@ An implementation conforms to this section if, for
   `keep` is true;
 * **verifications:** `Verify(address, message, signature)` is `valid`.
   These are the signatures on which implementations of RFC 8032
-  differ.
+  differ;
+* **asks:** `ask` is an ask, and it discards each of `asks_rejected`;
+* **answers:** with cards on, its own cards going on the air at each
+  event `card`, and hearing an ask at each event `ask`, it answers
+  with a card exactly those whose `answered` is true;
+* **asking:** its user asking it to ask at each `at_s`, it sends an ask
+  exactly at those whose `sends` is true.
 
 That a node sends no card until its user turns cards on, and how often
 it sends them, cannot be checked by vectors. They are requirements
 nonetheless, checked by reviewing an implementation.
 
 ## What an observer learns
+
+An ask tells an observer only that some node in earshot asked, and when:
+it carries nothing of the node. The cards it brings are cards their
+senders' users chose to send, and say what any card says; an ask brings
+them sooner, from nodes in earshot, not more of them.
 
 Everything in a card: the sender's address, the name it chose, and its
 number. An observer who hears a node's cards can tell that the same
@@ -353,6 +393,6 @@ it should deliver.
 * **Replay of a forgotten card.** A card recorded and flooded again
   once its receivers have forgotten its number is taken as new, saying
   what it said then. It cannot say anything its sender did not.
-* **Sending a card on asking.** A node that has just been turned on
-  could ask those near it for theirs, rather than wait up to
-  `3 × CARD_EVERY / 2`, three hours.
+* **Measured costs of asking.** `CARD_SOON`, `ASK_GAP` and
+  `ASK_SPREAD` are guesses: how many cards an ask brings in a busy
+  place, and how many of them collide, is to be measured.
