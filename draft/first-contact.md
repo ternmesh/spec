@@ -326,8 +326,11 @@ the `source` of the copy just received, whatever the first named, and
 they are equal from `ctag_n` on, `source` left out.
 
 A responder with no route for its reply, and none it takes
-[by default](routing.md#a-leafs-default-route), asks for one and sends
-nothing: the initiator's next try brings the frame again.
+[by default](routing.md#a-leafs-default-route), sends it as an
+[answer with no route](forwarding.md#an-answer-with-no-route): straight
+back to the initiator if the frame it answers came from it direct, and
+otherwise not at all, asking for a route, so that the initiator's next
+try brings the frame again.
 
 A responder holds a handshake, and after `message_4` what it needs to
 send `message_4` again, until `CONTACT_HOLD` has passed with no frame
