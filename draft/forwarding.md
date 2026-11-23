@@ -73,7 +73,7 @@ Six kinds of frame are defined:
 A message is at least 23 bytes: the head, the tag and the 8-byte check
 of an empty message. An acknowledgement is exactly 19 bytes, and a held
 notice exactly 15. A
-first-contact frame is exactly 56, 60, 80 or 24 bytes, for `0x51` to
+first-contact frame is exactly 56, 60, 116 or 61 bytes, for `0x51` to
 `0x54` ([First contact](first-contact.md#the-frame)). A trace is 19
 bytes and 5 more for each entry, and a trace answer 17 and 5 more for
 each entry, within the entries [Traces](#traces) allows. A receiver
@@ -320,10 +320,23 @@ destination's route round the source. The two cases:
   takes by default.
 
 With no such route either, it goes as it would have: by the selected
-route, or, with none, not at all. A keeper's acknowledgement to a
+route, or, with none, as an [answer with no route](#an-answer-with-no-route). A keeper's acknowledgement to a
 [sleeping leaf it keeps](sleeping.md#holding) goes as that section
 says, and not by this. Only the acknowledgement's first hop is chosen
 so: a relay passes it on by its own selected route, as any frame.
+
+**An answer with no route.** A frame that answers one received, an
+acknowledgement or a first-contact frame but `message_1`, is for the
+node the frame it answers came from. If the node answering has no route
+to that node it may use, and none it takes
+[by default](routing.md#a-leafs-default-route), and the frame it
+answers arrived with `hops` at `HOP_MAX`, it MUST send the answer
+straight to that node: `next` is the answer's `destination`, and the
+answer goes once, as a last hop does, no quieter than that node needs,
+as [Sending](#sending) says. It asks for a route as well, as a node with
+no route does. If the frame it answers arrived with `hops` below
+`HOP_MAX`, a relay passed it on, and with no route the answer is not
+sent.
 
 **A copy** is a message frame that the destination does not accept, of
 the same length and `hdr` as a message it has accepted, in any session
@@ -893,6 +906,35 @@ before them:
 | from the leaf alone: delivered, of 250 | 228 | 236 |
 | from the leaf alone: given up though delivered | 182 | 7 |
 | to the leaf alone: delivered, of 250 | 47 | 250 |
+
+**Why an answer with no route goes straight back.** A node learns a
+route to another from that node's announces, and a leaf announces
+seldom: every `I_MAX`, 512 s, once its routes are steady. A frame from a
+leaf can reach a relay that has heard no announce from it since either
+of them started, and the relay could not answer. On the bench
+(v0.7.0-alpha.4, 2026-11-23) a T1000-E, a leaf that had just been
+updated, began first contact with a T-Deck, a relay, in the same room.
+The T-Deck had no route back, sent no `message_2`, and asked for one;
+the handshake went through only on the T1000-E's next try. A
+handshake begun just after either end starts could fail outright the
+same way, with the two nodes in earshot all along. A frame that
+arrived with `hops` at `HOP_MAX` was sent by the node it came from,
+which heard it was in reach of this one, at the `power` the head says:
+the answer can go back the same way, as MeshCore's answer to a flooded
+message goes back the way the flood came, but for one hop and with
+nothing kept.
+
+`hops` is not authenticated, so a node can be made to send an answer
+straight to a routing id that is not in earshot, by a frame with
+`hops` left at `HOP_MAX`. That costs one answer that nobody hears, as
+a forged `source` in `message_1` costs one that goes somewhere else;
+`CONTACT_ANSWERS` bounds `message_2`, and an acknowledgement answers
+only a message the node accepts, or a [copy](#messages). The answer is
+sent once, as every last hop is, so a node it does not reach costs no
+more. An answer to a frame a relay passed on could go back through the
+relay that passed it on, if the head said which that was; it does not,
+for the reasons [above](#why-an-acknowledgement-may-go-another-way),
+so with no route it is still not sent, and the source tries again.
 
 **Why a source's next try avoids its last first hop.** A source waits
 `ACK_WAIT` plus a few journeys for its acknowledgement, some five

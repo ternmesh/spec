@@ -26,7 +26,7 @@ HDR_MESSAGE, HDR_ACK = 0x48, 0x50
 MESSAGES = (HDR_MESSAGE, HDR_MESSAGE | 0x01)
 # First contact's four frames (draft/first-contact.md), and how long each is: the head, a tag,
 # for the first the routing id it came from, and the handshake's message.
-CONTACT_LEN = {0x51: 56, 0x52: 60, 0x53: 80, 0x54: 24}
+CONTACT_LEN = {0x51: 56, 0x52: 60, 0x53: 116, 0x54: 61}
 RESERVED = (0, 0xFFFFFFFF)
 HEAD, TAG = 11, 4
 ACK_LEN = HEAD + TAG + 4
@@ -275,7 +275,10 @@ def ack_next(hops, leaf, nearest, source, routes, selected):
         chosen = nearest  # a default route is a route
     if chosen is not None and not (chosen == source and hops < HOP_MAX):
         return chosen
-    return route_round(routes, source, leaf, nearest) or chosen
+    found = route_round(routes, source, leaf, nearest) or chosen
+    if found is None and hops == HOP_MAX:
+        return source  # an answer with no route, to a frame that came direct: straight back
+    return found
 
 
 def retry_next(heard, last, leaf, nearest, routes, selected):
@@ -321,9 +324,9 @@ def build():
         ({"hdr": 0x52, "hops": 30, "power": 2, "next": 0x0A0B0C0D, "destination": 0x30313233},
          bytes(range(0x40, 0x40 + 4 + 45))),
         ({"hdr": 0x53, "hops": 32, "power": 22, "next": 0x1D2E3F40, "destination": 0x0A0B0C0D},
-         bytes(range(0x50, 0x50 + 4 + 65))),
+         bytes(range(0x50, 0x50 + 4 + 101))),
         ({"hdr": 0x54, "hops": 2, "power": -9, "next": 0x30313233, "destination": 0x30313233},
-         bytes(range(0x60, 0x60 + 4 + 9))),
+         bytes(range(0x60, 0x60 + 4 + 46))),
         ({"hdr": 0x56, "hops": 32, "power": 14, "next": 0x1D2E3F40, "destination": 0x0A0B0C0D},
          bytes.fromhex("c0ffee02") + struct.pack(">I", 0x30313233)),
         ({"hdr": 0x56, "hops": 30, "power": 8, "next": 0x0A0B0C0D, "destination": 0x0A0B0C0D},
@@ -574,6 +577,13 @@ def build():
         ("as a leaf with no route selected: its default route", 31, True, other_relay,
          [rt(source, False, False, True, 70), via], None),
         ("as a leaf that takes no default route: direct", 31, True, None, [direct], 0),
+        ("the bench's: no route at all, the message came direct: straight back", 32, False, None,
+         [], None),
+        ("no route at all, passed on by a relay: none", 31, False, None, [], None),
+        ("no route it may use, the message came direct: straight back", 32, False, None,
+         [rt(source, False, False, True, 70)], None),
+        ("as a leaf that takes no default route, with none, the message came direct: straight back",
+         32, True, None, [], None),
     ]:
         acked.append({"why": why, "hops": hops_at, "leaf": leaf, "nearest": nearest,
                       "source": source, "routes": routes, "selected": selected,
@@ -656,7 +666,8 @@ def build():
         "default routes (null for none); routes are the routes it holds to the message's source, "
         "each through the neighbour next, a relay or not, that it may use or not, feasible or not, "
         "with its metric, and selected the index of the one selected (null for none); next_after "
-        "is the neighbour it sends the acknowledgement to (null for none). In retried, a source holds "
+        "is the neighbour it sends the acknowledgement to (null for none); a first-contact frame but "
+        "message_1, answering one, goes as an acknowledgement does with no route. In retried, a source holds "
         "routes to its message's destination as in acknowledged, its last try having gone first "
         "to last and been heard there or not, selected null where it has no route it may select; each "
         "route's lost says whether a hop has been given up at its neighbour since it was last heard; "
